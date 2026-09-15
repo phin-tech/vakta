@@ -37,6 +37,13 @@ final class SessionStore: ObservableObject {
     /// sidebar's own button and the View menu; `AppDelegate` animates the width.
     @Published var sidebarCollapsed = false
 
+    /// Per-session agent status (herdr sessions only), polled from
+    /// `herdr agent list` and shown as a colored dot in the sidebar.
+    @Published private(set) var agentStatus: [Session.ID: AgentStatus] = [:]
+
+    /// Repeating poll for `agentStatus`.
+    private var statusTimer: Timer?
+
     /// One `ghostty_app_t` for the whole process. Every `Session` this store
     /// creates is handed this same controller.
     let controller: TerminalController
@@ -112,6 +119,40 @@ final class SessionStore: ObservableObject {
         }
 
         refreshDiscovery()
+        startStatusPolling()
+    }
+
+    // MARK: Agent status polling
+
+    private func startStatusPolling() {
+        pollAgentStatus()
+        let timer = Timer.scheduledTimer(withTimeInterval: 2.5, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.pollAgentStatus() }
+        }
+        statusTimer = timer
+    }
+
+    /// Queries `herdr agent list` per herdr session (off the main thread) and
+    /// republishes `agentStatus`. Non-herdr sessions and failed queries keep
+    /// their previous value rather than flicker.
+    private func pollAgentStatus() {
+        let herdrSessions: [(id: Session.ID, name: String)] = sessions
+            .filter { ($0.profile.command as NSString).lastPathComponent == "herdr" }
+            .map { ($0.id, $0.sessionName) }
+        guard !herdrSessions.isEmpty else { return }
+        let path = resolvedPATH
+
+        DispatchQueue.global(qos: .utility).async {
+            var updates: [Session.ID: AgentStatus] = [:]
+            for session in herdrSessions {
+                if let status = HerdrAgentStatus.status(sessionName: session.name, path: path) {
+                    updates[session.id] = status
+                }
+            }
+            DispatchQueue.main.async {
+                for (id, status) in updates { self.agentStatus[id] = status }
+            }
+        }
     }
 
     func toggleSidebar() {
@@ -246,6 +287,7 @@ final class SessionStore: ObservableObject {
         guard let index = sessions.firstIndex(where: { $0.id == id }) else { return }
         sessions.remove(at: index)
         hostContainer.removeSession(id)
+        agentStatus[id] = nil
         saveWorkspace()
 
         guard selectedID == id else { return }

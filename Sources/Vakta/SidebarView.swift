@@ -102,6 +102,7 @@ struct SidebarView: View {
         ) { session in
             SessionRow(
                 session: session,
+                status: sessionStore.agentStatus[session.id] ?? .none,
                 isEditing: editingID == session.id,
                 onCommitName: { name in
                     sessionStore.renameSession(session.id, to: name)
@@ -126,6 +127,7 @@ struct SidebarView: View {
                 ForEach(sessionStore.sessions) { session in
                     RailSessionItem(
                         session: session,
+                        status: sessionStore.agentStatus[session.id] ?? .none,
                         isSelected: sessionStore.selectedID == session.id,
                         onSelect: { sessionStore.select(session.id) }
                     )
@@ -205,10 +207,21 @@ struct SidebarView: View {
 /// `TerminalSurfaceTitleDelegate` / `TerminalSurfaceFocusDelegate` callbacks
 /// libghostty-spm already wires up internally, so the row updates live with
 /// no polling and no extra plumbing on Vakta's side.
+/// Sidebar status-dot color: agent status when known, else a focus dot.
+func sidebarStatusColor(_ status: AgentStatus, isFocused: Bool) -> Color {
+    switch status {
+    case .working: return .orange
+    case .attention: return .yellow
+    case .idle: return .green
+    case .none: return isFocused ? .accentColor : .secondary.opacity(0.35)
+    }
+}
+
 private struct SessionRow: View {
     @ObservedObject var session: Session
     @ObservedObject private var viewState: TerminalViewState
 
+    let status: AgentStatus
     let isEditing: Bool
     let onCommitName: (String) -> Void
     let onEndEditing: () -> Void
@@ -218,22 +231,34 @@ private struct SessionRow: View {
 
     init(
         session: Session,
+        status: AgentStatus,
         isEditing: Bool,
         onCommitName: @escaping (String) -> Void,
         onEndEditing: @escaping () -> Void
     ) {
         self.session = session
         viewState = session.viewState
+        self.status = status
         self.isEditing = isEditing
         self.onCommitName = onCommitName
         self.onEndEditing = onEndEditing
     }
 
+    private var statusHelp: String {
+        switch status {
+        case .working: return "Working"
+        case .attention: return "Needs attention"
+        case .idle: return "Idle"
+        case .none: return session.displayTitle
+        }
+    }
+
     var body: some View {
         HStack(spacing: 6) {
             Circle()
-                .fill(viewState.isFocused ? Color.accentColor : Color.secondary.opacity(0.35))
-                .frame(width: 6, height: 6)
+                .fill(sidebarStatusColor(status, isFocused: viewState.isFocused))
+                .frame(width: 7, height: 7)
+                .help(statusHelp)
 
             if isEditing {
                 TextField("Session name", text: $draftName)
@@ -264,12 +289,14 @@ private struct RailSessionItem: View {
     @ObservedObject var session: Session
     @ObservedObject private var viewState: TerminalViewState
 
+    let status: AgentStatus
     let isSelected: Bool
     let onSelect: () -> Void
 
-    init(session: Session, isSelected: Bool, onSelect: @escaping () -> Void) {
+    init(session: Session, status: AgentStatus, isSelected: Bool, onSelect: @escaping () -> Void) {
         self.session = session
         viewState = session.viewState
+        self.status = status
         self.isSelected = isSelected
         self.onSelect = onSelect
     }
@@ -294,10 +321,12 @@ private struct RailSessionItem: View {
                             .strokeBorder(isSelected ? Color.accentColor : Color.clear, lineWidth: 1.5)
                     )
 
-                if viewState.isFocused {
+                // Status dot for herdr sessions; falls back to a focus dot.
+                if status != .none || viewState.isFocused {
                     Circle()
-                        .fill(Color.accentColor)
-                        .frame(width: 7, height: 7)
+                        .fill(sidebarStatusColor(status, isFocused: viewState.isFocused))
+                        .frame(width: 9, height: 9)
+                        .overlay(Circle().strokeBorder(Color(nsColor: .windowBackgroundColor), lineWidth: 1.5))
                         .offset(x: 3, y: -3)
                 }
             }
