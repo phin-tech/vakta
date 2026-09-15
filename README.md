@@ -9,8 +9,10 @@ Vakta is a native macOS terminal designed with one specific job: managing
 terminal rendering via **libghostty** (using the prebuilt Swift package
 [`Lakr233/libghostty-spm`](https://github.com/Lakr233/libghostty-spm)).
 
-> **Note:** This repository is currently a foundational skeleton. It provides a
-> compiling, structured base but is not yet a polished, signed `.app` bundle.
+> **Status:** Early but functional — a real macOS `.app` with tagged
+> [DMG releases](https://github.com/phin-tech/vakta/releases). Builds aren't
+> code-signed or notarized yet, so a downloaded release is Gatekeeper-quarantined
+> (see [Releasing](#releasing) to de-quarantine, or to enable signing).
 
 ## Core Features
 
@@ -98,10 +100,17 @@ builds Release, packages a `.dmg`, and attaches it to an auto-created GitHub
 Release. `.github/workflows/ci.yml` builds every push/PR to `main`.
 
 By default the DMG is **ad-hoc and unsigned** — it runs locally but is
-Gatekeeper-quarantined on other Macs. For signed + notarized DMGs, add these
-repo secrets (Settings → Secrets → Actions): `MACOS_CERTIFICATE_P12`,
-`MACOS_CERTIFICATE_PWD`, `MACOS_SIGN_IDENTITY`, `APPLE_ID`, `APPLE_TEAM_ID`,
-`APPLE_APP_PASSWORD`.
+Gatekeeper-quarantined when downloaded. After dragging `Vakta.app` to
+Applications, clear the quarantine flag to open it:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/Vakta.app
+```
+
+(or right-click → Open the first time). For signed + notarized DMGs that skip
+this entirely, add these repo secrets (Settings → Secrets → Actions):
+`MACOS_CERTIFICATE_P12`, `MACOS_CERTIFICATE_PWD`, `MACOS_SIGN_IDENTITY`,
+`APPLE_ID`, `APPLE_TEAM_ID`, `APPLE_APP_PASSWORD`.
 
 ## License
 
