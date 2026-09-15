@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/logo.png" alt="Vakta" width="220">
+</p>
+
 # Vakta
 
 Vakta is a native macOS terminal designed with one specific job: managing
