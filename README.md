@@ -63,6 +63,10 @@ swift build
 swift run Vakta
 ```
 
+Or with [`just`](https://github.com/casey/just): `just run` (app), `just app`
+(build + open the `.app`), `just dmg` (local DMG), `just release 0.1.4` (tag +
+push). Run `just` to list all recipes.
+
 If you don't have herdr installed locally and just want to test the UI, force a
 standard shell:
 
