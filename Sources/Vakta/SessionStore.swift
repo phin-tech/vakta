@@ -43,11 +43,17 @@ final class SessionStore: ObservableObject {
     /// the persisted file.
     private let commandOverride: String?
 
+    /// The user's login-shell PATH, resolved once. Injected into every spawned
+    /// session so a bare command (e.g. `herdr` in `~/.local/bin`) resolves even
+    /// when Vakta was launched from a `.app` with a minimal PATH.
+    private let resolvedPATH: String
+
     /// The profile used when `createSession` is called with no explicit one.
     var defaultProfile: Profile { profiles.first ?? .herdr }
 
     init() {
         commandOverride = ProcessInfo.processInfo.environment["VAKTA_TERMINAL_COMMAND"]
+        resolvedPATH = ShellEnvironment.resolvedPATH()
 
         // Load saved profiles; first launch (or an unreadable file) seeds the
         // built-ins and writes them. Assigning `profiles` in init does not
@@ -111,6 +117,12 @@ final class SessionStore: ObservableObject {
             profile.command = commandOverride
             profile.arguments = ""
             profile.scrubbedEnvironmentKeys = []
+        }
+
+        // Give the child the user's real PATH so a bare command resolves under
+        // a `.app`'s minimal PATH. A profile that sets its own PATH wins.
+        if profile.environment["PATH"] == nil {
+            profile.environment["PATH"] = resolvedPATH
         }
 
         // The HERDR_*/TMUX scrub is baked into the command as an `env -u …`
