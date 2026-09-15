@@ -226,6 +226,12 @@ is applied **in the child** by prefixing the command with `env -u KEY …`
 (`Profile.resolvedCommand`) — Vakta never calls `unsetenv()` on its own process,
 because mutating `environ` crashes libghostty (see the historical note above).
 
+## License
+
+MIT — see [LICENSE](LICENSE). Vakta embeds
+[libghostty-spm](https://github.com/Lakr233/libghostty-spm) (MIT), which wraps
+Ghostty's terminal core.
+
 ## Runtime callbacks — how the six map onto what was actually found
 
 The task's brief describes wiring `ghostty_runtime_config_s`'s six raw C
