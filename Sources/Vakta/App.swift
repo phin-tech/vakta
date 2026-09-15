@@ -34,10 +34,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var window: NSWindow?
     private var splitView: NSSplitView?
     private var sidebarObserver: AnyCancellable?
+    private var sidebarStyleObserver: AnyCancellable?
     private let sessionStore = SessionStore()
     private let keybindingMatcher = KeybindingMatcher()
+    private let appearanceStore = AppearanceStore()
+    private let sidebarSettings = SidebarSettingsStore()
     private lazy var preferencesController = PreferencesWindowController(
-        keybindingMatcher: keybindingMatcher
+        keybindingMatcher: keybindingMatcher,
+        appearanceStore: appearanceStore,
+        sidebarSettings: sidebarSettings
     )
 
     /// Sidebar widths: a full panel, and a narrow icon rail when collapsed.
@@ -64,6 +69,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSApp.terminate(nil)
             return
         }
+
+        // Apply the saved UI-chrome appearance before the window appears, so
+        // it doesn't flash the system theme first.
+        appearanceStore.apply()
 
         buildMainMenu()
 
@@ -95,6 +104,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         sidebarObserver = sessionStore.$sidebarCollapsed.sink { [weak self] collapsed in
             self?.applySidebarWidth(collapsed: collapsed)
         }
+
+        // Re-apply the width when the collapse *style* changes (icons vs.
+        // hidden), so flipping the preference while collapsed updates live.
+        sidebarStyleObserver = sidebarSettings.$collapseStyle.sink { [weak self] _ in
+            guard let self else { return }
+            self.applySidebarWidth(collapsed: self.sessionStore.sidebarCollapsed)
+        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_: NSApplication) -> Bool {
@@ -112,7 +128,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// full redraw instead.
     private func applySidebarWidth(collapsed: Bool) {
         guard let splitView else { return }
-        let target = collapsed ? collapsedSidebarWidth : expandedSidebarWidth
+        let collapsedWidth = sidebarSettings.collapseStyle == .hidden ? 0 : collapsedSidebarWidth
+        let target = collapsed ? collapsedWidth : expandedSidebarWidth
         splitView.setPosition(target, ofDividerAt: 0)
         splitView.layoutSubtreeIfNeeded()
         splitView.needsDisplay = true

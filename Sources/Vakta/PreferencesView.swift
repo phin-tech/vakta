@@ -11,12 +11,16 @@ import SwiftUI
 
 /// One row in the Preferences sidebar.
 enum PreferencesSection: String, CaseIterable, Identifiable {
+    case appearance
+    case sidebar
     case keybindings
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
+        case .appearance: return "Appearance"
+        case .sidebar: return "Sidebar"
         case .keybindings: return "Keybindings"
         }
     }
@@ -24,13 +28,15 @@ enum PreferencesSection: String, CaseIterable, Identifiable {
     /// SF Symbol shown next to the title.
     var symbol: String {
         switch self {
+        case .appearance: return "paintpalette"
+        case .sidebar: return "sidebar.leading"
         case .keybindings: return "keyboard"
         }
     }
 }
 
 struct PreferencesView: View {
-    @State private var selection: PreferencesSection = .keybindings
+    @State private var selection: PreferencesSection = .appearance
 
     var body: some View {
         NavigationSplitView {
@@ -41,6 +47,10 @@ struct PreferencesView: View {
             .navigationSplitViewColumnWidth(min: 170, ideal: 190, max: 240)
         } detail: {
             switch selection {
+            case .appearance:
+                AppearancePreferencesView()
+            case .sidebar:
+                SidebarPreferencesView()
             case .keybindings:
                 KeybindingsPreferencesView()
             }

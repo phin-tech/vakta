@@ -15,9 +15,17 @@ import SwiftUI
 final class PreferencesWindowController {
     private var window: NSWindow?
     private let keybindingMatcher: KeybindingMatcher
+    private let appearanceStore: AppearanceStore
+    private let sidebarSettings: SidebarSettingsStore
 
-    init(keybindingMatcher: KeybindingMatcher) {
+    init(
+        keybindingMatcher: KeybindingMatcher,
+        appearanceStore: AppearanceStore,
+        sidebarSettings: SidebarSettingsStore
+    ) {
         self.keybindingMatcher = keybindingMatcher
+        self.appearanceStore = appearanceStore
+        self.sidebarSettings = sidebarSettings
     }
 
     /// Opens the Preferences window, creating it on first use and reusing it
@@ -30,7 +38,10 @@ final class PreferencesWindowController {
         }
 
         let host = NSHostingView(
-            rootView: PreferencesView().environmentObject(keybindingMatcher)
+            rootView: PreferencesView()
+                .environmentObject(keybindingMatcher)
+                .environmentObject(appearanceStore)
+                .environmentObject(sidebarSettings)
         )
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 640, height: 420),
