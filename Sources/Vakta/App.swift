@@ -14,6 +14,7 @@
 //  why that matters for settled design decision #4.
 
 import AppKit
+import Combine
 import Metal
 import SwiftUI
 
@@ -31,8 +32,14 @@ enum VaktaMain {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var window: NSWindow?
+    private var splitView: NSSplitView?
+    private var sidebarObserver: AnyCancellable?
     private let sessionStore = SessionStore()
     private let keybindingMatcher = KeybindingMatcher()
+
+    /// Sidebar widths: a full panel, and a narrow icon rail when collapsed.
+    private let expandedSidebarWidth: CGFloat = 220
+    private let collapsedSidebarWidth: CGFloat = 56
 
     func applicationDidFinishLaunching(_: Notification) {
         // libghostty renders every surface with Metal and dereferences its
@@ -74,10 +81,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         keybindingMatcher.install { [weak self] index in
             self?.sessionStore.selectSession(at: index)
         }
+
+        // Drive the sidebar width off the store's collapsed flag, which the
+        // sidebar's own button and the View menu both toggle.
+        sidebarObserver = sessionStore.$sidebarCollapsed.sink { [weak self] collapsed in
+            self?.applySidebarWidth(collapsed: collapsed)
+        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_: NSApplication) -> Bool {
         true
+    }
+
+    func applicationDidBecomeActive(_: Notification) {
+        // Keep the "Attach existing" list fresh when returning to the app.
+        sessionStore.refreshDiscovery()
+    }
+
+    /// Animates the divider between the full panel and the icon rail.
+    private func applySidebarWidth(collapsed: Bool) {
+        guard let splitView else { return }
+        let target = collapsed ? collapsedSidebarWidth : expandedSidebarWidth
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.18
+            context.allowsImplicitAnimation = true
+            splitView.setPosition(target, ofDividerAt: 0)
+            splitView.layoutSubtreeIfNeeded()
+        }
+    }
+
+    @objc private func toggleSidebar() {
+        sessionStore.toggleSidebar()
     }
 
     private func makeWindow() -> NSWindow {
@@ -88,14 +122,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let sidebarHost = NSHostingView(
             rootView: SidebarView().environmentObject(sessionStore)
         )
-        sidebarHost.frame = NSRect(x: 0, y: 0, width: 220, height: 640)
+        sidebarHost.frame = NSRect(x: 0, y: 0, width: expandedSidebarWidth, height: 640)
 
         let terminalContainer = sessionStore.hostContainer
         terminalContainer.frame = NSRect(x: 0, y: 0, width: 860, height: 640)
 
         split.addArrangedSubview(sidebarHost)
         split.addArrangedSubview(terminalContainer)
-        split.setHoldingPriority(.defaultLow, forSubviewAt: 0)
+        // Sidebar keeps its width when the window resizes; the terminal flexes.
+        split.setHoldingPriority(.defaultHigh, forSubviewAt: 0)
+        self.splitView = split
 
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1080, height: 640),
@@ -161,6 +197,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         sessionMenuItem.submenu = sessionMenu
         mainMenu.addItem(sessionMenuItem)
+
+        let viewMenuItem = NSMenuItem()
+        let viewMenu = NSMenu(title: "View")
+        // No key equivalent, to keep every keystroke flowing to the terminal
+        // (settled design decision #5). The sidebar's own button and the
+        // Ctrl+Shift+num chords are the keyboard-free / rebindable paths.
+        let toggleItem = NSMenuItem(
+            title: "Toggle Sidebar",
+            action: #selector(toggleSidebar),
+            keyEquivalent: ""
+        )
+        toggleItem.target = self
+        viewMenu.addItem(toggleItem)
+        viewMenuItem.submenu = viewMenu
+        mainMenu.addItem(viewMenuItem)
 
         NSApp.mainMenu = mainMenu
     }

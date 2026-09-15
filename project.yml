@@ -47,6 +47,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: tech.phin.vakta
         MARKETING_VERSION: "0.1.0"
         CURRENT_PROJECT_VERSION: "1"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         # Hardened runtime is required for notarization. It does not block
         # spawning child processes, so no extra entitlements are needed for it.
         ENABLE_HARDENED_RUNTIME: true

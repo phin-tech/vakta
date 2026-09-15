@@ -28,6 +28,15 @@ final class SessionStore: ObservableObject {
         didSet { ProfilePersistence.save(profiles) }
     }
 
+    /// Existing multiplexer sessions discovered on the server, keyed by the
+    /// profile that can attach them. Populated on demand by `refreshDiscovery`
+    /// and offered in the "New Session" menu -- never auto-added to the sidebar.
+    @Published private(set) var discovered: [Profile.ID: [String]] = [:]
+
+    /// Whether the sidebar is collapsed to its icon rail. Driven by the
+    /// sidebar's own button and the View menu; `AppDelegate` animates the width.
+    @Published var sidebarCollapsed = false
+
     /// One `ghostty_app_t` for the whole process. Every `Session` this store
     /// creates is handed this same controller.
     let controller: TerminalController
@@ -87,7 +96,10 @@ final class SessionStore: ObservableObject {
         // Nothing saved (first launch) -> one default session.
         let records = WorkspacePersistence.load() ?? []
         if records.isEmpty {
-            createSession()
+            // Fresh launch: attach the persistent `default` session rather than
+            // spawning a brand-new one (verified: `herdr --session default`
+            // attaches, it doesn't create a duplicate).
+            createSession(sessionName: "default")
         } else {
             for record in records {
                 let profile = profiles.first { $0.id == record.profileID } ?? defaultProfile
@@ -97,6 +109,38 @@ final class SessionStore: ObservableObject {
                     customName: record.customName
                 )
             }
+        }
+
+        refreshDiscovery()
+    }
+
+    func toggleSidebar() {
+        sidebarCollapsed.toggle()
+    }
+
+    /// Re-queries each multiplexer for its existing sessions (off the main
+    /// thread) and republishes `discovered`. Cheap; call on launch and when the
+    /// app becomes active so the "New Session" menu is reasonably fresh.
+    func refreshDiscovery() {
+        let discoverable = profiles.filter(SessionDiscovery.supportsDiscovery)
+        let path = resolvedPATH
+        DispatchQueue.global(qos: .userInitiated).async {
+            var result: [Profile.ID: [String]] = [:]
+            for profile in discoverable {
+                let names = SessionDiscovery.names(for: profile, path: path)
+                if !names.isEmpty { result[profile.id] = names }
+            }
+            DispatchQueue.main.async { self.discovered = result }
+        }
+    }
+
+    /// Opens an existing multiplexer session by name. If Vakta already has it
+    /// open, just selects that row instead of attaching a second view.
+    func attachExisting(profile: Profile, name: String) {
+        if let existing = sessions.first(where: { $0.sessionName == name }) {
+            select(existing.id)
+        } else {
+            createSession(profile: profile, sessionName: name)
         }
     }
 

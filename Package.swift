@@ -24,7 +24,10 @@ let package = Package(
                 .product(name: "GhosttyTerminal", package: "libghostty-spm"),
                 .product(name: "GhosttyTheme", package: "libghostty-spm")
             ],
-            path: "Sources/Vakta"
+            path: "Sources/Vakta",
+            // The asset catalog (app icon) is consumed by the Xcode/app build
+            // only; SwiftPM has nothing to do with it.
+            exclude: ["Assets.xcassets"]
         )
     ]
 )
