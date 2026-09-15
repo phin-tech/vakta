@@ -36,6 +36,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var sidebarObserver: AnyCancellable?
     private let sessionStore = SessionStore()
     private let keybindingMatcher = KeybindingMatcher()
+    private lazy var preferencesController = PreferencesWindowController(
+        keybindingMatcher: keybindingMatcher
+    )
 
     /// Sidebar widths: a full panel, and a narrow icon rail when collapsed.
     private let expandedSidebarWidth: CGFloat = 220
@@ -78,8 +81,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             sessionStore.hostContainer.select(id)
         }
 
-        keybindingMatcher.install { [weak self] index in
-            self?.sessionStore.selectSession(at: index)
+        keybindingMatcher.install { [weak self] action in
+            guard let self else { return }
+            switch action {
+            case .selectSession(let index): self.sessionStore.selectSession(at: index)
+            case .toggleSidebar: self.sessionStore.toggleSidebar()
+            case .openPreferences: self.preferencesController.show()
+            }
         }
 
         // Drive the sidebar width off the store's collapsed flag, which the
@@ -113,6 +121,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func toggleSidebar() {
         sessionStore.toggleSidebar()
+    }
+
+    @objc private func showPreferences() {
+        preferencesController.show()
     }
 
     private func makeWindow() -> NSWindow {
@@ -166,6 +178,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let appMenuItem = NSMenuItem()
         let appMenu = NSMenu()
         appMenu.addItem(withTitle: "About Vakta", action: nil, keyEquivalent: "")
+        appMenu.addItem(.separator())
+        // No ⌘, key equivalent: settled design decision #5 keeps every menu
+        // item keyless so keystrokes reach herdr. Preferences is reachable by
+        // mouse here, and the user can bind it (and Toggle Sidebar) to a chord
+        // inside the pane -- that goes through `KeybindingMatcher`, which by
+        // design sees keys before the menu ever could.
+        let preferencesItem = NSMenuItem(
+            title: "Preferences…",
+            action: #selector(showPreferences),
+            keyEquivalent: ""
+        )
+        preferencesItem.target = self
+        appMenu.addItem(preferencesItem)
         appMenu.addItem(.separator())
         let quitItem = NSMenuItem(
             title: "Quit Vakta",
