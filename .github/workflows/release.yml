@@ -1,0 +1,115 @@
+name: Release
+
+# Push a version tag to cut a release:
+#   git tag v0.1.0 && git push origin v0.1.0
+# This builds Vakta.app, packages a .dmg, and (when signing secrets are set)
+# signs + notarizes it, then attaches the .dmg to a GitHub Release.
+#
+# Optional repo secrets for a *distributable* (Developer ID + notarized) build —
+# without them the job still produces an ad-hoc .dmg that runs locally but trips
+# Gatekeeper on other Macs:
+#   MACOS_CERTIFICATE_P12   base64 of your "Developer ID Application" .p12
+#   MACOS_CERTIFICATE_PWD   password for that .p12
+#   MACOS_SIGN_IDENTITY     e.g. "Developer ID Application: Your Name (TEAMID)"
+#   APPLE_ID                Apple ID email used for notarization
+#   APPLE_TEAM_ID           10-char team id
+#   APPLE_APP_PASSWORD      app-specific password for notarytool
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  # True only when the full signing secret set is present.
+  HAS_SIGNING: ${{ secrets.MACOS_CERTIFICATE_P12 != '' && secrets.APPLE_ID != '' && secrets.MACOS_SIGN_IDENTITY != '' }}
+
+jobs:
+  release:
+    runs-on: macos-15 # Apple Silicon runner; libghostty-spm is arm64-only.
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Derive version from tag
+        id: version
+        run: |
+          REF="${GITHUB_REF_NAME}"
+          VERSION="${REF#v}"
+          [ "$REF" = "$GITHUB_REF" ] && VERSION="0.0.0-dev" # workflow_dispatch
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Building version $VERSION"
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Import signing certificate
+        if: env.HAS_SIGNING == 'true'
+        uses: apple-actions/import-codesign-certs@v3
+        with:
+          p12-file-base64: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          p12-password: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+
+      - name: Build (signed)
+        if: env.HAS_SIGNING == 'true'
+        run: |
+          xcodebuild -project Vakta.xcodeproj -scheme Vakta -configuration Release \
+            -destination 'platform=macOS' -derivedDataPath build \
+            MARKETING_VERSION='${{ steps.version.outputs.version }}' \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="${{ secrets.MACOS_SIGN_IDENTITY }}" \
+            DEVELOPMENT_TEAM="${{ secrets.APPLE_TEAM_ID }}" \
+            OTHER_CODE_SIGN_FLAGS="--timestamp --options runtime" \
+            build
+
+      - name: Build (ad-hoc, unsigned)
+        if: env.HAS_SIGNING != 'true'
+        run: |
+          xcodebuild -project Vakta.xcodeproj -scheme Vakta -configuration Release \
+            -destination 'platform=macOS' -derivedDataPath build \
+            MARKETING_VERSION='${{ steps.version.outputs.version }}' \
+            build
+
+      - name: Package .dmg
+        run: |
+          APP="build/Build/Products/Release/Vakta.app"
+          test -d "$APP" || { echo "App not found at $APP"; exit 1; }
+          STAGING="dmg-staging"
+          rm -rf "$STAGING"; mkdir -p "$STAGING"
+          cp -R "$APP" "$STAGING/"
+          ln -s /Applications "$STAGING/Applications"
+          hdiutil create -volname "Vakta" -srcfolder "$STAGING" \
+            -ov -format UDZO "Vakta-${{ steps.version.outputs.version }}.dmg"
+
+      - name: Sign & notarize .dmg
+        if: env.HAS_SIGNING == 'true'
+        run: |
+          DMG="Vakta-${{ steps.version.outputs.version }}.dmg"
+          codesign --force --sign "${{ secrets.MACOS_SIGN_IDENTITY }}" --timestamp "$DMG"
+          xcrun notarytool submit "$DMG" \
+            --apple-id "${{ secrets.APPLE_ID }}" \
+            --team-id "${{ secrets.APPLE_TEAM_ID }}" \
+            --password "${{ secrets.APPLE_APP_PASSWORD }}" \
+            --wait
+          xcrun stapler staple "$DMG"
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: Vakta-${{ steps.version.outputs.version }}.dmg
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+
+      - name: Upload artifact (dispatch runs)
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: Vakta-dmg
+          path: Vakta-*.dmg

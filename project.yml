@@ -1,0 +1,60 @@
+name: Vakta
+options:
+  bundleIdPrefix: tech.phin
+  deploymentTarget:
+    macOS: "13.0"
+  createIntermediateGroups: true
+
+packages:
+  libghostty-spm:
+    url: https://github.com/Lakr233/libghostty-spm.git
+    # Keep in sync with Package.swift. The embedding C API is unstable, so this
+    # is pinned exact, not a range.
+    exactVersion: 1.6.20260909
+
+targets:
+  Vakta:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources/Vakta
+    dependencies:
+      - package: libghostty-spm
+        product: GhosttyKit
+      - package: libghostty-spm
+        product: GhosttyTerminal
+      - package: libghostty-spm
+        product: GhosttyTheme
+    info:
+      path: Vakta/Info.plist
+      properties:
+        CFBundleDisplayName: Vakta
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        LSMinimumSystemVersion: "$(MACOSX_DEPLOYMENT_TARGET)"
+        NSHighResolutionCapable: true
+        NSPrincipalClass: NSApplication
+        LSApplicationCategoryType: public.app-category.developer-tools
+    entitlements:
+      path: Vakta/Vakta.entitlements
+      properties:
+        # Deliberately NOT sandboxed: Vakta spawns herdr/tmux/ssh child
+        # processes, which the App Sandbox forbids. Distributed via Developer
+        # ID (not the Mac App Store), where non-sandboxed apps are allowed.
+        com.apple.security.app-sandbox: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: tech.phin.vakta
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        # Hardened runtime is required for notarization. It does not block
+        # spawning child processes, so no extra entitlements are needed for it.
+        ENABLE_HARDENED_RUNTIME: true
+        # Local builds sign ad-hoc ("Sign to Run Locally"). For distribution,
+        # override with your Developer ID identity + team on the xcodebuild
+        # command line (see README).
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGN_STYLE: Manual
+        DEVELOPMENT_TEAM: ""
+        # libghostty-spm ships an arm64-only xcframework.
+        ARCHS: arm64

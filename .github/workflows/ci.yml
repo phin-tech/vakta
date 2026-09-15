@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-15 # Apple Silicon; libghostty-spm is arm64-only.
+    steps:
+      - uses: actions/checkout@v4
+
+      # Fast, IDE-free build of the SPM package — catches most breakage.
+      - name: swift build
+        run: swift build
+
+      # Verify the app target itself generates and compiles.
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate Xcode project
+        run: xcodegen generate
+      - name: Build app (ad-hoc)
+        run: |
+          xcodebuild -project Vakta.xcodeproj -scheme Vakta -configuration Debug \
+            -destination 'platform=macOS' -derivedDataPath build build
