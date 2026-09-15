@@ -98,16 +98,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         sessionStore.refreshDiscovery()
     }
 
-    /// Animates the divider between the full panel and the icon rail.
+    /// Moves the divider between the full panel and the icon rail. Done without
+    /// implicit animation: animating `setPosition` (especially with a nested
+    /// `layoutSubtreeIfNeeded`) leaves a stale divider streak. We force a clean
+    /// full redraw instead.
     private func applySidebarWidth(collapsed: Bool) {
         guard let splitView else { return }
         let target = collapsed ? collapsedSidebarWidth : expandedSidebarWidth
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.18
-            context.allowsImplicitAnimation = true
-            splitView.setPosition(target, ofDividerAt: 0)
-            splitView.layoutSubtreeIfNeeded()
-        }
+        splitView.setPosition(target, ofDividerAt: 0)
+        splitView.layoutSubtreeIfNeeded()
+        splitView.needsDisplay = true
+        splitView.window?.viewsNeedDisplay = true
     }
 
     @objc private func toggleSidebar() {
@@ -123,6 +124,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             rootView: SidebarView().environmentObject(sessionStore)
         )
         sidebarHost.frame = NSRect(x: 0, y: 0, width: expandedSidebarWidth, height: 640)
+        // Layer-backed + opaque so a resize can't leave a background seam.
+        sidebarHost.wantsLayer = true
 
         let terminalContainer = sessionStore.hostContainer
         terminalContainer.frame = NSRect(x: 0, y: 0, width: 860, height: 640)

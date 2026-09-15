@@ -14,6 +14,10 @@ terminal rendering via **libghostty** (using the prebuilt Swift package
 > code-signed or notarized yet, so a downloaded release is Gatekeeper-quarantined
 > (see [Releasing](#releasing) to de-quarantine, or to enable signing).
 
+<p align="center">
+  <img src="docs/screenshot.png" alt="Vakta managing herdr sessions" width="900">
+</p>
+
 ## Core Features
 
 - **Visual Session Switching** — Seamlessly switch between multiplexer sessions
