@@ -179,14 +179,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Drive the sidebar width off the store's collapsed flag, which the
         // sidebar's own button and the View menu both toggle.
         sidebarObserver = sessionStore.$sidebarCollapsed.sink { [weak self] collapsed in
-            self?.applySidebarWidth(collapsed: collapsed)
+            guard let self else { return }
+            self.applySidebarWidth(collapsed: collapsed, style: self.sidebarSettings.collapseStyle)
         }
 
         // Re-apply the width when the collapse *style* changes (icons vs.
         // hidden), so flipping the preference while collapsed updates live.
-        sidebarStyleObserver = sidebarSettings.$collapseStyle.sink { [weak self] _ in
+        // Uses the emitted `style` directly, NOT `sidebarSettings.collapseStyle`
+        // -- `@Published`'s publisher fires from `willSet`, so a synchronous
+        // re-read here would still see the OLD value (see
+        // `SidebarWidthPlanner`'s doc comment).
+        sidebarStyleObserver = sidebarSettings.$collapseStyle.sink { [weak self] style in
             guard let self else { return }
-            self.applySidebarWidth(collapsed: self.sessionStore.sidebarCollapsed)
+            self.applySidebarWidth(collapsed: self.sessionStore.sidebarCollapsed, style: style)
         }
     }
 
@@ -207,11 +212,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Moves the divider between the full panel and the icon rail. Done without
     /// implicit animation: animating `setPosition` (especially with a nested
     /// `layoutSubtreeIfNeeded`) leaves a stale divider streak. We force a clean
-    /// full redraw instead.
-    private func applySidebarWidth(collapsed: Bool) {
+    /// full redraw instead. `style` is always the caller's own current/emitted
+    /// value (see `SidebarWidthPlanner`'s doc comment for why this can't just
+    /// re-read `sidebarSettings.collapseStyle` from every call site).
+    private func applySidebarWidth(collapsed: Bool, style: SidebarCollapseStyle) {
         guard let splitView else { return }
-        let collapsedWidth = sidebarSettings.collapseStyle == .hidden ? 0 : collapsedSidebarWidth
-        let target = collapsed ? collapsedWidth : expandedSidebarWidth
+        let target = SidebarWidthPlanner.width(
+            collapsed: collapsed,
+            style: style,
+            collapsedWidth: collapsedSidebarWidth,
+            expandedWidth: expandedSidebarWidth
+        )
         splitView.setPosition(target, ofDividerAt: 0)
         splitView.layoutSubtreeIfNeeded()
         splitView.needsDisplay = true
