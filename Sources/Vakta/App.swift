@@ -173,6 +173,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             case .increaseFontSize: self.sessionStore.performBindingActionOnSelectedSession("increase_font_size:1")
             case .decreaseFontSize: self.sessionStore.performBindingActionOnSelectedSession("decrease_font_size:1")
             case .resetFontSize: self.sessionStore.performBindingActionOnSelectedSession("reset_font_size")
+            case .nextUnreadSession: self.sessionStore.goToNextUnreadSession()
             }
         }
 
@@ -223,6 +224,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard stores != nil else { return }
         // Keep the "Attach existing" list fresh when returning to the app.
         sessionStore.refreshDiscovery()
+        // A session already selected while the app was inactive when it went
+        // to `.attention` needs this explicit clear -- `select(_:)` never
+        // re-fires for an already-selected session (see
+        // `SessionStore.clearUnreadForSelectedSessionIfAppActive`).
+        sessionStore.clearUnreadForSelectedSessionIfAppActive()
     }
 
     /// Moves the divider between the full panel and the icon rail. Done without

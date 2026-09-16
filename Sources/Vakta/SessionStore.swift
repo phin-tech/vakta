@@ -63,6 +63,17 @@ final class SessionStore: ObservableObject {
     /// request succeeds. Not surfaced in any UI yet; see `requestClose`.
     @Published private(set) var lastRejectedClose: Session.ID?
 
+    /// Sessions with an attention transition the user hasn't seen yet (see
+    /// `UnreadAttentionPolicy`) -- backs the sidebar bell popover and
+    /// `goToNextUnreadSession`. Cleared by `select(_:)`, by
+    /// `clearUnreadForSelectedSessionIfAppActive()` (called from
+    /// `AppDelegate.applicationDidBecomeActive`, for a session that was
+    /// already selected while the app was inactive when it went to
+    /// `.attention`), and by `removeSession`. Deliberately independent of
+    /// the notifyOnAttention/bounceDock preference toggles -- see
+    /// `UnreadAttentionPolicy`'s doc comment.
+    @Published private(set) var unreadSessionIDs: Set<Session.ID> = []
+
     /// Per-session agent status (herdr sessions only), polled from
     /// `herdr agent list` and shown as a colored dot in the sidebar. The Dock
     /// badge (count of sessions needing attention) is derived here so both the
@@ -464,14 +475,29 @@ final class SessionStore: ObservableObject {
                 )
                 for entry in accepted {
                     if entry.previous != entry.status, let session = self.sessions.first(where: { $0.id == entry.sessionID }) {
+                        let isSelected = self.selectedID == entry.sessionID
+                        let appActive = NSApp.isActive
                         self.notifier.handleTransition(
                             sessionID: entry.sessionID,
                             title: session.displayTitle,
                             from: entry.previous,
                             to: entry.status,
-                            isSelected: self.selectedID == entry.sessionID,
-                            appActive: NSApp.isActive
+                            isSelected: isSelected,
+                            appActive: appActive
                         )
+                        // Uses entry.previous/entry.status (the transition
+                        // just computed above), not a re-read of
+                        // self.agentStatus -- that's about to be overwritten
+                        // with the new value below, which would make every
+                        // transition look like a no-op (from == to).
+                        if UnreadAttentionPolicy.shouldMarkUnread(
+                            from: entry.previous,
+                            to: entry.status,
+                            isSelected: isSelected,
+                            appActive: appActive
+                        ) {
+                            self.unreadSessionIDs.insert(entry.sessionID)
+                        }
                     }
                     self.agentStatus[entry.sessionID] = entry.status
                 }
@@ -740,6 +766,7 @@ final class SessionStore: ObservableObject {
         herdrEventClients[id]?.stop()
         herdrEventClients[id] = nil
         herdrSubscribedPaneIDs[id] = nil
+        unreadSessionIDs.remove(id)
 
         let fallback = SessionSelectionPlanner.fallbackAfterRemoval(
             removedID: id,
@@ -759,7 +786,32 @@ final class SessionStore: ObservableObject {
         guard sessions.contains(where: { $0.id == id }) else { return }
         selectedID = id
         hostContainer.select(id)
+        unreadSessionIDs.remove(id)
         saveWorkspace()
+    }
+
+    /// Jumps to the next session with an unseen attention transition (see
+    /// `NextUnreadSessionPlanner`) -- the bell popover's cmux-style "next
+    /// unread". A no-op if nothing is unread.
+    func goToNextUnreadSession() {
+        guard let next = NextUnreadSessionPlanner.next(
+            after: selectedID,
+            sessionOrder: sessions.map(\.id),
+            unread: unreadSessionIDs
+        ) else { return }
+        select(next)
+    }
+
+    /// Clears the currently-selected session's unread flag, if any --
+    /// called from `AppDelegate.applicationDidBecomeActive`. Covers the case
+    /// `select(_:)` alone can't: a session already selected while the app
+    /// was inactive when it transitioned to `.attention` is marked unread
+    /// (see `UnreadAttentionPolicy`) but `select(_:)` never fires again for
+    /// an already-selected session, so it would otherwise stay unread until
+    /// the user clicked away and back.
+    func clearUnreadForSelectedSessionIfAppActive() {
+        guard NSApp.isActive, let selectedID else { return }
+        unreadSessionIDs.remove(selectedID)
     }
 
     /// Queries `id`'s workspaces (off the main thread) and publishes the

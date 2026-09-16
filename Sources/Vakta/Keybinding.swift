@@ -58,6 +58,11 @@ enum KeybindingAction: Hashable, Codable {
     /// Reset the terminal's font size to the configured default
     /// (`reset_font_size`).
     case resetFontSize
+    /// Jump to the next session with an unseen attention transition (the
+    /// bell popover's cmux-style "next unread" -- see
+    /// `NextUnreadSessionPlanner`). Ships unbound like `toggleSidebar`/
+    /// `openPreferences`; the bell icon is the primary way to reach it.
+    case nextUnreadSession
 
     /// A human label for the Preferences list.
     var title: String {
@@ -75,6 +80,7 @@ enum KeybindingAction: Hashable, Codable {
         case .increaseFontSize: return "Increase Font Size"
         case .decreaseFontSize: return "Decrease Font Size"
         case .resetFontSize: return "Reset Font Size"
+        case .nextUnreadSession: return "Next Unread Session"
         }
     }
 }

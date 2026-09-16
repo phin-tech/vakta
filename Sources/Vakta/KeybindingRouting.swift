@@ -30,7 +30,7 @@ extension KeybindingAction {
         switch self {
         case .quit, .closeWindow: return .global
         case .selectSession, .toggleSidebar, .openPreferences, .openSessionSwitcher, .copy, .paste, .cut, .selectAll,
-             .increaseFontSize, .decreaseFontSize, .resetFontSize:
+             .increaseFontSize, .decreaseFontSize, .resetFontSize, .nextUnreadSession:
             return .contextSensitive
         }
     }

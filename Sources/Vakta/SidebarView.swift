@@ -37,6 +37,9 @@ struct SidebarView: View {
     /// Whether `editorProfile` is a brand-new profile (vs. editing an existing).
     @State private var editorIsNew = false
 
+    /// Whether the notifications bell's unread-sessions popover is open.
+    @State private var isNotificationsPopoverPresented = false
+
     /// Below this width the sidebar renders as an icon rail.
     private let railThreshold: CGFloat = 120
 
@@ -117,7 +120,10 @@ struct SidebarView: View {
     @ViewBuilder
     private func header(collapsed: Bool) -> some View {
         HStack(spacing: 0) {
-            if !collapsed { Spacer(minLength: 0) }
+            if !collapsed {
+                Spacer(minLength: 0)
+                notificationsBellButton
+            }
             Button {
                 sessionStore.toggleSidebar()
             } label: {
@@ -148,6 +154,69 @@ struct SidebarView: View {
         .padding(.top, collapsed ? titlebarInset : 4)
         .padding(.horizontal, collapsed ? 0 : 10)
         .padding(.bottom, 4)
+    }
+
+    // MARK: Notifications bell (unread sessions -- see `SessionStore.unreadSessionIDs`)
+
+    /// Only shown expanded (not in the icon rail) -- the rail is already a
+    /// narrow strip of session icons with no room for a second control
+    /// beyond the collapse toggle.
+    private var notificationsBellButton: some View {
+        Button {
+            isNotificationsPopoverPresented = true
+        } label: {
+            ZStack(alignment: .topTrailing) {
+                Image(systemName: sessionStore.unreadSessionIDs.isEmpty ? "bell" : "bell.fill")
+                    .font(.system(size: 13, weight: .regular))
+                    .foregroundStyle(.secondary)
+                if !sessionStore.unreadSessionIDs.isEmpty {
+                    Circle()
+                        .fill(Color.red)
+                        .frame(width: 6, height: 6)
+                        .offset(x: 3, y: -2)
+                }
+            }
+            .frame(width: 24, height: 24)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless)
+        .help("Notifications")
+        .popover(isPresented: $isNotificationsPopoverPresented, arrowEdge: .bottom) {
+            notificationsPopoverContent
+        }
+    }
+
+    private var notificationsPopoverContent: some View {
+        let unread = sessionStore.sessions.filter { sessionStore.unreadSessionIDs.contains($0.id) }
+        return VStack(alignment: .leading, spacing: 0) {
+            if unread.isEmpty {
+                Text("No unread sessions")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .padding(12)
+            } else {
+                ForEach(unread) { session in
+                    Button {
+                        // `select` already clears this session's unread flag
+                        // (see `SessionStore.select`) -- no second clear path.
+                        sessionStore.select(session.id)
+                        isNotificationsPopoverPresented = false
+                    } label: {
+                        HStack(spacing: 8) {
+                            Circle().fill(Color.red).frame(width: 6, height: 6)
+                            Text(session.displayTitle)
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        .frame(minWidth: 220)
+        .padding(.vertical, 6)
     }
 
     // MARK: Full panel
