@@ -47,6 +47,7 @@ enum PreferencesSection: String, CaseIterable, Identifiable {
 struct PreferencesView: View {
     @State private var selection: PreferencesSection = .appearance
     @EnvironmentObject private var persistenceFailures: PersistenceFailureCenter
+    @EnvironmentObject private var sessionStore: SessionStore
 
     var body: some View {
         NavigationSplitView {
@@ -71,6 +72,13 @@ struct PreferencesView: View {
                 HerdrPreferencesView()
             }
         }
+        // Tints controls (toggles, pickers, the section list's own selection
+        // highlight, buttons) with the terminal theme's accent -- the same
+        // thread the sidebar and ⌘K palette already pull on. Deliberately
+        // NOT a solid background repaint like those two: this window is
+        // standard Form controls macOS didn't design to sit on an arbitrary
+        // background, so it keeps the system material.
+        .tint(Color(nsColor: sessionStore.terminalAccentColor))
         .safeAreaInset(edge: .bottom) {
             if let message = persistenceFailures.latestMessage {
                 saveFailureBanner(message)
