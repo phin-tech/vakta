@@ -10,8 +10,8 @@
 //
 //  Recording routes through the matcher's own event monitor (`captureNext`)
 //  rather than a second local monitor, which the matcher's earlier-installed
-//  monitor would shadow (settled design decision #6 -- it runs in front of
-//  everything).
+//  monitor would shadow (docs/architecture.md's "The matcher runs in front
+//  of every surface" invariant).
 
 import AppKit
 import SwiftUI

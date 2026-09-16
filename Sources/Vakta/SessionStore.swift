@@ -4,12 +4,14 @@
 //
 //  Owns the session list + selection (ObservableObject, drives the SwiftUI
 //  sidebar chrome) and the single shared `TerminalController` (one
-//  `ghostty_app_t` for the whole process -- settled design decision #2).
+//  `ghostty_app_t` for the whole process -- see docs/architecture.md's
+//  "Single shared terminal controller" invariant).
 //
 //  This type also owns `hostContainer`, the AppKit view every session's
-//  surface lives in for the app's lifetime (settled design decision #4). See
-//  `TerminalContainer.swift` for why creation/removal/selection are all
-//  imperative calls into that view rather than anything SwiftUI-driven.
+//  surface lives in for the app's lifetime (docs/architecture.md's
+//  "Permanent AppKit terminal host" invariant). See `TerminalContainer.swift`
+//  for why creation/removal/selection are all imperative calls into that
+//  view rather than anything SwiftUI-driven.
 
 import AppKit
 import Combine
@@ -328,8 +330,9 @@ final class SessionStore: ObservableObject {
     // MARK: Terminal font + theme
 
     /// Fills a terminal config builder with the settled keybind-clear plus the
-    /// user's font. ALWAYS emits `keybind = clear` (settled design decision #5)
-    /// so a font-only change can't drop it -- `setTerminalConfiguration`
+    /// user's font. ALWAYS emits `keybind = clear` (docs/architecture.md's
+    /// "Keybindings routed through the matcher, not menu key equivalents"
+    /// invariant) so a font-only change can't drop it -- `setTerminalConfiguration`
     /// replaces the whole config rather than merging. Empty font family / zero
     /// size are omitted so ghostty keeps its own default.
     private static func configureBuilder(
@@ -721,7 +724,8 @@ final class SessionStore: ObservableObject {
     }
 
     /// Entry point for `KeybindingMatcher`'s "switch to session N" chords
-    /// (settled design decision #6). `index` is 0-based.
+    /// (docs/architecture.md's "The matcher runs in front of every surface"
+    /// invariant). `index` is 0-based.
     func selectSession(at index: Int) {
         guard sessions.indices.contains(index) else { return }
         select(sessions[index].id)

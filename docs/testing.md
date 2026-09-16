@@ -2,15 +2,21 @@
 
 ## Baseline and scope
 
-As inspected on 2026-09-16, `Package.swift` and `project.yml` define the application
-but no test targets; CI compiles SwiftPM and the generated Xcode app without running
-tests. There is no measured coverage baseline. The cases below are required future
-coverage, not claims that tests already exist or pass. The review includes local
-work on notifications, terminal settings, session switching, and passthrough input.
+Updated 2026-09-16: `Package.swift` defines `VaktaCoreTests` and
+`VaktaIntegrationTests` targets; `.github/workflows/ci.yml` runs `swift test`
+(265 tests as of this update) plus `Tests/scripts/test_*.sh` (the release
+version/signing/install scripts) on every push/PR, alongside `swift build`
+and the generated Xcode app build. Every ticket in the tables below is
+closed under kata epic `vakta#mkwv` -- the tables describe what was
+actually implemented and where its coverage lives, not future work.
+See [README.md](../README.md#contributing) for the exact commands.
 
-Implementation must follow the phase gates in [AGENTS.md](../AGENTS.md). This plan
-does not authorize GREEN or REFACTOR. Kata epic `vakta#mkwv` tracks the cleanup;
-ticket references below identify the relevant scope, not completed work.
+This plan remains the reference for what a NEW behavior change in one of
+these areas needs to keep covering; it is not a queue of unstarted work. Add
+a row (or extend an existing one) when a change adds a new decision or
+effect boundary, per "Coverage evidence and maintenance" below.
+
+Implementation must follow the phase gates in [AGENTS.md](../AGENTS.md).
 
 ## Test layers and harness
 
@@ -20,11 +26,12 @@ ticket references below identify the relevant scope, not completed work.
 | Imperative shell | Correct boundary behavior and resulting state | Temporary files, real fixture subprocesses, stateful in-memory adapters, real Combine/AppKit where feasible |
 | Desktop integration | Surface lifetime, focus/input, rendering, native notifications | Logged-in macOS desktop with Metal and the pinned Ghostty dependency |
 
-Proposed homes are `Tests/VaktaCoreTests`, `Tests/VaktaIntegrationTests`, and a
-separately configured desktop test suite/checklist. These directories and targets
-do not exist yet. Add the smallest usable harness with the first implementation
-slice, keeping test code out of the application target. Isolate core code in an
-importable module as needed; do not launch `VaktaMain` to test decisions.
+Homes: `Tests/VaktaCoreTests`, `Tests/VaktaIntegrationTests`, and the manual
+"Desktop regression checklist" below (no automated desktop suite exists;
+Metal-backed surfaces need a logged-in session -- see AGENTS.md's "Terminal
+invariants"). Keep test code out of the application target. Isolate core
+code in an importable module as needed; do not launch `VaktaMain` to test
+decisions.
 
 Start with XCTest compatible with the declared tooling. Core tests should avoid
 AppKit/Ghostty imports. Nondisplay integration tests can run on macOS CI without
@@ -33,9 +40,11 @@ owned resources, clean them up even on failure, and bound waits with diagnostics
 Avoid real user settings, existing multiplexer sessions, network endpoints, and
 notification permissions in automated unit/integration tests.
 
-After targets exist, `swift test` must execute a nonzero test suite in CI. Keep the
-existing SwiftPM and generated-Xcode build checks. Add an Xcode test action only
-when the generated scheme has actual test targets. Document display prerequisites
+`swift test` must execute a nonzero test suite in CI (it does: 265 tests as of
+this update). Keep the existing SwiftPM and generated-Xcode build checks. Add
+an Xcode test action only when the generated scheme has actual test targets
+(it doesn't yet -- `swift test` covers `VaktaCoreTests`/`VaktaIntegrationTests`
+directly). Document display prerequisites
 and explicit skips; never count skipped desktop checks as passing coverage.
 
 ## Priority 1: data preservation and runtime correctness
@@ -101,6 +110,4 @@ Report executed test names/suites and commands, remaining gaps, and desktop resu
 Collect line/branch coverage after the harness exists to find missed paths; no
 percentage target substitutes for these behavioral cases. Avoid tests for trivial
 getters, generated project files, exact view trees, and private call ordering.
-Update this matrix when a feature adds a new decision or effect boundary. Remove
-stale scaffold guidance under `41hm` separately; these documents do not imply that
-the rest of that issue has been completed.
+Update this matrix when a feature adds a new decision or effect boundary.

@@ -2,16 +2,19 @@
 //  Keybinding.swift
 //  Vakta
 //
-//  Settled design decision #6: Vakta's app-level actions (switch to session
-//  N, toggle the sidebar, open Preferences) are not libghostty actions
-//  (libghostty has no concept of Vakta's sidebar or windows), so they are
-//  never stored in ghostty's config. They live here, as Vakta's own tiny
-//  config type: an exact modifier mask + a physical key code -> an action.
+//  Vakta's app-level actions (switch to session N, toggle the sidebar, open
+//  Preferences) are not libghostty actions (libghostty has no concept of
+//  Vakta's sidebar or windows), so they are never stored in ghostty's
+//  config. They live here, as Vakta's own tiny config type: an exact
+//  modifier mask + a physical key code -> an action (see docs/architecture.md's
+//  "The matcher runs in front of every surface" invariant).
 //
 //  This is also the ONLY path by which those actions can get a keyboard
-//  shortcut: settled design decision #5 keeps every menu item free of a
-//  `keyEquivalent` so keystrokes reach herdr, so the menu can't carry ⌘-keys.
-//  `KeybindingMatcher` intercepts these chords before the surface sees them.
+//  shortcut: docs/architecture.md's "Keybindings routed through the
+//  matcher, not menu key equivalents" invariant keeps every menu item free
+//  of a `keyEquivalent` so keystrokes reach herdr, so the menu can't carry
+//  ⌘-keys. `KeybindingMatcher` intercepts these chords before the surface
+//  sees them.
 
 import AppKit
 
@@ -109,8 +112,9 @@ extension Keybinding {
     /// ⌘K opens the session switcher, and ⌘Q quits. `toggleSidebar` and
     /// `openPreferences` ship unbound (absent from the array); the Preferences
     /// pane lets the user assign, reassign, or clear any of these. Note that a
-    /// bound chord is consumed before it reaches herdr (settled design decision
-    /// #6) -- clear the binding to hand that key back to the terminal.
+    /// bound chord is consumed before it reaches herdr (docs/architecture.md's
+    /// "The matcher runs in front of every surface" invariant) -- clear the
+    /// binding to hand that key back to the terminal.
     static var defaults: [Keybinding] {
         var bindings = digitKeyCodes.enumerated().map { index, code in
             Keybinding(modifierMask: [.control, .shift], keyCode: code, action: .selectSession(index))

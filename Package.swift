@@ -12,8 +12,9 @@ let package = Package(
     dependencies: [
         // Prebuilt libghostty xcframework + Swift wrapper.
         // The embedding C API is UNSTABLE upstream, so we pin an EXACT tag
-        // rather than a range or branch. See README.md "Pinned dependency"
-        // section for how this tag was chosen and how to bump it.
+        // rather than a range or branch. Keep in sync with project.yml's
+        // packages.libghostty-spm.exactVersion -- see README.md "Pinned
+        // dependency" for how to bump both.
         .package(url: "https://github.com/Lakr233/libghostty-spm.git", exact: "1.6.20260909")
     ],
     targets: [

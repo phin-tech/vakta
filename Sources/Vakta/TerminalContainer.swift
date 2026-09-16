@@ -4,15 +4,16 @@
 //
 //  The AppKit-owned home for every session's terminal surface.
 //
-//  Settled design decision #4 is the whole point of this file: NEVER create
-//  or destroy a surface on sidebar selection, and NEVER host a live surface
-//  behind a SwiftUI conditional. Every `AppTerminalView` (the `TerminalView`
-//  typealias on macOS -- see the resolved libghostty-spm checkout's
-//  `View/TerminalView.swift`) this container creates stays a subview, alive,
-//  for the session's entire lifetime. Switching the visible session flips
-//  `isHidden` + `setSurfaceVisible(_:)` on exactly two views; it never adds,
-//  removes, or recreates anything. Only `removeSession(_:)` -- called when a
-//  session actually closes -- tears a surface down, and it does so simply by
+//  docs/architecture.md's "Permanent AppKit terminal host" invariant is the
+//  whole point of this file: NEVER create or destroy a surface on sidebar
+//  selection, and NEVER host a live surface behind a SwiftUI conditional.
+//  Every `AppTerminalView` (the `TerminalView` typealias on macOS -- see the
+//  resolved libghostty-spm checkout's `View/TerminalView.swift`) this
+//  container creates stays a subview, alive, for the session's entire
+//  lifetime. Switching the visible session flips `isHidden` +
+//  `setSurfaceVisible(_:)` on exactly two views; it never adds, removes, or
+//  recreates anything. Only `removeSession(_:)` -- called when a session
+//  actually closes -- tears a surface down, and it does so simply by
 //  dropping the last strong reference to the view: `AppTerminalView`'s
 //  `deinit` walks `TerminalSurfaceCoordinator.deinit` ->
 //  `tearDownSurface(removingBridgeFrom:)` -> `surface.free()`, which is also
@@ -20,7 +21,6 @@
 
 import AppKit
 import GhosttyTerminal
-import SwiftUI
 
 @MainActor
 final class TerminalHostContainerView: NSView {
@@ -91,38 +91,5 @@ final class TerminalHostContainerView: NSView {
             guard let self, let view, self.selectedID == id, let window = self.window else { return }
             window.makeFirstResponder(view)
         }
-    }
-}
-
-// MARK: - Optional SwiftUI bridge
-
-/// An `NSViewRepresentable` bridge to a *pre-existing*, externally owned
-/// `TerminalHostContainerView`. It deliberately never creates the container
-/// itself: SwiftUI-driven creation of an `NSViewRepresentable`'s view is not
-/// guaranteed to run exactly once over the view's logical lifetime (a diff
-/// can call `makeNSView` again, or tear the representable down, for reasons
-/// unrelated to session state), and that is exactly the failure mode
-/// settled design decision #4 rules out.
-///
-/// `Vakta/App.swift` does not use this: the container is instead a direct,
-/// permanent subview of an `NSSplitView` that IS the window's content view,
-/// so SwiftUI never owns the container at all and the representable
-/// lifetime question does not arise. This type is kept because the task's
-/// suggested structure calls for a `TerminalContainer.swift` with "AppKit
-/// container + `NSViewRepresentable` bridge" -- a host that genuinely needs
-/// the container reachable from inside a larger SwiftUI-only layout can use
-/// it safely, precisely because `container` is supplied from outside rather
-/// than instantiated here.
-struct TerminalContainerRepresentable: NSViewRepresentable {
-    let container: TerminalHostContainerView
-
-    func makeNSView(context _: Context) -> TerminalHostContainerView {
-        container
-    }
-
-    func updateNSView(_: TerminalHostContainerView, context _: Context) {
-        // Deliberately empty: `SessionStore` drives `container` imperatively
-        // (`addSession` / `removeSession` / `select`) as sessions change,
-        // never through SwiftUI's declarative update pass.
     }
 }

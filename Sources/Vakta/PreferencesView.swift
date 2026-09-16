@@ -3,9 +3,9 @@
 //  Vakta
 //
 //  The Preferences window's content: a sidebar of sections on the left, the
-//  selected section's editor on the right. Only "Keybindings" exists today;
-//  the `PreferencesSection` enum is the seam where future panes (appearance,
-//  profiles, …) slot in.
+//  selected section's editor on the right. `PreferencesSection` is the seam
+//  where a new pane slots in -- add a case, a `title`/`symbol`, and a
+//  `detail` branch below.
 
 import SwiftUI
 
