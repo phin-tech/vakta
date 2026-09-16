@@ -35,21 +35,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var splitView: NSSplitView?
     private var sidebarObserver: AnyCancellable?
     private var sidebarStyleObserver: AnyCancellable?
-    private let keybindingMatcher = KeybindingMatcher()
-    private let appearanceStore = AppearanceStore()
-    private let sidebarSettings = SidebarSettingsStore()
-    private let notificationSettings = NotificationSettingsStore()
-    private let terminalSettings = TerminalSettingsStore()
-    // Lazy so it can take `terminalSettings` (a non-lazy stored initializer
-    // can't reference another stored property; a lazy one can).
-    private lazy var sessionStore = SessionStore(terminalSettings: terminalSettings)
-    private lazy var preferencesController = PreferencesWindowController(
-        keybindingMatcher: keybindingMatcher,
-        appearanceStore: appearanceStore,
-        sidebarSettings: sidebarSettings,
-        notificationSettings: notificationSettings,
-        terminalSettings: terminalSettings
-    )
+    private let stores = Stores()
+    private lazy var preferencesController = PreferencesWindowController(stores: stores)
+
+    // Thin forwarders so the rest of `AppDelegate` reads each store directly.
+    private var sessionStore: SessionStore { stores.sessionStore }
+    private var keybindingMatcher: KeybindingMatcher { stores.keybindingMatcher }
+    private var appearanceStore: AppearanceStore { stores.appearanceStore }
+    private var sidebarSettings: SidebarSettingsStore { stores.sidebarSettings }
+    private var notificationSettings: NotificationSettingsStore { stores.notificationSettings }
+    private var terminalSettings: TerminalSettingsStore { stores.terminalSettings }
 
     /// The AppKit sidebar/terminal chrome whose colors follow the terminal
     /// theme; re-applied when it changes (SwiftUI parts update themselves).
@@ -212,10 +207,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // the app's chrome appearance is set to.
         let sidebarHost = NSHostingView(
             rootView: SidebarView()
-                .environmentObject(sessionStore)
-                .environmentObject(appearanceStore)
-                .environmentObject(terminalSettings)
-                .environmentObject(keybindingMatcher)
+                .environmentStores(stores)
         )
         sidebarHost.appearance = NSAppearance(
             named: sessionStore.terminalBackgroundColor.isDark ? .darkAqua : .aqua

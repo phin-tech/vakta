@@ -9,6 +9,7 @@ import SwiftUI
 
 struct AppearancePreferencesView: View {
     @EnvironmentObject private var store: AppearanceStore
+    @EnvironmentObject private var sidebarSettings: SidebarSettingsStore
 
     var body: some View {
         Form {
@@ -37,6 +38,21 @@ struct AppearancePreferencesView: View {
                 Text("“Terminal Style” draws the sidebar in the terminal font "
                     + "(set under Terminal) with a prompt-style caret, so it "
                     + "reads like the terminal.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section {
+                Picker("When sidebar is collapsed", selection: $sidebarSettings.collapseStyle) {
+                    ForEach(SidebarCollapseStyle.allCases) { style in
+                        Text(style.title).tag(style)
+                    }
+                }
+                .pickerStyle(.radioGroup)
+            } footer: {
+                Text("“Hidden” removes the sidebar entirely — bring it back with "
+                    + "View ▸ Toggle Sidebar (or a shortcut bound to it under "
+                    + "Keybindings).")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

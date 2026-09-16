@@ -29,6 +29,13 @@ final class SessionStore: ObservableObject {
         didSet { ProfilePersistence.save(profiles) }
     }
 
+    /// The profile a plain "New Session" uses. `nil` means "the first profile"
+    /// (the historical behavior). Editable in the Sessions preferences pane;
+    /// persisted on change.
+    @Published var defaultProfileID: Profile.ID? {
+        didSet { SessionSettingsPersistence.saveDefaultProfileID(defaultProfileID) }
+    }
+
     /// Existing multiplexer sessions discovered on the server, keyed by the
     /// profile that can attach them. Populated on demand by `refreshDiscovery`
     /// and offered in the "New Session" menu -- never auto-added to the sidebar.
@@ -88,8 +95,15 @@ final class SessionStore: ObservableObject {
     /// when Vakta was launched from a `.app` with a minimal PATH.
     private let resolvedPATH: String
 
-    /// The profile used when `createSession` is called with no explicit one.
-    var defaultProfile: Profile { profiles.first ?? .herdr }
+    /// The profile used when `createSession` is called with no explicit one:
+    /// the user's chosen default, else the first profile (else the built-in
+    /// herdr profile if the list is somehow empty).
+    var defaultProfile: Profile {
+        if let id = defaultProfileID, let profile = profiles.first(where: { $0.id == id }) {
+            return profile
+        }
+        return profiles.first ?? .herdr
+    }
 
     init(terminalSettings: TerminalSettingsStore) {
         self.terminalSettings = terminalSettings
@@ -105,6 +119,10 @@ final class SessionStore: ObservableObject {
         if loaded == nil {
             ProfilePersistence.save(seeded)
         }
+
+        // The chosen default profile for new sessions (nil -> first profile).
+        // Assigning in init does not fire `didSet`, so nothing is re-saved here.
+        defaultProfileID = SessionSettingsPersistence.loadDefaultProfileID()
 
         // Resolve the user's chosen theme (falling back to the wrapper's
         // built-in default if the name ever goes stale) and derive the sidebar
@@ -421,6 +439,7 @@ final class SessionStore: ObservableObject {
     /// back to `.herdr` -- so removing the last one is harmless.
     func deleteProfile(_ id: Profile.ID) {
         profiles.removeAll { $0.id == id }
+        if defaultProfileID == id { defaultProfileID = nil }
     }
 
     /// Entry point for `KeybindingMatcher`'s "switch to session N" chords

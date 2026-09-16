@@ -13,7 +13,7 @@ import SwiftUI
 enum PreferencesSection: String, CaseIterable, Identifiable {
     case appearance
     case terminal
-    case sidebar
+    case sessions
     case notifications
     case keybindings
 
@@ -23,7 +23,7 @@ enum PreferencesSection: String, CaseIterable, Identifiable {
         switch self {
         case .appearance: return "Appearance"
         case .terminal: return "Terminal"
-        case .sidebar: return "Sidebar"
+        case .sessions: return "Sessions"
         case .notifications: return "Notifications"
         case .keybindings: return "Keybindings"
         }
@@ -34,7 +34,7 @@ enum PreferencesSection: String, CaseIterable, Identifiable {
         switch self {
         case .appearance: return "paintpalette"
         case .terminal: return "terminal"
-        case .sidebar: return "sidebar.leading"
+        case .sessions: return "macwindow"
         case .notifications: return "bell"
         case .keybindings: return "keyboard"
         }
@@ -57,8 +57,8 @@ struct PreferencesView: View {
                 AppearancePreferencesView()
             case .terminal:
                 TerminalPreferencesView()
-            case .sidebar:
-                SidebarPreferencesView()
+            case .sessions:
+                SessionsPreferencesView()
             case .notifications:
                 NotificationsPreferencesView()
             case .keybindings:
