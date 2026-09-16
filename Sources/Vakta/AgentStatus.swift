@@ -15,6 +15,11 @@ import Foundation
 enum AgentStatus: Equatable {
     case working
     case attention
+    /// A task actually completed (herdr's "done"/"complete") -- distinct
+    /// from `.idle` ("idle"/"ready": never ran, or reset). Folding both
+    /// into one case previously made a real completion visually identical
+    /// to a session that never did anything.
+    case done
     case idle
     /// No agents, or status not (yet) known.
     case none
@@ -32,7 +37,9 @@ enum AgentStatus: Equatable {
         switch raw.lowercased() {
         case "working", "busy", "running", "thinking":
             self = .working
-        case "idle", "ready", "done", "complete":
+        case "done", "complete":
+            self = .done
+        case "idle", "ready":
             self = .idle
         default:
             // waiting / needs-input / error / anything unknown -> surface it.
@@ -42,11 +49,15 @@ enum AgentStatus: Equatable {
 
     /// Higher wins when aggregating a session's agents. `.attention` is
     /// highest -- a waiting agent's need must never be hidden behind a
-    /// still-working one (see the type's doc comment).
+    /// still-working one (see the type's doc comment). `.done` ranks above
+    /// plain `.idle` (a completed task is more informative than "never
+    /// ran") but below `.working` (a still-busy agent outranks a different,
+    /// already-finished one in the same session).
     private var rank: Int {
         switch self {
-        case .attention: return 3
-        case .working: return 2
+        case .attention: return 4
+        case .working: return 3
+        case .done: return 2
         case .idle: return 1
         case .none, .unavailable: return 0
         }

@@ -18,8 +18,18 @@ final class AgentStatusTests: XCTestCase {
     }
 
     func test_init_knownIdleSynonyms_mapToIdle() {
-        for raw in ["idle", "ready", "done", "complete"] {
+        for raw in ["idle", "ready"] {
             XCTAssertEqual(AgentStatus(herdr: raw), .idle, raw)
+        }
+    }
+
+    func test_init_knownDoneSynonyms_mapToDone() {
+        // Distinct from `.idle`: herdr's "done" means the agent actually
+        // completed a task, not merely "never ran"/"reset". Previously
+        // folded into `.idle`, which meant a real completion and a
+        // never-started session were visually identical.
+        for raw in ["done", "complete", "DONE"] {
+            XCTAssertEqual(AgentStatus(herdr: raw), .done, raw)
         }
     }
 
@@ -56,5 +66,21 @@ final class AgentStatusTests: XCTestCase {
 
     func test_busiest_workingAndNone_isWorking() {
         XCTAssertEqual(AgentStatus.busiest([.working, .none]), .working)
+    }
+
+    func test_busiest_workingAndDone_isWorking() {
+        // A still-working agent outranks a different agent that already
+        // finished -- there's still something to wait on.
+        XCTAssertEqual(AgentStatus.busiest([.working, .done]), .working)
+    }
+
+    func test_busiest_doneAndIdle_isDone() {
+        // Done outranks plain idle: "completed a task" is more informative
+        // than "never ran".
+        XCTAssertEqual(AgentStatus.busiest([.done, .idle]), .done)
+    }
+
+    func test_busiest_attentionAndDone_isAttention() {
+        XCTAssertEqual(AgentStatus.busiest([.attention, .done]), .attention)
     }
 }

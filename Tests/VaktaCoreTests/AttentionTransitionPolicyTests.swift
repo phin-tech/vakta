@@ -31,7 +31,7 @@ final class AttentionTransitionPolicyTests: XCTestCase {
     // MARK: first observation / focus silence
 
     func test_firstObservation_isSilent_regardlessOfDestinationStatus() {
-        for to: AgentStatus in [.attention, .working, .idle, .none] {
+        for to: AgentStatus in [.attention, .working, .idle, .done, .none] {
             XCTAssertEqual(decide(from: nil, to: to), .silent, "\(to)")
         }
     }
@@ -82,30 +82,41 @@ final class AttentionTransitionPolicyTests: XCTestCase {
 
     // MARK: finished transition -- tied to a defined completion transition
 
-    func test_toIdle_fromWorking_isFinished() {
-        let result = decide(from: .working, to: .idle)
+    func test_toDone_fromWorking_isFinished() {
+        // Tied specifically to herdr's own "done" signal, not merely "went
+        // quiet" -- `to: .idle` no longer counts (see below): `.done` is a
+        // real completion, `.idle` can just mean the agent was reset or
+        // never ran.
+        let result = decide(from: .working, to: .done)
         XCTAssertTrue(result.shouldBanner)
         XCTAssertEqual(result.bannerBody, "Agent finished")
         XCTAssertFalse(result.playSound)
         XCTAssertFalse(result.shouldBounceDock)
     }
 
-    func test_toIdle_fromAttention_isNotFinished() {
+    func test_toIdle_fromWorking_isNoLongerFinished() {
+        // Plain idle (herdr's "idle"/"ready") is distinct from a real
+        // completion (`.done`, herdr's "done"/"complete") -- see
+        // `AgentStatus.init(herdr:)`. Only `.done` fires "Agent finished".
+        XCTAssertEqual(decide(from: .working, to: .idle), .silent)
+    }
+
+    func test_toDone_fromAttention_isNotFinished() {
         // Losing the attention flag is not itself a completion -- only a
-        // working -> idle transition is.
-        XCTAssertEqual(decide(from: .attention, to: .idle), .silent)
+        // working -> done transition is.
+        XCTAssertEqual(decide(from: .attention, to: .done), .silent)
     }
 
-    func test_toIdle_fromNone_isNotFinished() {
-        XCTAssertEqual(decide(from: AgentStatus.none, to: .idle), .silent)
+    func test_toDone_fromNone_isNotFinished() {
+        XCTAssertEqual(decide(from: AgentStatus.none, to: .done), .silent)
     }
 
-    func test_toIdle_fromWorking_respectsNotifyOnFinishedToggle() {
-        XCTAssertEqual(decide(from: .working, to: .idle, notifyOnFinished: false), .silent)
+    func test_toDone_fromWorking_respectsNotifyOnFinishedToggle() {
+        XCTAssertEqual(decide(from: .working, to: .done, notifyOnFinished: false), .silent)
     }
 
-    func test_toIdle_fromWorking_selectedAndFrontmost_isSilent() {
-        XCTAssertEqual(decide(from: .working, to: .idle, isSelected: true, appActive: true), .silent)
+    func test_toDone_fromWorking_selectedAndFrontmost_isSilent() {
+        XCTAssertEqual(decide(from: .working, to: .done, isSelected: true, appActive: true), .silent)
     }
 
     // MARK: other transitions are silent
@@ -120,7 +131,7 @@ final class AttentionTransitionPolicyTests: XCTestCase {
 
     func test_toNoneOrUnavailable_fromAnything_isSilent() {
         for to: AgentStatus in [.none, .unavailable] {
-            for from: AgentStatus in [.working, .attention, .idle] {
+            for from: AgentStatus in [.working, .attention, .idle, .done] {
                 XCTAssertEqual(decide(from: from, to: to), .silent, "\(from) -> \(to)")
             }
         }

@@ -97,13 +97,16 @@ final class AttentionNotifierTests: XCTestCase {
         XCTAssertEqual(bounced, 1)
     }
 
-    func test_handleTransition_toIdleFromWorking_deliversFinishedBanner_noSound_noBounce() async {
+    func test_handleTransition_toDoneFromWorking_deliversFinishedBanner_noSound_noBounce() async {
+        // `.done` (herdr's real completion signal), not `.idle` -- see
+        // `AttentionTransitionPolicy`'s doc comment on the finished
+        // transition.
         let delivery = FakeNotificationDelivery()
         var bounced = 0
         let notifier = AttentionNotifier(delivery: delivery, bannersAvailable: true, bounceDockAction: { bounced += 1 })
         let sessionID = UUID()
 
-        notifier.handleTransition(sessionID: sessionID, title: "My Session", from: .working, to: .idle, isSelected: false, appActive: false)
+        notifier.handleTransition(sessionID: sessionID, title: "My Session", from: .working, to: .done, isSelected: false, appActive: false)
         await yield()
 
         XCTAssertEqual(

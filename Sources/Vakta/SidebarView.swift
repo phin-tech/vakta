@@ -115,45 +115,59 @@ struct SidebarView: View {
         }
     }
 
-    // MARK: Header (collapse toggle, present in both modes)
+    // MARK: Header (collapse toggle + notifications bell, present in both modes)
 
+    /// Expanded: bell and collapse toggle side by side, anchored to the
+    /// sidebar's right edge (a deliberate top-right control cluster) so they
+    /// clear the traffic lights on the left instead of sitting mid-column.
+    /// Collapsed (rail): the bell has no room beside the toggle in a ~48pt
+    /// strip, so it stacks above it instead, both centered just below the
+    /// traffic-light band.
     @ViewBuilder
     private func header(collapsed: Bool) -> some View {
-        HStack(spacing: 0) {
-            if !collapsed {
+        if collapsed {
+            VStack(spacing: 4) {
+                notificationsBellButton
+                collapseToggleButton(collapsed: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .center)
+            .padding(.top, titlebarInset)
+            .padding(.bottom, 4)
+        } else {
+            HStack(spacing: 0) {
                 Spacer(minLength: 0)
                 notificationsBellButton
+                collapseToggleButton(collapsed: false)
             }
-            Button {
-                sessionStore.toggleSidebar()
-            } label: {
-                Group {
-                    if let rowFont {
-                        // Match-terminal: a monospace chevron in the terminal
-                        // font (echoing herdr's own «/» collapse glyphs) instead
-                        // of the SF Symbol.
-                        Text(collapsed ? "»" : "«")
-                            .font(rowFont)
-                    } else {
-                        Image(systemName: "sidebar.leading")
-                            .font(.system(size: 13, weight: .regular))
-                    }
-                }
-                .foregroundStyle(.secondary)
-                .frame(width: 24, height: 24)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.borderless)
-            .help(collapsed ? "Expand Sidebar" : "Collapse Sidebar")
+            .frame(maxWidth: .infinity, alignment: .trailing)
+            .padding(.top, 4)
+            .padding(.horizontal, 10)
+            .padding(.bottom, 4)
         }
-        .frame(maxWidth: .infinity, alignment: collapsed ? .center : .trailing)
-        // Expanded: anchor the toggle to the sidebar's right edge (a deliberate
-        // top-right collapse control) so it clears the traffic lights on the
-        // left instead of sitting mid-column. Collapsed (rail): centered, just
-        // below the traffic-light band.
-        .padding(.top, collapsed ? titlebarInset : 4)
-        .padding(.horizontal, collapsed ? 0 : 10)
-        .padding(.bottom, 4)
+    }
+
+    private func collapseToggleButton(collapsed: Bool) -> some View {
+        Button {
+            sessionStore.toggleSidebar()
+        } label: {
+            Group {
+                if let rowFont {
+                    // Match-terminal: a monospace chevron in the terminal
+                    // font (echoing herdr's own «/» collapse glyphs) instead
+                    // of the SF Symbol.
+                    Text(collapsed ? "»" : "«")
+                        .font(rowFont)
+                } else {
+                    Image(systemName: "sidebar.leading")
+                        .font(.system(size: 13, weight: .regular))
+                }
+            }
+            .foregroundStyle(.secondary)
+            .frame(width: 24, height: 24)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless)
+        .help(collapsed ? "Expand Sidebar" : "Collapse Sidebar")
     }
 
     // MARK: Notifications bell (unread panes -- see `SessionStore.unreadPanes`)
@@ -505,9 +519,16 @@ func sidebarStatusColor(_ status: AgentStatus, isFocused: Bool) -> Color {
     switch status {
     case .working: return .orange
     case .attention: return .yellow
-    case .idle: return .green
+    case .done, .idle: return .green
     case .none, .unavailable: return isFocused ? .accentColor : .secondary.opacity(0.35)
     }
+}
+
+/// Whether `status` renders as a checkmark instead of a plain dot -- a real
+/// completion (herdr's own "done"/"complete") reads differently from merely
+/// being idle, even though both currently share the same green.
+func sidebarStatusIsCheckmark(_ status: AgentStatus) -> Bool {
+    status == .done
 }
 
 private struct SessionRow: View {
@@ -547,6 +568,7 @@ private struct SessionRow: View {
         switch status {
         case .working: return "Working"
         case .attention: return "Needs attention"
+        case .done: return "Done"
         case .idle: return "Idle"
         case .none: return session.displayTitle
         case .unavailable: return "Status unavailable (remote target)"
@@ -557,10 +579,18 @@ private struct SessionRow: View {
         HStack(spacing: 6) {
             if terminalStyle {
                 // A prompt-style caret colored by status, so rows read like
-                // terminal prompt lines.
-                Text("❯")
+                // terminal prompt lines. `.done` swaps the glyph itself to a
+                // checkmark -- a real completion reads differently from
+                // merely being idle, even though both are green.
+                Text(sidebarStatusIsCheckmark(status) ? "✓" : "❯")
                     .font(font)
                     .foregroundStyle(sidebarStatusColor(status, isFocused: viewState.isFocused))
+                    .help(statusHelp)
+            } else if sidebarStatusIsCheckmark(status) {
+                Image(systemName: "checkmark.circle.fill")
+                    .resizable()
+                    .frame(width: 7, height: 7)
+                    .foregroundStyle(.green)
                     .help(statusHelp)
             } else {
                 Circle()
@@ -661,12 +691,22 @@ private struct RailSessionItem: View {
                     )
 
                 // Status dot for herdr sessions; falls back to a focus dot.
+                // `.done` renders as a checkmark instead of a plain dot --
+                // see `sidebarStatusIsCheckmark`.
                 if status != .none || viewState.isFocused {
-                    Circle()
-                        .fill(sidebarStatusColor(status, isFocused: viewState.isFocused))
-                        .frame(width: 9, height: 9)
-                        .overlay(Circle().strokeBorder(Color(nsColor: .windowBackgroundColor), lineWidth: 1.5))
-                        .offset(x: 3, y: -3)
+                    Group {
+                        if sidebarStatusIsCheckmark(status) {
+                            Image(systemName: "checkmark.circle.fill")
+                                .resizable()
+                                .foregroundStyle(.green)
+                        } else {
+                            Circle()
+                                .fill(sidebarStatusColor(status, isFocused: viewState.isFocused))
+                                .overlay(Circle().strokeBorder(Color(nsColor: .windowBackgroundColor), lineWidth: 1.5))
+                        }
+                    }
+                    .frame(width: 9, height: 9)
+                    .offset(x: 3, y: -3)
                 }
             }
         }

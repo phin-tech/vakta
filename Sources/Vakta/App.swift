@@ -604,12 +604,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// A small filled dot in the session's status color, for menu-bar rows
     /// (non-template so the color shows, unlike the monochrome button icon).
+    /// `.done` renders as a green checkmark instead of a plain dot -- a real
+    /// completion (herdr's own "done"/"complete") reads differently from
+    /// merely being idle.
     private func statusDotImage(_ status: AgentStatus) -> NSImage {
+        if status == .done {
+            let config = NSImage.SymbolConfiguration(paletteColors: [.systemGreen])
+            return NSImage(systemSymbolName: "checkmark.circle.fill", accessibilityDescription: "Done")?
+                .withSymbolConfiguration(config) ?? NSImage()
+        }
+
         let color: NSColor
         switch status {
         case .working: color = .systemOrange
         case .attention: color = .systemYellow
         case .idle: color = .systemGreen
+        case .done: color = .systemGreen // unreachable -- handled above; kept for exhaustiveness
         case .none, .unavailable: color = .tertiaryLabelColor
         }
         let size = NSSize(width: 10, height: 10)

@@ -60,8 +60,8 @@ enum KeybindingAction: Hashable, Codable {
     case resetFontSize
     /// Jump to the next session with an unseen attention transition (the
     /// bell popover's cmux-style "next unread" -- see
-    /// `NextUnreadSessionPlanner`). Ships unbound like `toggleSidebar`/
-    /// `openPreferences`; the bell icon is the primary way to reach it.
+    /// `NextUnreadSessionPlanner`). Defaults to ⌘U; rebindable/clearable
+    /// like every other action.
     case nextUnreadSession
 
     /// A human label for the Preferences list.
@@ -164,18 +164,22 @@ extension Keybinding {
     static let minusKeyCode: UInt16 = 27
     /// `kVK_ANSI_0` -- the "0" in the default ⌘0 reset-font-size chord.
     static let zeroKeyCode: UInt16 = 29
+    /// `kVK_ANSI_U` -- the "U" in the default ⌘U next-unread-session chord.
+    static let uKeyCode: UInt16 = 32
 
     /// Default bindings: Ctrl+Shift+1 ... Ctrl+Shift+9 select session 0...8,
     /// ⌘K opens the session switcher, ⌘Q quits, ⌘C/⌘V/⌘X are the standard
     /// macOS copy/paste/cut chords, ⌘A selects all, ⌘W closes the front
-    /// window, and ⌘=/⌘-/⌘0 zoom the terminal font size (Terminal.app's own
-    /// convention). `toggleSidebar` and `openPreferences` ship unbound
-    /// (absent from the array); the Preferences pane lets the user assign,
-    /// reassign, or clear any of these -- including ⌘W, for a user who wants
-    /// that chord to reach a terminal multiplexer running inside the session
-    /// instead. Note that a bound chord is consumed before it reaches herdr
-    /// (docs/architecture.md's "The matcher runs in front of every surface"
-    /// invariant) -- clear the binding to hand that key back to the terminal.
+    /// window, ⌘=/⌘-/⌘0 zoom the terminal font size (Terminal.app's own
+    /// convention), and ⌘U jumps to the next unread session (see
+    /// `NextUnreadSessionPlanner`). `toggleSidebar` and `openPreferences`
+    /// ship unbound (absent from the array); the Preferences pane lets the
+    /// user assign, reassign, or clear any of these -- including ⌘W, for a
+    /// user who wants that chord to reach a terminal multiplexer running
+    /// inside the session instead. Note that a bound chord is consumed
+    /// before it reaches herdr (docs/architecture.md's "The matcher runs in
+    /// front of every surface" invariant) -- clear the binding to hand that
+    /// key back to the terminal.
     static var defaults: [Keybinding] {
         var bindings = digitKeyCodes.enumerated().map { index, code in
             Keybinding(modifierMask: [.control, .shift], keyCode: code, action: .selectSession(index))
@@ -190,6 +194,7 @@ extension Keybinding {
         bindings.append(Keybinding(modifierMask: [.command], keyCode: equalKeyCode, action: .increaseFontSize))
         bindings.append(Keybinding(modifierMask: [.command], keyCode: minusKeyCode, action: .decreaseFontSize))
         bindings.append(Keybinding(modifierMask: [.command], keyCode: zeroKeyCode, action: .resetFontSize))
+        bindings.append(Keybinding(modifierMask: [.command], keyCode: uKeyCode, action: .nextUnreadSession))
         return bindings
     }
 

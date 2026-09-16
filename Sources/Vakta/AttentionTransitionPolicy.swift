@@ -33,14 +33,19 @@ enum AttentionTransitionPolicy {
     ///   gated independently by `notifyOnAttention` (banner) and
     ///   `bounceDock` (Dock). Repeated identical observations (`from ==
     ///   .attention` already) don't re-fire, since there's no transition.
-    /// - `to == .idle` from `.working` specifically: the "finished" event --
-    ///   tied to that defined transition, not to merely no-longer-being
-    ///   `.attention` (an `.attention -> .idle` transition, e.g. the user
-    ///   answered a prompt and the agent went idle without ever "working"
-    ///   again by herdr's own accounting, is not treated as a completion).
-    /// - Anything else (e.g. `.idle -> .working`, `.working -> .idle` when
-    ///   nothing changed, unknown/malformed-status transitions that
-    ///   `AgentStatus.init(herdr:)` already normalized upstream): silent.
+    /// - `to == .done` from `.working` specifically: the "finished" event --
+    ///   tied to herdr's own real completion signal (`AgentStatus.init(herdr:)`
+    ///   maps "done"/"complete" to `.done`, distinct from plain `.idle`
+    ///   ("idle"/"ready": never ran, or reset), so a working agent merely
+    ///   going idle -- without herdr itself reporting completion -- is not
+    ///   treated as "finished"). Also not tied to merely no-longer-being
+    ///   `.attention` (an `.attention -> .done` transition, e.g. the user
+    ///   answered a prompt and the agent then finished without ever
+    ///   "working" again by herdr's own accounting, is not treated as a
+    ///   completion either).
+    /// - Anything else (e.g. `.idle -> .working`, `.working -> .idle`,
+    ///   unknown/malformed-status transitions that `AgentStatus.init(herdr:)`
+    ///   already normalized upstream): silent.
     static func decide(
         from: AgentStatus?,
         to: AgentStatus,
@@ -63,7 +68,7 @@ enum AttentionTransitionPolicy {
             )
         }
 
-        if to == .idle, from == .working {
+        if to == .done, from == .working {
             guard notifyOnFinished, !alreadyFocused else { return .silent }
             return AttentionDecision(
                 shouldBanner: true,
