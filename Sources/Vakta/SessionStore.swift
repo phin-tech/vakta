@@ -19,6 +19,20 @@ import Foundation
 import GhosttyTerminal
 import GhosttyTheme
 
+/// One unseen-attention herdr *workspace*, not a whole Vakta session:
+/// discovered live that a single herdr session/socket can host several
+/// workspaces (e.g. "guildhall"/"vakta"/"data-platform" sharing one
+/// session) -- `AgentStatus`'s per-session `.busiest` aggregate can't tell
+/// "this workspace needs you" apart from "a different workspace in the same
+/// session is merely working," so unread tracking needs this finer grain.
+struct UnreadPane: Identifiable, Equatable {
+    var sessionID: Session.ID
+    var paneID: String
+    var workspaceID: String?
+    var label: String
+    var id: String { paneID }
+}
+
 @MainActor
 final class SessionStore: ObservableObject {
     @Published private(set) var sessions: [Session] = []
@@ -63,16 +77,27 @@ final class SessionStore: ObservableObject {
     /// request succeeds. Not surfaced in any UI yet; see `requestClose`.
     @Published private(set) var lastRejectedClose: Session.ID?
 
-    /// Sessions with an attention transition the user hasn't seen yet (see
-    /// `UnreadAttentionPolicy`) -- backs the sidebar bell popover and
-    /// `goToNextUnreadSession`. Cleared by `select(_:)`, by
-    /// `clearUnreadForSelectedSessionIfAppActive()` (called from
-    /// `AppDelegate.applicationDidBecomeActive`, for a session that was
-    /// already selected while the app was inactive when it went to
-    /// `.attention`), and by `removeSession`. Deliberately independent of
-    /// the notifyOnAttention/bounceDock preference toggles -- see
-    /// `UnreadAttentionPolicy`'s doc comment.
-    @Published private(set) var unreadSessionIDs: Set<Session.ID> = []
+    /// Herdr *workspaces* (not whole Vakta sessions -- see `UnreadPane`'s
+    /// doc comment) with an attention transition the user hasn't seen yet
+    /// (see `UnreadAttentionPolicy`). Backs the sidebar bell popover and
+    /// `goToNextUnreadSession`. An entry is removed when its exact pane is
+    /// focused via `focusHerdrWorkspace`, when the encompassing session is
+    /// removed, or -- opportunistically, in `pollAgentStatus` -- the moment
+    /// a poll observes it as both selected and herdr-focused with the app
+    /// active, i.e. the user is now actually looking at it. Deliberately
+    /// independent of the notifyOnAttention/bounceDock preference toggles --
+    /// see `UnreadAttentionPolicy`'s doc comment.
+    @Published private(set) var unreadPanes: [UnreadPane] = []
+    /// Previous status per herdr pane id, so `pollAgentStatus` can detect a
+    /// real transition per *pane* -- `agentStatus` only holds one
+    /// already-aggregated `.busiest` value per Vakta session, which can't
+    /// tell "workspace A just became blocked" apart from "workspace B (also
+    /// in this session) is still merely working."
+    private var previousPaneStatus: [String: AgentStatus] = [:]
+    /// The pane id herdr last reported as focused for a given session, if
+    /// any -- lets `clearUnreadForSelectedSessionIfAppActive` clear
+    /// responsively on app activation without waiting for the next poll.
+    private var lastKnownFocusedPaneID: [Session.ID: String] = [:]
 
     /// Per-session agent status (herdr sessions only), polled from
     /// `herdr agent list` and shown as a colored dot in the sidebar. The Dock
@@ -453,7 +478,7 @@ final class SessionStore: ObservableObject {
 
         DispatchQueue.global(qos: .utility).async {
             var updates: [AgentStatusUpdate] = []
-            var paneIDsBySession: [Session.ID: Set<String>] = [:]
+            var panesBySession: [Session.ID: [HerdrAgentStatus.PaneAgentStatus]] = [:]
             for session in herdrSessions {
                 if let result = HerdrAgentStatus.query(
                     sessionName: session.name,
@@ -462,7 +487,7 @@ final class SessionStore: ObservableObject {
                     isCancelled: { [weak self] in self?.isShuttingDown ?? true }
                 ) {
                     updates.append(AgentStatusUpdate(sessionID: session.id, status: result.status))
-                    paneIDsBySession[session.id] = result.paneIDs
+                    panesBySession[session.id] = result.panes
                 }
             }
             DispatchQueue.main.async {
@@ -475,40 +500,77 @@ final class SessionStore: ObservableObject {
                 )
                 for entry in accepted {
                     if entry.previous != entry.status, let session = self.sessions.first(where: { $0.id == entry.sessionID }) {
-                        let isSelected = self.selectedID == entry.sessionID
-                        let appActive = NSApp.isActive
                         self.notifier.handleTransition(
                             sessionID: entry.sessionID,
                             title: session.displayTitle,
                             from: entry.previous,
                             to: entry.status,
-                            isSelected: isSelected,
-                            appActive: appActive
+                            isSelected: self.selectedID == entry.sessionID,
+                            appActive: NSApp.isActive
                         )
-                        // Uses entry.previous/entry.status (the transition
-                        // just computed above), not a re-read of
-                        // self.agentStatus -- that's about to be overwritten
-                        // with the new value below, which would make every
-                        // transition look like a no-op (from == to).
-                        if UnreadAttentionPolicy.shouldMarkUnread(
-                            from: entry.previous,
-                            to: entry.status,
-                            isSelected: isSelected,
-                            appActive: appActive
-                        ) {
-                            self.unreadSessionIDs.insert(entry.sessionID)
-                        }
                     }
                     self.agentStatus[entry.sessionID] = entry.status
                 }
-                for (sessionID, paneIDs) in paneIDsBySession {
-                    guard self.sessions.contains(where: { $0.id == sessionID }) else { continue }
-                    let current = self.herdrSubscribedPaneIDs[sessionID] ?? []
-                    guard case .changed(let updated) = HerdrPaneRegistry.update(current: current, latest: paneIDs) else { continue }
-                    self.herdrSubscribedPaneIDs[sessionID] = updated
-                    self.herdrEventClients[sessionID]?.updatePaneIDs(updated)
+                self.applyPaneUpdates(panesBySession)
+            }
+        }
+    }
+
+    /// Per-pane half of a poll's result: detects real per-pane transitions
+    /// (`agentStatus`'s per-session `.busiest` can't -- see `UnreadPane`'s
+    /// doc comment), marks/clears `unreadPanes` via the same
+    /// `UnreadAttentionPolicy` the whole-session path uses, and feeds
+    /// `HerdrPaneRegistry` for the event-subscription pane set.
+    private func applyPaneUpdates(_ panesBySession: [Session.ID: [HerdrAgentStatus.PaneAgentStatus]]) {
+        let appActive = NSApp.isActive
+        for (sessionID, panes) in panesBySession {
+            guard self.sessions.contains(where: { $0.id == sessionID }) else { continue }
+            let isSessionSelected = self.selectedID == sessionID
+            if let focused = panes.first(where: \.focused) {
+                self.lastKnownFocusedPaneID[sessionID] = focused.paneID
+            }
+
+            for pane in panes {
+                let previous = self.previousPaneStatus[pane.paneID]
+                self.previousPaneStatus[pane.paneID] = pane.status
+
+                // "Actually looking at it right now" -- selected in Vakta,
+                // this exact workspace has herdr's own focus (not some
+                // other workspace sharing the same session), and the app is
+                // frontmost. Cleared unconditionally on this, independent of
+                // whether a transition just happened: covers the user
+                // coming back to exactly this pane without an explicit
+                // focus click.
+                if isSessionSelected, pane.focused, appActive {
+                    self.unreadPanes.removeAll { $0.paneID == pane.paneID }
+                }
+
+                guard previous != pane.status else { continue }
+                // `isSelected` composes Vakta's own session selection with
+                // herdr's per-pane `focused` -- `shouldMarkUnread` computes
+                // `!(isSelected && appActive)`, so this yields exactly
+                // "not really being looked at right now" without
+                // duplicating that check here.
+                if UnreadAttentionPolicy.shouldMarkUnread(
+                    from: previous,
+                    to: pane.status,
+                    isSelected: isSessionSelected && pane.focused,
+                    appActive: appActive
+                ), !self.unreadPanes.contains(where: { $0.paneID == pane.paneID }) {
+                    self.unreadPanes.append(UnreadPane(
+                        sessionID: sessionID,
+                        paneID: pane.paneID,
+                        workspaceID: pane.workspaceID,
+                        label: pane.label
+                    ))
                 }
             }
+
+            let paneIDs = Set(panes.map(\.paneID))
+            let current = self.herdrSubscribedPaneIDs[sessionID] ?? []
+            guard case .changed(let updated) = HerdrPaneRegistry.update(current: current, latest: paneIDs) else { continue }
+            self.herdrSubscribedPaneIDs[sessionID] = updated
+            self.herdrEventClients[sessionID]?.updatePaneIDs(updated)
         }
     }
 
@@ -766,7 +828,8 @@ final class SessionStore: ObservableObject {
         herdrEventClients[id]?.stop()
         herdrEventClients[id] = nil
         herdrSubscribedPaneIDs[id] = nil
-        unreadSessionIDs.remove(id)
+        unreadPanes.removeAll { $0.sessionID == id }
+        lastKnownFocusedPaneID[id] = nil
 
         let fallback = SessionSelectionPlanner.fallbackAfterRemoval(
             removedID: id,
@@ -782,36 +845,57 @@ final class SessionStore: ObservableObject {
         saveWorkspace()
     }
 
+    /// Selecting a session does NOT by itself clear any of its unread panes:
+    /// discovered live that one herdr session can host several workspaces,
+    /// so merely selecting the session doesn't mean the user has seen the
+    /// specific (possibly different) workspace that's actually `.attention`.
+    /// `applyPaneUpdates`'s opportunistic clear (this session selected, the
+    /// pane herdr reports as focused, app active) is what actually clears
+    /// an entry, the next time a poll observes that combination.
     func select(_ id: Session.ID) {
         guard sessions.contains(where: { $0.id == id }) else { return }
         selectedID = id
         hostContainer.select(id)
-        unreadSessionIDs.remove(id)
         saveWorkspace()
     }
 
-    /// Jumps to the next session with an unseen attention transition (see
-    /// `NextUnreadSessionPlanner`) -- the bell popover's cmux-style "next
-    /// unread". A no-op if nothing is unread.
+    /// Jumps to the specific herdr workspace behind `pane` (via
+    /// `focusHerdrWorkspace`, or a plain `select` if its workspace id is
+    /// somehow unknown) and clears it from `unreadPanes` -- the bell
+    /// popover's "jump to that pane" action.
+    func focusUnreadPane(_ pane: UnreadPane) {
+        if let workspaceID = pane.workspaceID {
+            focusHerdrWorkspace(workspaceID, in: pane.sessionID)
+        } else {
+            select(pane.sessionID)
+        }
+        unreadPanes.removeAll { $0.paneID == pane.paneID }
+    }
+
+    /// Jumps to the next unread pane (see `UnreadPane`) -- the bell
+    /// popover's cmux-style "next unread" keybinding. Picks the next
+    /// *session* with at least one unread pane (`NextUnreadSessionPlanner`,
+    /// reused as-is: sessions, not panes, are what `sessions`/`selectedID`
+    /// are ordered over), then focuses that session's first unread pane. A
+    /// no-op if nothing is unread.
     func goToNextUnreadSession() {
-        guard let next = NextUnreadSessionPlanner.next(
+        let unreadSessionIDs = Set(unreadPanes.map(\.sessionID))
+        guard let nextSessionID = NextUnreadSessionPlanner.next(
             after: selectedID,
             sessionOrder: sessions.map(\.id),
             unread: unreadSessionIDs
-        ) else { return }
-        select(next)
+        ), let pane = unreadPanes.first(where: { $0.sessionID == nextSessionID }) else { return }
+        focusUnreadPane(pane)
     }
 
-    /// Clears the currently-selected session's unread flag, if any --
-    /// called from `AppDelegate.applicationDidBecomeActive`. Covers the case
-    /// `select(_:)` alone can't: a session already selected while the app
-    /// was inactive when it transitioned to `.attention` is marked unread
-    /// (see `UnreadAttentionPolicy`) but `select(_:)` never fires again for
-    /// an already-selected session, so it would otherwise stay unread until
-    /// the user clicked away and back.
+    /// Clears the currently-selected session's unread pane that herdr last
+    /// reported as focused, if any -- called from
+    /// `AppDelegate.applicationDidBecomeActive` for responsiveness (the next
+    /// `pollAgentStatus` tick would otherwise clear the same entry
+    /// opportunistically, just not until the timer/event trigger fires).
     func clearUnreadForSelectedSessionIfAppActive() {
-        guard NSApp.isActive, let selectedID else { return }
-        unreadSessionIDs.remove(selectedID)
+        guard NSApp.isActive, let selectedID, let paneID = lastKnownFocusedPaneID[selectedID] else { return }
+        unreadPanes.removeAll { $0.paneID == paneID }
     }
 
     /// Queries `id`'s workspaces (off the main thread) and publishes the

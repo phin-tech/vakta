@@ -156,7 +156,7 @@ struct SidebarView: View {
         .padding(.bottom, 4)
     }
 
-    // MARK: Notifications bell (unread sessions -- see `SessionStore.unreadSessionIDs`)
+    // MARK: Notifications bell (unread panes -- see `SessionStore.unreadPanes`)
 
     /// Only shown expanded (not in the icon rail) -- the rail is already a
     /// narrow strip of session icons with no room for a second control
@@ -166,10 +166,10 @@ struct SidebarView: View {
             isNotificationsPopoverPresented = true
         } label: {
             ZStack(alignment: .topTrailing) {
-                Image(systemName: sessionStore.unreadSessionIDs.isEmpty ? "bell" : "bell.fill")
+                Image(systemName: sessionStore.unreadPanes.isEmpty ? "bell" : "bell.fill")
                     .font(.system(size: 13, weight: .regular))
                     .foregroundStyle(.secondary)
-                if !sessionStore.unreadSessionIDs.isEmpty {
+                if !sessionStore.unreadPanes.isEmpty {
                     Circle()
                         .fill(Color.red)
                         .frame(width: 6, height: 6)
@@ -187,24 +187,35 @@ struct SidebarView: View {
     }
 
     private var notificationsPopoverContent: some View {
-        let unread = sessionStore.sessions.filter { sessionStore.unreadSessionIDs.contains($0.id) }
-        return VStack(alignment: .leading, spacing: 0) {
-            if unread.isEmpty {
+        VStack(alignment: .leading, spacing: 0) {
+            if sessionStore.unreadPanes.isEmpty {
                 Text("No unread sessions")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .padding(12)
             } else {
-                ForEach(unread) { session in
+                ForEach(sessionStore.unreadPanes) { pane in
                     Button {
-                        // `select` already clears this session's unread flag
-                        // (see `SessionStore.select`) -- no second clear path.
-                        sessionStore.select(session.id)
+                        // Already clears this pane's unread flag -- no
+                        // second clear path in this view.
+                        sessionStore.focusUnreadPane(pane)
                         isNotificationsPopoverPresented = false
                     } label: {
                         HStack(spacing: 8) {
                             Circle().fill(Color.red).frame(width: 6, height: 6)
-                            Text(session.displayTitle)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(pane.label)
+                                // The Vakta session this workspace lives
+                                // under -- one herdr session/socket can
+                                // host several workspaces sharing one
+                                // sidebar row, so this disambiguates which
+                                // row clicking here will jump to.
+                                if let sessionTitle = sessionStore.sessions.first(where: { $0.id == pane.sessionID })?.displayTitle {
+                                    Text(sessionTitle)
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
                             Spacer(minLength: 0)
                         }
                         .padding(.horizontal, 12)

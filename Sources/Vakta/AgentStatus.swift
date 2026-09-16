@@ -58,12 +58,33 @@ enum AgentStatus: Equatable {
 }
 
 enum HerdrAgentStatus {
+    /// One agent's detail from an `agent list` response -- the input
+    /// per-pane unread tracking needs to tell "this Vakta session is
+    /// selected" apart from "this specific herdr workspace within it is the
+    /// one being looked at": one herdr session can host several workspaces
+    /// sharing a socket (discovered live -- see `docs/herdr-events-plan.md`
+    /// and `vakta#apdk`'s follow-up), so a workspace can be `.attention`
+    /// while a *different* workspace in the same Vakta session has focus.
+    /// `focused` is herdr's own signal for which workspace currently has
+    /// its session's focus, independent of whether Vakta itself is active.
+    struct PaneAgentStatus: Equatable {
+        var paneID: String
+        var workspaceID: String?
+        /// The cwd's last path component (e.g. "guildhall"), matching how
+        /// these workspaces are named in practice; falls back to `paneID`
+        /// when `cwd` is absent.
+        var label: String
+        var status: AgentStatus
+        var focused: Bool
+    }
+
     /// `status` plus the pane ids behind it, from one decoded `agent list`
     /// response -- lets a caller that needs both (`SessionStore.pollAgentStatus`,
     /// which also feeds `HerdrPaneRegistry`) avoid a second subprocess call.
     struct QueryResult: Equatable {
         var status: AgentStatus
         var paneIDs: Set<String>
+        var panes: [PaneAgentStatus]
     }
 
     /// Runs `agent list` once and returns both the aggregated status and the
@@ -104,21 +125,46 @@ enum HerdrAgentStatus {
         parse(agentListJSON: json)?.paneIDs ?? []
     }
 
-    /// Pure: decodes one `agent list` JSON response into both derived
-    /// values at once. `nil` on decode failure or an error payload.
+    /// Per-pane detail from an `agent list` JSON response, for unread
+    /// tracking granular enough to tell workspaces within one herdr session
+    /// apart (see `PaneAgentStatus`). Empty on any decode failure or error
+    /// payload, same as `status`/`paneIDs`.
+    static func panes(fromAgentListJSON json: String) -> [PaneAgentStatus] {
+        parse(agentListJSON: json)?.panes ?? []
+    }
+
+    /// Pure: decodes one `agent list` JSON response into every derived
+    /// value at once. `nil` on decode failure or an error payload.
     private static func parse(agentListJSON json: String) -> QueryResult? {
         guard let data = json.data(using: .utf8),
               let decoded = try? JSONDecoder().decode(Response.self, from: data),
               let agents = decoded.result?.agents
         else { return nil }
         let status = agents.isEmpty ? AgentStatus.none : AgentStatus.busiest(agents.map { AgentStatus(herdr: $0.agent_status) })
-        return QueryResult(status: status, paneIDs: Set(agents.compactMap(\.pane_id)))
+        let panes = agents.compactMap { agent -> PaneAgentStatus? in
+            guard let paneID = agent.pane_id else { return nil }
+            let label = agent.cwd.map { ($0 as NSString).lastPathComponent } ?? paneID
+            return PaneAgentStatus(
+                paneID: paneID,
+                workspaceID: agent.workspace_id,
+                label: label,
+                status: AgentStatus(herdr: agent.agent_status),
+                focused: agent.focused ?? false
+            )
+        }
+        return QueryResult(status: status, paneIDs: Set(agents.compactMap(\.pane_id)), panes: panes)
     }
 
     // Minimal shape of the `agent list` JSON; unknown keys are ignored.
     private struct Response: Decodable {
         let result: Result?
         struct Result: Decodable { let agents: [Agent] }
-        struct Agent: Decodable { let agent_status: String; let pane_id: String? }
+        struct Agent: Decodable {
+            let agent_status: String
+            let pane_id: String?
+            let workspace_id: String?
+            let cwd: String?
+            let focused: Bool?
+        }
     }
 }
