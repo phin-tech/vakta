@@ -28,15 +28,23 @@ enum AppearancePersistence {
         return directory.appendingPathComponent("appearance.json")
     }
 
-    /// The saved appearance, or `nil` on first launch / an unreadable file
-    /// (treated as first launch so a corrupt file reseeds `.system`).
-    static func load() -> AppAppearance? {
+    /// The saved settings, or `nil` on first launch / an unreadable file
+    /// (treated as first launch so a corrupt file reseeds defaults). Decodes a
+    /// legacy bare-`AppAppearance` file too, so upgrading keeps the user's
+    /// existing theme and just adds the default sidebar font.
+    static func load() -> AppearanceSettings? {
         guard let data = try? Data(contentsOf: fileURL) else { return nil }
-        return try? JSONDecoder().decode(AppAppearance.self, from: data)
+        if let settings = try? JSONDecoder().decode(AppearanceSettings.self, from: data) {
+            return settings
+        }
+        if let legacy = try? JSONDecoder().decode(AppAppearance.self, from: data) {
+            return AppearanceSettings(appearance: legacy)
+        }
+        return nil
     }
 
-    static func save(_ appearance: AppAppearance) {
-        guard let data = try? JSONEncoder().encode(appearance) else { return }
+    static func save(_ settings: AppearanceSettings) {
+        guard let data = try? JSONEncoder().encode(settings) else { return }
         try? data.write(to: fileURL, options: .atomic)
     }
 }

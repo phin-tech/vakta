@@ -24,6 +24,10 @@ enum KeybindingAction: Hashable, Codable {
     case toggleSidebar
     /// Open the Preferences window.
     case openPreferences
+    /// Open the ⌘K session switcher (command palette).
+    case openSessionSwitcher
+    /// Quit Vakta.
+    case quit
 
     /// A human label for the Preferences list.
     var title: String {
@@ -31,6 +35,8 @@ enum KeybindingAction: Hashable, Codable {
         case .selectSession(let index): return "Select Session \(index + 1)"
         case .toggleSidebar: return "Toggle Sidebar"
         case .openPreferences: return "Open Preferences"
+        case .openSessionSwitcher: return "Session Switcher"
+        case .quit: return "Quit"
         }
     }
 }
@@ -94,13 +100,24 @@ extension Keybinding {
     /// practice, but this has not been verified on real non-US hardware.
     private static let digitKeyCodes: [UInt16] = [18, 19, 20, 21, 23, 22, 26, 28, 25] // 1,2,3,4,5,6,7,8,9
 
-    /// Default bindings: Ctrl+Shift+1 ... Ctrl+Shift+9 select session 0...8.
-    /// `toggleSidebar` and `openPreferences` ship unbound (absent from the
-    /// array); the Preferences pane lets the user assign them a chord.
+    /// `kVK_ANSI_K` -- the "K" in the default ⌘K session-switcher chord.
+    static let kKeyCode: UInt16 = 40
+    /// `kVK_ANSI_Q` -- the "Q" in the default ⌘Q quit chord.
+    static let qKeyCode: UInt16 = 12
+
+    /// Default bindings: Ctrl+Shift+1 ... Ctrl+Shift+9 select session 0...8,
+    /// ⌘K opens the session switcher, and ⌘Q quits. `toggleSidebar` and
+    /// `openPreferences` ship unbound (absent from the array); the Preferences
+    /// pane lets the user assign, reassign, or clear any of these. Note that a
+    /// bound chord is consumed before it reaches herdr (settled design decision
+    /// #6) -- clear the binding to hand that key back to the terminal.
     static var defaults: [Keybinding] {
-        digitKeyCodes.enumerated().map { index, code in
+        var bindings = digitKeyCodes.enumerated().map { index, code in
             Keybinding(modifierMask: [.control, .shift], keyCode: code, action: .selectSession(index))
         }
+        bindings.append(Keybinding(modifierMask: [.command], keyCode: kKeyCode, action: .openSessionSwitcher))
+        bindings.append(Keybinding(modifierMask: [.command], keyCode: qKeyCode, action: .quit))
+        return bindings
     }
 
     /// A `⌃⌥⇧⌘`-style rendering of the chord for the Preferences list, e.g.

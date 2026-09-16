@@ -25,6 +25,21 @@ struct AppearancePreferencesView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+
+            Section {
+                Picker("Sidebar style", selection: $store.sidebarFont) {
+                    ForEach(SidebarFontMode.allCases) { mode in
+                        Text(mode.title).tag(mode)
+                    }
+                }
+                .pickerStyle(.radioGroup)
+            } footer: {
+                Text("“Terminal Style” draws the sidebar in the terminal font "
+                    + "(set under Terminal) with a prompt-style caret, so it "
+                    + "reads like the terminal.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
     }

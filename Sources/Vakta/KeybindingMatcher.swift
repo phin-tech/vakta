@@ -38,18 +38,77 @@ final class KeybindingMatcher: ObservableObject {
     /// monitor that this one would shadow. Cleared after one delivery.
     var captureNext: (@MainActor (NSEvent) -> Void)?
 
+    /// Passthrough mode: while on, NO binding is matched -- every key falls
+    /// through raw to the focused session. Transient (always off at launch);
+    /// toggled by the double-tap chord. `@Published` so the UI can indicate it.
+    @Published private(set) var passthrough = false
+
+    /// Which double-tap modifier toggles `passthrough`. Persisted.
+    @Published var passthroughToggle: PassthroughToggle {
+        didSet { PassthroughSettingsPersistence.save(passthroughToggle) }
+    }
+
+    /// Flips passthrough mode. Exposed so a UI affordance (the sidebar status
+    /// indicator) can toggle it by click, in addition to the double-tap chord.
+    func togglePassthrough() {
+        passthrough.toggle()
+    }
+
     private var monitor: Any?
     private let relevantModifierMask: NSEvent.ModifierFlags = [.control, .option, .shift, .command]
 
+    // Double-tap detection state (for the passthrough toggle).
+    private var lastRelevantFlags: NSEvent.ModifierFlags = []
+    private var lastTapTime: TimeInterval = 0
+    private var sawKeyDuringHold = false
+    private let doubleTapWindow: TimeInterval = 0.4
+
     init() {
+        // Default passthrough toggle: double-tap Shift. Assigning in init does
+        // not fire `didSet`, so seed the file on first launch.
+        let loadedToggle = PassthroughSettingsPersistence.load()
+        passthroughToggle = loadedToggle ?? .shift
+        if loadedToggle == nil {
+            PassthroughSettingsPersistence.save(.shift)
+        }
+
         // Load saved bindings; first launch (or an unreadable file) seeds the
         // defaults and writes them. Assigning `bindings` in init does not fire
         // its `didSet`, so the first-run seed is saved explicitly.
-        let loaded = KeybindingPersistence.load()
-        bindings = loaded ?? Keybinding.defaults
-        if loaded == nil {
+        if let loaded = KeybindingPersistence.load() {
+            var existing = loaded.bindings
+            // Step-wise migrations, each applied once: after we re-save at the
+            // current version, later launches leave the file untouched -- so a
+            // user who clears a migrated default keeps it cleared rather than
+            // having it re-added. Each step adds its default only if the action
+            // is unbound and its chord is free, so it never clobbers a choice.
+            if loaded.version < 2 {
+                Self.addDefaultIfFree(&existing, chord: Keybinding.kKeyCode, action: .openSessionSwitcher)
+            }
+            if loaded.version < 3 {
+                Self.addDefaultIfFree(&existing, chord: Keybinding.qKeyCode, action: .quit)
+            }
+            bindings = existing
+            if loaded.version < KeybindingPersistence.currentVersion {
+                KeybindingPersistence.save(existing) // rewrites at currentVersion
+            }
+        } else {
+            bindings = Keybinding.defaults
             KeybindingPersistence.save(Keybinding.defaults)
         }
+    }
+
+    /// Appends a `⌘<chord>` default binding for `action` unless the action is
+    /// already bound or that exact ⌘ chord is already taken.
+    private static func addDefaultIfFree(
+        _ bindings: inout [Keybinding],
+        chord keyCode: UInt16,
+        action: KeybindingAction
+    ) {
+        let actionBound = bindings.contains { $0.action == action }
+        let chordTaken = bindings.contains { $0.modifierMask == [.command] && $0.keyCode == keyCode }
+        guard !actionBound, !chordTaken else { return }
+        bindings.append(Keybinding(modifierMask: [.command], keyCode: keyCode, action: action))
     }
 
     /// Installs the monitor. `onMatch` receives the matched binding's action.
@@ -61,7 +120,9 @@ final class KeybindingMatcher: ObservableObject {
         // `MainActor.assumeIsolated`) is what lets it call the
         // actor-isolated `handle(_:onMatch:)` directly, with no Sendable
         // crossing of the non-Sendable `NSEvent` argument.
-        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { @MainActor [weak self] event in
+        // Also watch `.flagsChanged` for the passthrough double-tap chord --
+        // modifier presses/releases arrive as flagsChanged, not keyDown.
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { @MainActor [weak self] event in
             self?.handle(event, onMatch: onMatch) ?? event
         }
     }
@@ -97,12 +158,28 @@ final class KeybindingMatcher: ObservableObject {
     }
 
     private func handle(_ event: NSEvent, onMatch: (KeybindingAction) -> Void) -> NSEvent? {
+        // Modifier press/release: never consumed (modifiers must reach the
+        // terminal); used only to detect the passthrough double-tap.
+        if event.type == .flagsChanged {
+            detectPassthroughToggle(event)
+            return event
+        }
+
+        // keyDown: any key press invalidates a pending double-tap (so e.g.
+        // Shift+A never counts as a Shift tap).
+        sawKeyDuringHold = true
+
         // A recording session claims the next key, whatever it is, and consumes
         // it so it never reaches a surface or matches a binding.
         if let capture = captureNext {
             captureNext = nil
             capture(event)
             return nil
+        }
+
+        // Passthrough: no matching at all -- every key falls through raw.
+        if passthrough {
+            return event
         }
 
         let mods = event.modifierFlags.intersection(relevantModifierMask)
@@ -113,5 +190,32 @@ final class KeybindingMatcher: ObservableObject {
         }
         onMatch(binding.action)
         return nil
+    }
+
+    /// Detects a clean double-tap of the configured toggle modifier (press +
+    /// release, twice, within the window, with no other key or modifier
+    /// involved) and flips `passthrough`.
+    private func detectPassthroughToggle(_ event: NSEvent) {
+        guard let toggleMod = passthroughToggle.modifier else { return }
+        let current = event.modifierFlags.intersection(relevantModifierMask)
+        let previous = lastRelevantFlags
+        lastRelevantFlags = current
+
+        // Press of exactly the toggle modifier alone: begin a clean hold.
+        if current == toggleMod, previous.isEmpty {
+            sawKeyDuringHold = false
+            return
+        }
+
+        // Release completing a clean tap: previous was exactly the toggle
+        // modifier, nothing is held now, and no key interrupted the hold.
+        guard current.isEmpty, previous == toggleMod, !sawKeyDuringHold else { return }
+        let now = event.timestamp
+        if now - lastTapTime <= doubleTapWindow {
+            lastTapTime = 0
+            passthrough.toggle()
+        } else {
+            lastTapTime = now
+        }
     }
 }

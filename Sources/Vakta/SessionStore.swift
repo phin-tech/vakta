@@ -12,6 +12,7 @@
 //  imperative calls into that view rather than anything SwiftUI-driven.
 
 import AppKit
+import Combine
 import Foundation
 import GhosttyTerminal
 import GhosttyTheme
@@ -38,15 +39,38 @@ final class SessionStore: ObservableObject {
     @Published var sidebarCollapsed = false
 
     /// Per-session agent status (herdr sessions only), polled from
-    /// `herdr agent list` and shown as a colored dot in the sidebar.
-    @Published private(set) var agentStatus: [Session.ID: AgentStatus] = [:]
+    /// `herdr agent list` and shown as a colored dot in the sidebar. The Dock
+    /// badge (count of sessions needing attention) is derived here so both the
+    /// poll and `removeSession` keep it correct with no extra call sites.
+    @Published private(set) var agentStatus: [Session.ID: AgentStatus] = [:] {
+        didSet { updateDockBadge() }
+    }
 
     /// Repeating poll for `agentStatus`.
     private var statusTimer: Timer?
 
+    /// Surfaces agent-status transitions as notifications / a Dock bounce.
+    /// `AppDelegate` finishes wiring it (settings, activation callback, and
+    /// authorization) once the app has launched.
+    let notifier = AttentionNotifier()
+
     /// One `ghostty_app_t` for the whole process. Every `Session` this store
     /// creates is handed this same controller.
     let controller: TerminalController
+
+    /// User-chosen terminal font + theme. Observed here and pushed to the
+    /// controller live.
+    let terminalSettings: TerminalSettingsStore
+    private var terminalSettingsObserver: AnyCancellable?
+
+    /// The current terminal theme's colors as `NSColor`s, so the sidebar can
+    /// match the terminal (background as one continuous surface; selection and
+    /// accent so its highlight matches herdr's palette). `@Published` because
+    /// they follow the theme when it changes at runtime -- SwiftUI parts update
+    /// for free; `AppDelegate` re-applies the AppKit parts (see its sink).
+    @Published private(set) var terminalBackgroundColor: NSColor = .windowBackgroundColor
+    @Published private(set) var terminalSelectionColor: NSColor = .selectedContentBackgroundColor
+    @Published private(set) var terminalAccentColor: NSColor = .controlAccentColor
 
     /// The persistent AppKit container all session surfaces live in.
     /// Created once, added to the window's view hierarchy exactly once, and
@@ -67,7 +91,8 @@ final class SessionStore: ObservableObject {
     /// The profile used when `createSession` is called with no explicit one.
     var defaultProfile: Profile { profiles.first ?? .herdr }
 
-    init() {
+    init(terminalSettings: TerminalSettingsStore) {
+        self.terminalSettings = terminalSettings
         commandOverride = ProcessInfo.processInfo.environment["VAKTA_TERMINAL_COMMAND"]
         resolvedPATH = ShellEnvironment.resolvedPATH()
 
@@ -81,22 +106,32 @@ final class SessionStore: ObservableObject {
             ProfilePersistence.save(seeded)
         }
 
-        // A theme is optional polish, not a settled requirement, but
-        // GhosttyTheme is a settled dependency (product list in the task),
-        // so it gets at least this much real use: look up a bundled
-        // iTerm2-Color-Schemes theme and fall back to the wrapper's
-        // built-in default if the name ever goes stale.
-        let theme = GhosttyThemeCatalog.theme(named: "Dracula")?.toTerminalTheme() ?? .default
+        // Resolve the user's chosen theme (falling back to the wrapper's
+        // built-in default if the name ever goes stale) and derive the sidebar
+        // colors from it.
+        let definition = GhosttyThemeCatalog.theme(named: terminalSettings.themeName)
+        let theme = definition?.toTerminalTheme() ?? .default
 
+        let snapshot = terminalSettings.snapshot
         controller = TerminalController(theme: theme) { builder in
-            // Settled design decision #5: ALL keys pass through to herdr.
-            // `keybind = clear` removes every libghostty default binding so
-            // nothing is consumed before the key reaches the pty. Vakta's
-            // own "switch session N" chord is intercepted earlier still, in
-            // `KeybindingMatcher`, before this config or the surface ever
-            // see the NSEvent.
-            builder.withCustom("keybind", "clear")
+            Self.configureBuilder(&builder, with: snapshot)
         }
+
+        // Push terminal font/theme changes to the shared controller live. The
+        // controller's setters guard on equality, so the initial emission from
+        // each `@Published` is a harmless no-op. Debounced so a stepper drag
+        // reconfigures once, not per tick.
+        terminalSettingsObserver = Publishers.MergeMany(
+            terminalSettings.$fontFamily.map { _ in () }.eraseToAnyPublisher(),
+            terminalSettings.$fontSize.map { _ in () }.eraseToAnyPublisher(),
+            terminalSettings.$themeName.map { _ in () }.eraseToAnyPublisher()
+        )
+        .debounce(for: .milliseconds(150), scheduler: RunLoop.main)
+        .sink { [weak self] in self?.applyTerminalSettings() }
+
+        // All stored properties are now initialized, so the derived sidebar
+        // colors can be set (synchronously, before the window reads them).
+        applyThemeColors(from: definition)
 
         // Restore the previous workspace: recreate a session per saved record,
         // each re-attaching (herdr/tmux) to its still-running server session.
@@ -120,6 +155,54 @@ final class SessionStore: ObservableObject {
 
         refreshDiscovery()
         startStatusPolling()
+    }
+
+    // MARK: Terminal font + theme
+
+    /// Fills a terminal config builder with the settled keybind-clear plus the
+    /// user's font. ALWAYS emits `keybind = clear` (settled design decision #5)
+    /// so a font-only change can't drop it -- `setTerminalConfiguration`
+    /// replaces the whole config rather than merging. Empty font family / zero
+    /// size are omitted so ghostty keeps its own default.
+    private static func configureBuilder(
+        _ builder: inout TerminalConfiguration.Builder,
+        with settings: TerminalSettings
+    ) {
+        builder.withCustom("keybind", "clear")
+        let family = settings.fontFamily.trimmingCharacters(in: .whitespaces)
+        if !family.isEmpty {
+            builder.withCustom("font-family", family)
+        }
+        if settings.fontSize > 0 {
+            builder.withCustom("font-size", String(format: "%g", settings.fontSize))
+        }
+    }
+
+    /// Applies the current terminal settings to the shared controller live: the
+    /// font config and the theme, plus the derived sidebar colors. The
+    /// controller's setters no-op when nothing changed.
+    private func applyTerminalSettings() {
+        let snapshot = terminalSettings.snapshot
+        let config = TerminalConfiguration(startingFrom: .default) { builder in
+            Self.configureBuilder(&builder, with: snapshot)
+        }
+        controller.setTerminalConfiguration(config)
+
+        let definition = GhosttyThemeCatalog.theme(named: snapshot.themeName)
+        if let theme = definition?.toTerminalTheme() {
+            controller.setTheme(theme)
+        }
+        applyThemeColors(from: definition)
+    }
+
+    /// Recomputes the sidebar-matching colors from a theme definition (nil ->
+    /// safe dark-neutral fallbacks).
+    private func applyThemeColors(from definition: GhosttyThemeDefinition?) {
+        terminalBackgroundColor = NSColor(hexString: definition?.background)
+            ?? NSColor(srgbRed: 0.12, green: 0.12, blue: 0.14, alpha: 1)
+        terminalSelectionColor = NSColor(hexString: definition?.selectionBackground)
+            ?? NSColor(srgbRed: 0.27, green: 0.28, blue: 0.35, alpha: 1)
+        terminalAccentColor = NSColor(hexString: definition?.palette[4]) ?? .controlAccentColor
     }
 
     // MARK: Agent status polling
@@ -150,9 +233,29 @@ final class SessionStore: ObservableObject {
                 }
             }
             DispatchQueue.main.async {
-                for (id, status) in updates { self.agentStatus[id] = status }
+                for (id, status) in updates {
+                    let previous = self.agentStatus[id]
+                    if previous != status, let session = self.sessions.first(where: { $0.id == id }) {
+                        self.notifier.handleTransition(
+                            sessionID: id,
+                            title: session.displayTitle,
+                            from: previous,
+                            to: status,
+                            isSelected: self.selectedID == id,
+                            appActive: NSApp.isActive
+                        )
+                    }
+                    self.agentStatus[id] = status
+                }
             }
         }
+    }
+
+    /// The Dock badge shows how many sessions are waiting on the user (agent
+    /// status `.attention`); cleared when none are.
+    private func updateDockBadge() {
+        let waiting = agentStatus.values.lazy.filter { $0 == .attention }.count
+        NSApp.dockTile.badgeLabel = waiting > 0 ? String(waiting) : nil
     }
 
     func toggleSidebar() {
@@ -325,5 +428,30 @@ final class SessionStore: ObservableObject {
     func selectSession(at index: Int) {
         guard sessions.indices.contains(index) else { return }
         select(sessions[index].id)
+    }
+}
+
+extension NSColor {
+    /// Parses a `RRGGBB` (or `#RRGGBB`) hex string like the ones in
+    /// `GhosttyThemeDefinition.background`. Returns nil for anything else.
+    convenience init?(hexString: String?) {
+        guard let raw = hexString else { return nil }
+        let hex = raw.trimmingCharacters(in: CharacterSet(charactersIn: "#")).lowercased()
+        guard hex.count == 6, let value = Int(hex, radix: 16) else { return nil }
+        self.init(
+            srgbRed: CGFloat((value >> 16) & 0xff) / 255,
+            green: CGFloat((value >> 8) & 0xff) / 255,
+            blue: CGFloat(value & 0xff) / 255,
+            alpha: 1
+        )
+    }
+
+    /// True when the color is dark enough that light-on-dark UI reads best over
+    /// it -- used to force the sidebar's SwiftUI contrast to match a dark
+    /// terminal theme regardless of the app's chrome appearance.
+    var isDark: Bool {
+        guard let c = usingColorSpace(.sRGB) else { return true }
+        let luma = 0.299 * c.redComponent + 0.587 * c.greenComponent + 0.114 * c.blueComponent
+        return luma < 0.5
     }
 }

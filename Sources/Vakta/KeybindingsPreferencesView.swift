@@ -28,7 +28,7 @@ struct KeybindingsPreferencesView: View {
     /// selection covers the nine default chords; the two app actions ship
     /// unbound and can be assigned here.
     private static let sessionActions: [KeybindingAction] = (0..<9).map { .selectSession($0) }
-    private static let appActions: [KeybindingAction] = [.toggleSidebar, .openPreferences]
+    private static let appActions: [KeybindingAction] = [.openSessionSwitcher, .toggleSidebar, .openPreferences, .quit]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -42,6 +42,22 @@ struct KeybindingsPreferencesView: View {
                     ForEach(Self.sessionActions, id: \.self) { action in
                         row(for: action)
                     }
+                }
+
+                Section {
+                    Picker("Passthrough", selection: $matcher.passthroughToggle) {
+                        ForEach(PassthroughToggle.allCases) { toggle in
+                            Text(toggle.title).tag(toggle)
+                        }
+                    }
+                } header: {
+                    Text("Passthrough Mode")
+                } footer: {
+                    Text("Double-tap this modifier to send every key straight to the "
+                        + "focused session — no Vakta shortcuts intercept. Double-tap "
+                        + "again to return. The menu-bar item shows when it's active.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
             .formStyle(.grouped)

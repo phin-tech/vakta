@@ -34,3 +34,27 @@ enum AppAppearance: String, Codable, CaseIterable, Identifiable {
         }
     }
 }
+
+/// The font the sidebar's session rows use: the system font, or the terminal's
+/// font (see `TerminalSettingsStore`) so the sidebar reads like the terminal.
+enum SidebarFontMode: String, Codable, CaseIterable, Identifiable {
+    case system
+    case matchTerminal
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .system: return "System"
+        case .matchTerminal: return "Terminal Style"
+        }
+    }
+}
+
+/// The persisted `appearance.json` payload. A struct (rather than the bare
+/// `AppAppearance` enum it used to be) so it can carry the sidebar font mode
+/// too; `AppearancePersistence` still decodes the old bare-enum file.
+struct AppearanceSettings: Codable, Equatable {
+    var appearance: AppAppearance = .system
+    var sidebarFont: SidebarFontMode = .system
+}

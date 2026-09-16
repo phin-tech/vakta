@@ -12,20 +12,33 @@ import AppKit
 final class AppearanceStore: ObservableObject {
     @Published var appearance: AppAppearance {
         didSet {
-            AppearancePersistence.save(appearance)
+            persist()
             apply()
         }
     }
 
+    /// Whether the sidebar's session rows use the system font or the terminal
+    /// font. Read by `SidebarView`.
+    @Published var sidebarFont: SidebarFontMode {
+        didSet { persist() }
+    }
+
     init() {
         // Load saved choice; first launch (or an unreadable file) seeds
-        // `.system` and writes it. Assigning in init does not fire `didSet`,
+        // defaults and writes them. Assigning in init does not fire `didSet`,
         // so `AppDelegate` calls `apply()` once after launch.
         let loaded = AppearancePersistence.load()
-        appearance = loaded ?? .system
+        appearance = loaded?.appearance ?? .system
+        sidebarFont = loaded?.sidebarFont ?? .system
         if loaded == nil {
-            AppearancePersistence.save(.system)
+            AppearancePersistence.save(AppearanceSettings())
         }
+    }
+
+    private func persist() {
+        AppearancePersistence.save(
+            AppearanceSettings(appearance: appearance, sidebarFont: sidebarFont)
+        )
     }
 
     /// Pushes the current choice onto `NSApp`. `nil` (System) hands control

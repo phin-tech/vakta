@@ -35,19 +35,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var splitView: NSSplitView?
     private var sidebarObserver: AnyCancellable?
     private var sidebarStyleObserver: AnyCancellable?
-    private let sessionStore = SessionStore()
     private let keybindingMatcher = KeybindingMatcher()
     private let appearanceStore = AppearanceStore()
     private let sidebarSettings = SidebarSettingsStore()
+    private let notificationSettings = NotificationSettingsStore()
+    private let terminalSettings = TerminalSettingsStore()
+    // Lazy so it can take `terminalSettings` (a non-lazy stored initializer
+    // can't reference another stored property; a lazy one can).
+    private lazy var sessionStore = SessionStore(terminalSettings: terminalSettings)
     private lazy var preferencesController = PreferencesWindowController(
         keybindingMatcher: keybindingMatcher,
         appearanceStore: appearanceStore,
-        sidebarSettings: sidebarSettings
+        sidebarSettings: sidebarSettings,
+        notificationSettings: notificationSettings,
+        terminalSettings: terminalSettings
     )
+
+    /// The AppKit sidebar/terminal chrome whose colors follow the terminal
+    /// theme; re-applied when it changes (SwiftUI parts update themselves).
+    private var sidebarContainerView: NSView?
+    private var terminalWrapperView: NSView?
+    private var sidebarHostView: NSView?
+    private var terminalColorObserver: AnyCancellable?
+
+    /// Menu-bar status item summarizing agent activity across all sessions, and
+    /// the subscription that keeps its icon live.
+    private var statusItem: NSStatusItem?
+    private var agentStatusObserver: AnyCancellable?
+    private var passthroughObserver: AnyCancellable?
+
+    /// The ⌘K session switcher's floating panel and its backing state.
+    private var switcherPanel: SessionSwitcherPanel?
+    private let switcherModel = SessionSwitcherModel()
 
     /// Sidebar widths: a full panel, and a narrow icon rail when collapsed.
     private let expandedSidebarWidth: CGFloat = 220
     private let collapsedSidebarWidth: CGFloat = 56
+
+    /// Titlebar band reserved at the top of both panes (matches
+    /// `SidebarView`'s own inset) so the traffic lights never overlap live
+    /// content -- see `makeWindow`.
+    private let titlebarInset: CGFloat = 28
 
     func applicationDidFinishLaunching(_: Notification) {
         // libghostty renders every surface with Metal and dereferences its
@@ -96,8 +124,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             case .selectSession(let index): self.sessionStore.selectSession(at: index)
             case .toggleSidebar: self.sessionStore.toggleSidebar()
             case .openPreferences: self.preferencesController.show()
+            case .openSessionSwitcher: self.showSessionSwitcher()
+            case .quit: NSApp.terminate(nil)
             }
         }
+
+        // Finish wiring the attention notifier now that the app is up: give it
+        // the user's preferences, a way to surface a session on click, and
+        // (in the packaged app) notification authorization.
+        sessionStore.notifier.settings = notificationSettings
+        sessionStore.notifier.onActivateSession = { [weak self] id in
+            self?.activateSession(id)
+        }
+        sessionStore.notifier.requestAuthorization()
+
+        setUpStatusItem()
+
+        // When the terminal theme changes, re-tint the AppKit chrome (the
+        // SwiftUI sidebar re-reads the published colors on its own).
+        terminalColorObserver = sessionStore.$terminalBackgroundColor
+            .sink { [weak self] color in self?.applyTerminalChromeColor(color) }
 
         // Drive the sidebar width off the store's collapsed flag, which the
         // sidebar's own button and the View menu both toggle.
@@ -140,38 +186,100 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         sessionStore.toggleSidebar()
     }
 
+    /// Re-applies the terminal theme's background to the AppKit sidebar/terminal
+    /// chrome, and flips the sidebar's appearance to keep its text legible.
+    private func applyTerminalChromeColor(_ color: NSColor) {
+        sidebarContainerView?.layer?.backgroundColor = color.cgColor
+        terminalWrapperView?.layer?.backgroundColor = color.cgColor
+        sidebarHostView?.appearance = NSAppearance(named: color.isDark ? .darkAqua : .aqua)
+    }
+
     @objc private func showPreferences() {
         preferencesController.show()
     }
 
     private func makeWindow() -> NSWindow {
-        let split = NSSplitView()
+        let split = SeamlessSplitView()
         split.isVertical = true
         split.dividerStyle = .thin
 
+        // The sidebar paints itself the terminal theme's background color, so
+        // it and the opaque terminal read as one continuous surface (the hidden
+        // divider completes the seam). A solid color -- not vibrancy -- because
+        // the goal is to *match* the terminal, which a translucent material
+        // can't do. The hosting view's appearance is forced to match the
+        // background's darkness so SwiftUI text/selection stay legible whatever
+        // the app's chrome appearance is set to.
         let sidebarHost = NSHostingView(
-            rootView: SidebarView().environmentObject(sessionStore)
+            rootView: SidebarView()
+                .environmentObject(sessionStore)
+                .environmentObject(appearanceStore)
+                .environmentObject(terminalSettings)
+                .environmentObject(keybindingMatcher)
         )
-        sidebarHost.frame = NSRect(x: 0, y: 0, width: expandedSidebarWidth, height: 640)
-        // Layer-backed + opaque so a resize can't leave a background seam.
-        sidebarHost.wantsLayer = true
+        sidebarHost.appearance = NSAppearance(
+            named: sessionStore.terminalBackgroundColor.isDark ? .darkAqua : .aqua
+        )
+        sidebarHostView = sidebarHost
 
+        let sidebarContainer = NSView()
+        sidebarContainer.wantsLayer = true
+        sidebarContainer.layer?.backgroundColor = sessionStore.terminalBackgroundColor.cgColor
+        sidebarContainer.frame = NSRect(x: 0, y: 0, width: expandedSidebarWidth, height: 640)
+        sidebarContainerView = sidebarContainer
+        // Frame + autoresizing, NOT Auto Layout: the split view drives the
+        // container's frame imperatively (`setPosition` on collapse), and the
+        // host autoresizes to fill it. Pinning the host with constraints fought
+        // that frame-based sizing and hung the collapse layout pass.
+        sidebarHost.frame = sidebarContainer.bounds
+        sidebarHost.autoresizingMask = [.width, .height]
+        sidebarContainer.addSubview(sidebarHost)
+
+        // Reserve the titlebar band on the terminal side too. With
+        // `fullSizeContentView` the content spans under the titlebar, so the
+        // terminal is inset down by the titlebar height and backed with the
+        // same dark color. That keeps the traffic lights over an empty dark
+        // band in every sidebar state -- expanded, icon rail, or hidden --
+        // instead of on top of live terminal content. The host container stays
+        // a permanent AppKit subview (settled design decision #4); wrapping it
+        // in a plain inset view doesn't touch any surface.
         let terminalContainer = sessionStore.hostContainer
-        terminalContainer.frame = NSRect(x: 0, y: 0, width: 860, height: 640)
+        let terminalWrapper = NSView()
+        terminalWrapper.wantsLayer = true
+        terminalWrapper.layer?.backgroundColor = sessionStore.terminalBackgroundColor.cgColor
+        terminalWrapper.frame = NSRect(x: 0, y: 0, width: 860, height: 640)
+        terminalWrapperView = terminalWrapper
+        // A small left gap (filled by the wrapper's dark background) gives the
+        // terminal content breathing room from the sidebar -- a bit of a spacer.
+        let terminalGap: CGFloat = 8
+        terminalContainer.frame = NSRect(
+            x: terminalGap, y: 0,
+            width: 860 - terminalGap, height: 640 - titlebarInset
+        )
+        // Flexible width/height; fixed left gap, top band, and bottom.
+        terminalContainer.autoresizingMask = [.width, .height]
+        terminalWrapper.addSubview(terminalContainer)
 
-        split.addArrangedSubview(sidebarHost)
-        split.addArrangedSubview(terminalContainer)
+        split.addArrangedSubview(sidebarContainer)
+        split.addArrangedSubview(terminalWrapper)
         // Sidebar keeps its width when the window resizes; the terminal flexes.
         split.setHoldingPriority(.defaultHigh, forSubviewAt: 0)
         self.splitView = split
 
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1080, height: 640),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
         window.title = "Vakta"
+        // Full-height sidebar: the content view (the split view) spans the whole
+        // window, including behind the titlebar, so the sidebar's vibrancy runs
+        // all the way to the top with the traffic lights floating over it --
+        // like Mail/Finder. The sidebar insets its own header below the traffic
+        // lights (see `SidebarView`). No opaque titlebar strip, no title text.
+        window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden
         window.contentView = split
         window.center()
         // `AppDelegate` (this object) holds `window` with a strong Swift
@@ -240,6 +348,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         newSessionItem.submenu = profilesMenu
         sessionMenu.addItem(newSessionItem)
 
+        // Session switcher (⌘K by default, bound via KeybindingMatcher). No
+        // keyEquivalent here -- settled design decision #5 keeps menu items
+        // keyless so keystrokes reach herdr; the chord is handled earlier.
+        sessionMenu.addItem(.separator())
+        let switcherItem = NSMenuItem(
+            title: "Switch Session…",
+            action: #selector(showSessionSwitcherFromMenu),
+            keyEquivalent: ""
+        )
+        switcherItem.target = self
+        sessionMenu.addItem(switcherItem)
+
         sessionMenuItem.submenu = sessionMenu
         mainMenu.addItem(sessionMenuItem)
 
@@ -275,5 +395,250 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         sessionStore.createSession(profile: profile)
+    }
+
+    // MARK: Menu-bar status item
+
+    /// Creates the menu-bar extra and keeps its icon in sync with agent status.
+    /// The dropdown itself is (re)built lazily in `menuNeedsUpdate(_:)`.
+    private func setUpStatusItem() {
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        item.button?.imagePosition = .imageLeading
+        let menu = NSMenu()
+        menu.delegate = self
+        item.menu = menu
+        statusItem = item
+        updateStatusItemButton(sessionStore.agentStatus)
+
+        // `@Published` fires before the stored value updates, so read the
+        // emitted value rather than `sessionStore.agentStatus`.
+        agentStatusObserver = sessionStore.$agentStatus.sink { [weak self] status in
+            self?.updateStatusItemButton(status)
+        }
+        // Reflect passthrough mode in the menu-bar item too.
+        passthroughObserver = keybindingMatcher.$passthrough.sink { [weak self] _ in
+            guard let self else { return }
+            self.updateStatusItemButton(self.sessionStore.agentStatus)
+        }
+    }
+
+    /// Icon reflects the busiest state across sessions; a count trails it when
+    /// any session is waiting on the user.
+    private func updateStatusItemButton(_ status: [Session.ID: AgentStatus]) {
+        guard let button = statusItem?.button else { return }
+
+        // Passthrough mode takes over the indicator while it's active.
+        if keybindingMatcher.passthrough {
+            let image = NSImage(systemSymbolName: "keyboard.fill", accessibilityDescription: "Passthrough mode on")
+            image?.isTemplate = true
+            button.image = image
+            button.title = " raw"
+            button.toolTip = "Passthrough on — keys go straight to the session. Double-tap the modifier to exit."
+            return
+        }
+        button.toolTip = nil
+
+        let waiting = status.values.filter { $0 == .attention }.count
+        let working = status.values.filter { $0 == .working }.count
+
+        // Symbols chosen from the macOS 11 set so they resolve on the 13.0
+        // deployment target (a missing symbol renders no icon at all).
+        let symbol: String
+        if waiting > 0 {
+            symbol = "exclamationmark.circle.fill"
+        } else if working > 0 {
+            symbol = "ellipsis.circle"
+        } else {
+            symbol = "terminal"
+        }
+        let image = NSImage(systemSymbolName: symbol, accessibilityDescription: "Vakta agent status")
+        image?.isTemplate = true
+        button.image = image
+        button.title = waiting > 0 ? " \(waiting)" : ""
+    }
+
+    /// A small filled dot in the session's status color, for menu-bar rows
+    /// (non-template so the color shows, unlike the monochrome button icon).
+    private func statusDotImage(_ status: AgentStatus) -> NSImage {
+        let color: NSColor
+        switch status {
+        case .working: color = .systemOrange
+        case .attention: color = .systemYellow
+        case .idle: color = .systemGreen
+        case .none: color = .tertiaryLabelColor
+        }
+        let size = NSSize(width: 10, height: 10)
+        let image = NSImage(size: size)
+        image.lockFocus()
+        color.setFill()
+        NSBezierPath(ovalIn: NSRect(origin: .zero, size: size)).fill()
+        image.unlockFocus()
+        image.isTemplate = false
+        return image
+    }
+
+    @objc private func menuBarSelectSession(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? UUID else { return }
+        activateSession(id)
+    }
+
+    @objc private func showMainWindow() {
+        window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    /// Selects a session and brings Vakta to the front -- shared by the
+    /// menu-bar rows and notification taps.
+    private func activateSession(_ id: Session.ID) {
+        sessionStore.select(id)
+        window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    // MARK: Session switcher (⌘K)
+
+    @objc private func showSessionSwitcherFromMenu() {
+        showSessionSwitcher()
+    }
+
+    /// Opens (or refocuses) the command-palette session switcher.
+    private func showSessionSwitcher() {
+        // Snapshot the current sessions for the palette.
+        switcherModel.reset(items: sessionStore.sessions.map { session in
+            SessionSwitcherItem(
+                id: session.id,
+                title: session.displayTitle,
+                status: sessionStore.agentStatus[session.id] ?? .none
+            )
+        })
+        switcherModel.onSelect = { [weak self] id in self?.selectFromSwitcher(id) }
+        switcherModel.onCancel = { [weak self] in self?.closeSwitcher() }
+
+        if let panel = switcherPanel {
+            panel.center()
+            panel.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+
+        let host = NSHostingView(
+            rootView: SessionSwitcherView(
+                model: switcherModel,
+                highlightColor: Color(nsColor: sessionStore.terminalSelectionColor)
+            )
+        )
+        let panel = SessionSwitcherPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 440, height: 360),
+            styleMask: [.titled, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        panel.model = switcherModel
+        panel.titleVisibility = .hidden
+        panel.titlebarAppearsTransparent = true
+        panel.isMovableByWindowBackground = true
+        panel.isFloatingPanel = true
+        panel.level = .floating
+        // Dismissal is handled by `windowDidResignKey` (covers ⌘-Tab away and
+        // clicking elsewhere). We deliberately do NOT also set
+        // `hidesOnDeactivate`, which can re-order the panel back in on
+        // reactivation and fight the delegate.
+        panel.animationBehavior = .utilityWindow
+        panel.contentView = host
+        panel.delegate = self
+        // Held strongly here; stop AppKit additionally releasing on close.
+        panel.isReleasedWhenClosed = false
+        switcherPanel = panel
+
+        panel.center()
+        panel.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private func selectFromSwitcher(_ id: Session.ID) {
+        switcherPanel?.orderOut(nil)
+        activateSession(id)
+    }
+
+    private func closeSwitcher() {
+        switcherPanel?.orderOut(nil)
+        window?.makeKeyAndOrderFront(nil)
+    }
+}
+
+// MARK: - Menu-bar dropdown
+
+extension AppDelegate: NSMenuDelegate {
+    /// Rebuilt on each open so session rows and their status dots are current.
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        guard menu === statusItem?.menu else { return }
+        menu.removeAllItems()
+
+        let sessions = sessionStore.sessions
+        let waiting = sessionStore.agentStatus.values.filter { $0 == .attention }.count
+        let summary = sessions.isEmpty
+            ? "No sessions"
+            : "\(sessions.count) session\(sessions.count == 1 ? "" : "s") · \(waiting) waiting"
+        let header = NSMenuItem(title: summary, action: nil, keyEquivalent: "")
+        header.isEnabled = false
+        menu.addItem(header)
+        menu.addItem(.separator())
+
+        for session in sessions {
+            let status = sessionStore.agentStatus[session.id] ?? .none
+            let item = NSMenuItem(
+                title: session.displayTitle,
+                action: #selector(menuBarSelectSession(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = session.id
+            item.image = statusDotImage(status)
+            item.state = (session.id == sessionStore.selectedID) ? .on : .off
+            menu.addItem(item)
+        }
+
+        menu.addItem(.separator())
+        let show = NSMenuItem(title: "Show Vakta", action: #selector(showMainWindow), keyEquivalent: "")
+        show.target = self
+        menu.addItem(show)
+        let quit = NSMenuItem(title: "Quit Vakta", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "")
+        quit.target = NSApp
+        menu.addItem(quit)
+    }
+}
+
+// MARK: - Seamless split view
+
+/// An `NSSplitView` that keeps a real, draggable divider (so the sidebar can
+/// still be resized by dragging and collapsed via `setPosition`) but paints no
+/// line, so the sidebar's vibrancy meets the opaque terminal with no visible
+/// seam. Only the *drawing* is suppressed -- thickness and hit-testing are the
+/// stock `.thin` behavior.
+private final class SeamlessSplitView: NSSplitView {
+    // A faint hairline instead of the stock heavy line: enough to separate the
+    // sidebar from the same-colored terminal without a harsh black divider.
+    // The top titlebar band is left unpainted so the hairline never crosses the
+    // traffic lights -- when the sidebar collapses to the icon rail (narrower
+    // than the traffic-light cluster) the divider otherwise cuts through them.
+    override func drawDivider(in rect: NSRect) {
+        let titlebarBand: CGFloat = 28 // matches SidebarView/AppDelegate inset
+        // Non-flipped coords (origin bottom-left): trim the height so the top
+        // band stays clear.
+        var painted = rect
+        painted.size.height = max(0, rect.height - titlebarBand)
+        NSColor.white.withAlphaComponent(0.08).setFill()
+        painted.fill()
+    }
+}
+
+// MARK: - Session switcher panel lifecycle
+
+extension AppDelegate: NSWindowDelegate {
+    /// Dismiss the switcher when it loses key focus (click elsewhere), so it
+    /// behaves like a proper command palette.
+    func windowDidResignKey(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow, window === switcherPanel else { return }
+        switcherPanel?.orderOut(nil)
     }
 }

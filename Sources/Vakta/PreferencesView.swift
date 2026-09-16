@@ -12,7 +12,9 @@ import SwiftUI
 /// One row in the Preferences sidebar.
 enum PreferencesSection: String, CaseIterable, Identifiable {
     case appearance
+    case terminal
     case sidebar
+    case notifications
     case keybindings
 
     var id: String { rawValue }
@@ -20,7 +22,9 @@ enum PreferencesSection: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .appearance: return "Appearance"
+        case .terminal: return "Terminal"
         case .sidebar: return "Sidebar"
+        case .notifications: return "Notifications"
         case .keybindings: return "Keybindings"
         }
     }
@@ -29,7 +33,9 @@ enum PreferencesSection: String, CaseIterable, Identifiable {
     var symbol: String {
         switch self {
         case .appearance: return "paintpalette"
+        case .terminal: return "terminal"
         case .sidebar: return "sidebar.leading"
+        case .notifications: return "bell"
         case .keybindings: return "keyboard"
         }
     }
@@ -49,8 +55,12 @@ struct PreferencesView: View {
             switch selection {
             case .appearance:
                 AppearancePreferencesView()
+            case .terminal:
+                TerminalPreferencesView()
             case .sidebar:
                 SidebarPreferencesView()
+            case .notifications:
+                NotificationsPreferencesView()
             case .keybindings:
                 KeybindingsPreferencesView()
             }

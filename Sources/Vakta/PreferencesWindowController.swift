@@ -17,15 +17,21 @@ final class PreferencesWindowController {
     private let keybindingMatcher: KeybindingMatcher
     private let appearanceStore: AppearanceStore
     private let sidebarSettings: SidebarSettingsStore
+    private let notificationSettings: NotificationSettingsStore
+    private let terminalSettings: TerminalSettingsStore
 
     init(
         keybindingMatcher: KeybindingMatcher,
         appearanceStore: AppearanceStore,
-        sidebarSettings: SidebarSettingsStore
+        sidebarSettings: SidebarSettingsStore,
+        notificationSettings: NotificationSettingsStore,
+        terminalSettings: TerminalSettingsStore
     ) {
         self.keybindingMatcher = keybindingMatcher
         self.appearanceStore = appearanceStore
         self.sidebarSettings = sidebarSettings
+        self.notificationSettings = notificationSettings
+        self.terminalSettings = terminalSettings
     }
 
     /// Opens the Preferences window, creating it on first use and reusing it
@@ -42,6 +48,8 @@ final class PreferencesWindowController {
                 .environmentObject(keybindingMatcher)
                 .environmentObject(appearanceStore)
                 .environmentObject(sidebarSettings)
+                .environmentObject(notificationSettings)
+                .environmentObject(terminalSettings)
         )
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 640, height: 420),
