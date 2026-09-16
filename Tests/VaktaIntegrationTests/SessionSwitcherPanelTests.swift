@@ -33,8 +33,8 @@ final class SessionSwitcherPanelTests: XCTestCase {
     private func makeModel() -> SessionSwitcherModel {
         let model = SessionSwitcherModel()
         model.reset(items: [
-            SessionSwitcherItem(id: UUID(), title: "alpha", status: .idle),
-            SessionSwitcherItem(id: UUID(), title: "beta", status: .idle)
+            PaletteItem(id: "alpha", title: "alpha", subtitle: nil, category: .session, status: .idle, kind: .selectSession(UUID())),
+            PaletteItem(id: "beta", title: "beta", subtitle: nil, category: .session, status: .idle, kind: .selectSession(UUID()))
         ])
         return model
     }
@@ -71,7 +71,7 @@ final class SessionSwitcherPanelTests: XCTestCase {
         let panel = SessionSwitcherPanel()
         let model = makeModel()
         panel.model = model
-        var selected: UUID?
+        var selected: PaletteItem?
         model.onSelect = { selected = $0 }
 
         let composingTextView = NSTextView(frame: .zero)
@@ -99,11 +99,11 @@ final class SessionSwitcherPanelTests: XCTestCase {
         let model = makeModel()
         panel.model = model
         panel.hasMarkedTextProvider = { false }
-        var selected: UUID?
+        var selected: PaletteItem?
         model.onSelect = { selected = $0 }
 
         panel.sendEvent(keyDownEvent(keyCode: 36))
 
-        XCTAssertEqual(selected, model.matches[0].id)
+        XCTAssertEqual(selected, model.matches[0])
     }
 }

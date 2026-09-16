@@ -18,42 +18,49 @@
 import AppKit
 import SwiftUI
 
-/// A flattened, display-ready snapshot of one session for the palette. Taken
-/// once when the palette opens so the list doesn't churn as statuses poll.
-struct SessionSwitcherItem: Identifiable, Equatable {
-    let id: UUID
-    let title: String
-    let status: AgentStatus
-}
-
 /// Backing state for the palette. Owns the query, the current highlight, and
 /// the match computation, so both the SwiftUI view (rendering) and the panel
-/// (key handling) act on one source of truth.
+/// (key handling) act on one source of truth. Items span three categories --
+/// sessions, herdr workspaces, and static actions (see `PaletteItem`) -- so
+/// the palette can jump to or run any of them from one flat list.
 @MainActor
 final class SessionSwitcherModel: ObservableObject {
     @Published var query: String = "" { didSet { highlighted = 0 } }
     @Published var highlighted: Int = 0
 
-    private(set) var items: [SessionSwitcherItem] = []
+    private(set) var items: [PaletteItem] = []
+    /// Bumped on every `reset`; tags an in-flight async fetch (e.g. a herdr
+    /// session's workspaces) so a result that lands after the palette was
+    /// closed and reopened doesn't get appended to the wrong list -- see
+    /// `PaletteAppendPlanner`.
+    private(set) var generation = 0
 
-    /// Called with the chosen session id (Enter or click).
-    var onSelect: ((UUID) -> Void)?
+    /// Called with the chosen item (Enter or click).
+    var onSelect: ((PaletteItem) -> Void)?
     /// Called on ⎋ or when the palette should dismiss without a choice.
     var onCancel: (() -> Void)?
 
-    /// Re-seeds the palette for a fresh open.
-    func reset(items: [SessionSwitcherItem]) {
+    /// Re-seeds the palette for a fresh open. Returns the new generation, to
+    /// tag any async fetch started for this open (see `append`).
+    @discardableResult
+    func reset(items: [PaletteItem]) -> Int {
+        generation += 1
         self.items = items
         query = ""
         highlighted = 0
+        return generation
     }
 
-    /// Case-insensitive substring match on the title; empty query shows all.
-    var matches: [SessionSwitcherItem] {
-        let q = query.trimmingCharacters(in: .whitespaces).lowercased()
-        guard !q.isEmpty else { return items }
-        return items.filter { $0.title.lowercased().contains(q) }
+    /// Merges asynchronously-fetched items (e.g. a herdr session's
+    /// workspaces) into the current list -- a no-op if the palette has since
+    /// been reset (closed/reopened) after `forGeneration` was captured.
+    func append(_ newItems: [PaletteItem], forGeneration: Int) {
+        guard PaletteAppendPlanner.shouldApply(fetchGeneration: forGeneration, currentGeneration: generation) else { return }
+        items += newItems
     }
+
+    /// Case-insensitive substring match on title/subtitle; empty query shows all.
+    var matches: [PaletteItem] { PaletteMatcher.matches(query: query, in: items) }
 
     func moveDown() {
         let count = matches.count
@@ -70,7 +77,7 @@ final class SessionSwitcherModel: ObservableObject {
     func commit() {
         let matches = matches
         guard matches.indices.contains(highlighted) else { return }
-        onSelect?(matches[highlighted].id)
+        onSelect?(matches[highlighted])
     }
 
     func cancel() { onCancel?() }
@@ -119,8 +126,13 @@ final class SessionSwitcherPanel: NSPanel {
 
 struct SessionSwitcherView: View {
     @ObservedObject var model: SessionSwitcherModel
-    /// The row highlight, passed in so it matches the sidebar / herdr palette.
+    /// The row highlight, background, and tint -- all passed in from the
+    /// current terminal theme (see `AppDelegate.showSessionSwitcher`) so the
+    /// palette reads as part of the same surface as the sidebar/terminal,
+    /// not a generic system panel.
     var highlightColor: Color = .accentColor
+    var backgroundColor: Color = Color(nsColor: .windowBackgroundColor)
+    var accentColor: Color = .accentColor
     @FocusState private var searchFocused: Bool
 
     var body: some View {
@@ -142,7 +154,7 @@ struct SessionSwitcherView: View {
                     LazyVStack(spacing: 2) {
                         let matches = model.matches
                         if matches.isEmpty {
-                            Text("No matching sessions")
+                            Text("No matches")
                                 .font(.callout)
                                 .foregroundStyle(.secondary)
                                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -153,7 +165,7 @@ struct SessionSwitcherView: View {
                                 row(item, isHighlighted: index == model.highlighted)
                                     .id(item.id)
                                     .contentShape(Rectangle())
-                                    .onTapGesture { model.onSelect?(item.id) }
+                                    .onTapGesture { model.onSelect?(item) }
                             }
                         }
                     }
@@ -168,7 +180,12 @@ struct SessionSwitcherView: View {
             }
         }
         .frame(width: 440, height: 360)
-        .background(.ultraThinMaterial)
+        // A solid theme-background fill, not a translucent material -- same
+        // choice `makeWindow` documents for the sidebar/terminal seam: the
+        // goal is to match the terminal's actual background, which vibrancy
+        // can't do.
+        .background(backgroundColor)
+        .tint(accentColor)
         .onAppear {
             // Focusing the field in the same runloop turn the hosting panel is
             // ordered in is racy (the panel may not be key yet); defer a turn.
@@ -177,13 +194,23 @@ struct SessionSwitcherView: View {
     }
 
     @ViewBuilder
-    private func row(_ item: SessionSwitcherItem, isHighlighted: Bool) -> some View {
+    private func row(_ item: PaletteItem, isHighlighted: Bool) -> some View {
         HStack(spacing: 8) {
-            Circle()
-                .fill(sidebarStatusColor(item.status, isFocused: false))
-                .frame(width: 7, height: 7)
+            // Actions have no live status to show; a session/workspace row
+            // gets its usual colored dot.
+            if item.category != .action {
+                Circle()
+                    .fill(sidebarStatusColor(item.status, isFocused: false))
+                    .frame(width: 7, height: 7)
+            }
             Text(item.title)
                 .lineLimit(1)
+            if let subtitle = item.subtitle {
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
             Spacer()
         }
         .padding(.horizontal, 10)

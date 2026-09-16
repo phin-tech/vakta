@@ -66,9 +66,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var agentStatusObserver: AnyCancellable?
     private var passthroughObserver: AnyCancellable?
 
-    /// The ⌘K session switcher's floating panel and its backing state.
+    /// The ⌘K command palette's floating panel and its backing state. The
+    /// host is kept typed (not just `panel.contentView`) so its `rootView`'s
+    /// theme colors can be refreshed on reuse -- see `showSessionSwitcher`.
     private var switcherPanel: SessionSwitcherPanel?
+    private var switcherHostView: NSHostingView<SessionSwitcherView>?
     private let switcherModel = SessionSwitcherModel()
+    /// Herdr sessions whose workspaces were queried for the currently-open
+    /// palette but haven't reported back yet; drained (and the observer torn
+    /// down) as each arrives -- see `showSessionSwitcher`.
+    private var pendingPaletteWorkspaceFetches: Set<Session.ID> = []
+    private var herdrWorkspacesObserver: AnyCancellable?
 
     /// Sidebar widths: a full panel, and a narrow icon rail when collapsed.
     private let expandedSidebarWidth: CGFloat = 220
@@ -656,32 +664,86 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         showSessionSwitcher()
     }
 
-    /// Opens (or refocuses) the command-palette session switcher.
+    /// The palette's static, always-available actions -- resolved to a call
+    /// below in `performPaletteAction`, not carried on the item itself.
+    private static let paletteActions: [PaletteAction] = [
+        PaletteAction(id: "newSession", title: "New Session"),
+        PaletteAction(id: "toggleSidebar", title: "Toggle Sidebar"),
+        PaletteAction(id: "openPreferences", title: "Open Preferences"),
+        PaletteAction(id: "increaseFontSize", title: "Increase Font Size"),
+        PaletteAction(id: "decreaseFontSize", title: "Decrease Font Size"),
+        PaletteAction(id: "resetFontSize", title: "Reset Font Size")
+    ]
+
+    /// Mirrors `SidebarView.isHerdrSession` -- whether querying `session`'s
+    /// workspaces makes sense at all.
+    private static func isHerdrSession(_ session: Session) -> Bool {
+        guard case .multiplexer(let target) = LaunchTargetResolver.resolve(session.profile) else { return false }
+        return target.backend == .herdr
+    }
+
+    /// Opens (or refocuses) the command palette: sessions, herdr workspaces,
+    /// and static actions in one flat, searchable list.
     private func showSessionSwitcher() {
-        // Snapshot the current sessions for the palette.
-        switcherModel.reset(items: sessionStore.sessions.map { session in
-            SessionSwitcherItem(
-                id: session.id,
-                title: session.displayTitle,
-                status: sessionStore.agentStatus[session.id] ?? .none
-            )
-        })
-        switcherModel.onSelect = { [weak self] id in self?.selectFromSwitcher(id) }
+        let sessions = sessionStore.sessions.map {
+            PaletteItemAssembler.SessionEntry(id: $0.id, title: $0.displayTitle, status: sessionStore.agentStatus[$0.id] ?? .none)
+        }
+        let items = PaletteItemAssembler.assemble(
+            sessions: sessions,
+            herdrWorkspaces: sessionStore.herdrWorkspaces,
+            workspaceStatus: sessionStore.paneStatusByWorkspaceID,
+            actions: Self.paletteActions
+        )
+        let generation = switcherModel.reset(items: items)
+        switcherModel.onSelect = { [weak self] item in self?.selectFromSwitcher(item) }
         switcherModel.onCancel = { [weak self] in self?.closeSwitcher() }
 
+        // The palette is the point of asking "what herdr workspaces exist"
+        // -- unlike the sidebar disclosure, it queries every herdr session
+        // regardless of `HerdrPreferencesStore.showWorkspaces`. Only
+        // sessions with no cached answer yet are queried; a session already
+        // in `sessionStore.herdrWorkspaces` was included in the sync
+        // snapshot above.
+        pendingPaletteWorkspaceFetches = Set(sessionStore.sessions
+            .filter { sessionStore.herdrWorkspaces[$0.id] == nil && Self.isHerdrSession($0) }
+            .map(\.id))
+        for id in pendingPaletteWorkspaceFetches {
+            sessionStore.fetchHerdrWorkspaces(for: id)
+        }
+        herdrWorkspacesObserver = pendingPaletteWorkspaceFetches.isEmpty ? nil : sessionStore.$herdrWorkspaces
+            .sink { [weak self] workspacesByID in
+                guard let self else { return }
+                let arrived = self.pendingPaletteWorkspaceFetches.filter { workspacesByID[$0] != nil }
+                guard !arrived.isEmpty else { return }
+                self.pendingPaletteWorkspaceFetches.subtract(arrived)
+
+                let arrivedSessions = self.sessionStore.sessions
+                    .filter { arrived.contains($0.id) }
+                    .map { PaletteItemAssembler.SessionEntry(id: $0.id, title: $0.displayTitle, status: self.sessionStore.agentStatus[$0.id] ?? .none) }
+                let newItems = PaletteItemAssembler.assemble(
+                    sessions: arrivedSessions,
+                    herdrWorkspaces: workspacesByID,
+                    workspaceStatus: self.sessionStore.paneStatusByWorkspaceID,
+                    actions: []
+                ).filter { $0.category == .herdrWorkspace }
+                self.switcherModel.append(newItems, forGeneration: generation)
+
+                if self.pendingPaletteWorkspaceFetches.isEmpty { self.herdrWorkspacesObserver = nil }
+            }
+
         if let panel = switcherPanel {
+            // Refresh theme colors on every reopen (cheap, and covers a
+            // theme change made while the palette was closed) -- the panel
+            // itself is reused rather than recreated.
+            applySwitcherTheme(to: panel)
             panel.center()
             panel.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
             return
         }
 
-        let host = NSHostingView(
-            rootView: SessionSwitcherView(
-                model: switcherModel,
-                highlightColor: Color(nsColor: sessionStore.terminalSelectionColor)
-            )
-        )
+        let host = NSHostingView(rootView: SessionSwitcherView(model: switcherModel))
+        switcherHostView = host
         let panel = SessionSwitcherPanel(
             contentRect: NSRect(x: 0, y: 0, width: 440, height: 360),
             styleMask: [.titled, .fullSizeContentView],
@@ -704,15 +766,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Held strongly here; stop AppKit additionally releasing on close.
         panel.isReleasedWhenClosed = false
         switcherPanel = panel
+        applySwitcherTheme(to: panel)
 
         panel.center()
         panel.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    private func selectFromSwitcher(_ id: Session.ID) {
+    /// Repaints the palette in the current terminal theme's colors -- same
+    /// solid-background choice `makeWindow` uses for the sidebar/terminal
+    /// seam -- and flips the panel's appearance to match, so standard
+    /// controls (the search field's cursor/selection) stay legible against
+    /// a background that may be darker or lighter than the system chrome.
+    private func applySwitcherTheme(to panel: SessionSwitcherPanel) {
+        let background = sessionStore.terminalBackgroundColor
+        switcherHostView?.rootView = SessionSwitcherView(
+            model: switcherModel,
+            highlightColor: Color(nsColor: sessionStore.terminalSelectionColor),
+            backgroundColor: Color(nsColor: background),
+            accentColor: Color(nsColor: sessionStore.terminalAccentColor)
+        )
+        panel.appearance = NSAppearance(named: background.isDark ? .darkAqua : .aqua)
+    }
+
+    private func selectFromSwitcher(_ item: PaletteItem) {
         switcherPanel?.orderOut(nil)
-        activateSession(id)
+        switch item.kind {
+        case .selectSession(let id):
+            activateSession(id)
+        case .focusHerdrWorkspace(let sessionID, let workspaceID):
+            sessionStore.focusHerdrWorkspace(workspaceID, in: sessionID)
+            activateSession(sessionID)
+        case .action(let id):
+            performPaletteAction(id)
+        }
+    }
+
+    /// Resolves a palette action row (see `paletteActions`) to the same call
+    /// its menu-item/shortcut equivalent makes -- independent of whether
+    /// that chord is currently bound to anything.
+    private func performPaletteAction(_ id: String) {
+        switch id {
+        case "newSession": sessionStore.createSession()
+        case "toggleSidebar": toggleSidebar()
+        case "openPreferences": showPreferences()
+        case "increaseFontSize": increaseFontSize()
+        case "decreaseFontSize": decreaseFontSize()
+        case "resetFontSize": resetFontSize()
+        default: break
+        }
     }
 
     private func closeSwitcher() {
