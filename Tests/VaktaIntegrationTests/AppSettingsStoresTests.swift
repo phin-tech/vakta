@@ -126,4 +126,40 @@ final class AppSettingsStoresTests: XCTestCase {
 
         XCTAssertEqual(try Data(contentsOf: fileURL), corruptBytes)
     }
+
+    // MARK: HerdrPreferencesStore
+
+    @MainActor
+    func test_herdrPreferencesStore_firstLaunch_seedsDefaultsAndWritesFile() {
+        let store = HerdrPreferencesStore(root: tempDirectory)
+        XCTAssertFalse(store.showWorkspaces)
+
+        guard case .loaded(let preferences) = HerdrPreferencesPersistence.load(root: tempDirectory) else {
+            return XCTFail("first launch must persist the seeded defaults")
+        }
+        XCTAssertEqual(preferences, HerdrPreferences())
+    }
+
+    @MainActor
+    func test_herdrPreferencesStore_corruptFile_usesDefaultsInMemory_butDoesNotOverwriteFile() throws {
+        let fileURL = HerdrPreferencesPersistence.store(root: tempDirectory).fileURL
+        let corruptBytes = Data("garbage".utf8)
+        try corruptBytes.write(to: fileURL)
+
+        let store = HerdrPreferencesStore(root: tempDirectory)
+        XCTAssertEqual(store.showWorkspaces, HerdrPreferences().showWorkspaces)
+
+        XCTAssertEqual(try Data(contentsOf: fileURL), corruptBytes)
+    }
+
+    @MainActor
+    func test_herdrPreferencesStore_toggling_persistsImmediately() {
+        let store = HerdrPreferencesStore(root: tempDirectory)
+        store.showWorkspaces = true
+
+        guard case .loaded(let preferences) = HerdrPreferencesPersistence.load(root: tempDirectory) else {
+            return XCTFail("toggling must persist")
+        }
+        XCTAssertTrue(preferences.showWorkspaces)
+    }
 }

@@ -17,6 +17,7 @@ final class Stores {
     let sidebarSettings: SidebarSettingsStore
     let notificationSettings: NotificationSettingsStore
     let terminalSettings: TerminalSettingsStore
+    let herdrPreferences: HerdrPreferencesStore
     let sessionStore: SessionStore
     let persistenceFailures = PersistenceFailureCenter()
 
@@ -32,6 +33,7 @@ final class Stores {
         sidebarSettings = SidebarSettingsStore(root: root)
         notificationSettings = NotificationSettingsStore(root: root)
         terminalSettings = TerminalSettingsStore(root: root)
+        herdrPreferences = HerdrPreferencesStore(root: root)
         // `sessionStore` needs `terminalSettings` (already initialized above).
         sessionStore = SessionStore(terminalSettings: terminalSettings, root: root, pathResolver: resolvedPATH)
     }
@@ -45,6 +47,7 @@ extension View {
             .environmentObject(stores.sidebarSettings)
             .environmentObject(stores.notificationSettings)
             .environmentObject(stores.terminalSettings)
+            .environmentObject(stores.herdrPreferences)
             .environmentObject(stores.sessionStore)
             .environmentObject(stores.sessionStore.notifier)
             .environmentObject(stores.persistenceFailures)

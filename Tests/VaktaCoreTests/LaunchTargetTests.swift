@@ -132,4 +132,29 @@ final class LaunchTargetTests: XCTestCase {
         let target = MultiplexerTarget(backend: .tmux, executable: "tmux", tmuxSocketPath: nil, environment: [:])
         XCTAssertNil(target.statusArgv(sessionName: "foo"))
     }
+
+    // MARK: workspaceListArgv / workspaceFocusArgv
+
+    func test_workspaceListArgv_herdr() {
+        let target = MultiplexerTarget(backend: .herdr, executable: "herdr", tmuxSocketPath: nil, environment: [:])
+        XCTAssertEqual(target.workspaceListArgv(sessionName: "foo"), ["herdr", "--session", "foo", "workspace", "list"])
+    }
+
+    func test_workspaceListArgv_tmux_isNil() {
+        let target = MultiplexerTarget(backend: .tmux, executable: "tmux", tmuxSocketPath: nil, environment: [:])
+        XCTAssertNil(target.workspaceListArgv(sessionName: "foo"))
+    }
+
+    func test_workspaceFocusArgv_herdr() {
+        let target = MultiplexerTarget(backend: .herdr, executable: "herdr", tmuxSocketPath: nil, environment: [:])
+        XCTAssertEqual(
+            target.workspaceFocusArgv(sessionName: "foo", workspaceID: "ws-1"),
+            ["herdr", "--session", "foo", "workspace", "focus", "ws-1"]
+        )
+    }
+
+    func test_workspaceFocusArgv_tmux_isNil() {
+        let target = MultiplexerTarget(backend: .tmux, executable: "tmux", tmuxSocketPath: nil, environment: [:])
+        XCTAssertNil(target.workspaceFocusArgv(sessionName: "foo", workspaceID: "ws-1"))
+    }
 }

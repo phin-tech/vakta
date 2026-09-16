@@ -141,4 +141,125 @@ final class LaunchTargetShellTests: XCTestCase {
         XCTAssertNil(status)
         XCTAssertFalse(FileManager.default.fileExists(atPath: outputDirectory.appendingPathComponent("argv").path))
     }
+
+    // MARK: HerdrWorkspaceQuery
+
+    func test_herdrWorkspaceQuery_usesTargetsExecutableAndEnvironment() {
+        let script = """
+        #!/bin/sh
+        : > "$OUT/argv"
+        for a in "$@"; do
+            printf '%s\\n' "$a" >> "$OUT/argv"
+        done
+        printf '%s\\n' "${MARKER-<absent>}" > "$OUT/marker"
+        printf '{"result":{"workspaces":[{"workspace_id":"w2C","label":"guildhall","focused":true,"agent_status":"idle","number":1,"tab_count":1,"pane_count":2,"active_tab_id":"w2C:t1"}]}}'
+        """
+        try? script.write(to: captureURL, atomically: true, encoding: .utf8)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: captureURL.path)
+
+        let target = MultiplexerTarget(
+            backend: .herdr,
+            executable: captureURL.path,
+            tmuxSocketPath: nil,
+            environment: ["MARKER": "workspace-poll", "OUT": outputDirectory.path]
+        )
+
+        let workspaces = HerdrWorkspaceQuery.workspaces(sessionName: "my-session", target: target, path: "/usr/bin:/bin")
+
+        XCTAssertEqual(workspaces, [HerdrWorkspace(id: "w2C", label: "guildhall", focused: true)])
+        XCTAssertEqual(readOutput("argv"), "--session\nmy-session\nworkspace\nlist")
+        XCTAssertEqual(readOutput("marker"), "workspace-poll")
+    }
+
+    func test_herdrWorkspaceQuery_tmuxTarget_returnsNilWithoutRunningAnything() {
+        let target = MultiplexerTarget(
+            backend: .tmux,
+            executable: captureURL.path,
+            tmuxSocketPath: nil,
+            environment: ["OUT": outputDirectory.path]
+        )
+
+        let workspaces = HerdrWorkspaceQuery.workspaces(sessionName: "my-session", target: target, path: "/usr/bin:/bin")
+
+        XCTAssertNil(workspaces)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: outputDirectory.appendingPathComponent("argv").path))
+    }
+
+    // MARK: HerdrWorkspaceFocus
+
+    func test_herdrWorkspaceFocus_usesTargetsExecutableAndEnvironment_andReportsSuccess() {
+        let script = """
+        #!/bin/sh
+        : > "$OUT/argv"
+        for a in "$@"; do
+            printf '%s\\n' "$a" >> "$OUT/argv"
+        done
+        printf '%s\\n' "${MARKER-<absent>}" > "$OUT/marker"
+        printf '{"result":{}}'
+        """
+        try? script.write(to: captureURL, atomically: true, encoding: .utf8)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: captureURL.path)
+
+        let target = MultiplexerTarget(
+            backend: .herdr,
+            executable: captureURL.path,
+            tmuxSocketPath: nil,
+            environment: ["MARKER": "workspace-focus", "OUT": outputDirectory.path]
+        )
+
+        let succeeded = HerdrWorkspaceFocus.focus(
+            sessionName: "my-session",
+            target: target,
+            workspaceID: "ws-1",
+            path: "/usr/bin:/bin"
+        )
+
+        XCTAssertTrue(succeeded)
+        XCTAssertEqual(readOutput("argv"), "--session\nmy-session\nworkspace\nfocus\nws-1")
+        XCTAssertEqual(readOutput("marker"), "workspace-focus")
+    }
+
+    func test_herdrWorkspaceFocus_nonZeroExit_reportsFailure() {
+        let script = """
+        #!/bin/sh
+        exit 1
+        """
+        try? script.write(to: captureURL, atomically: true, encoding: .utf8)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: captureURL.path)
+
+        let target = MultiplexerTarget(
+            backend: .herdr,
+            executable: captureURL.path,
+            tmuxSocketPath: nil,
+            environment: ["OUT": outputDirectory.path]
+        )
+
+        let succeeded = HerdrWorkspaceFocus.focus(
+            sessionName: "my-session",
+            target: target,
+            workspaceID: "ws-1",
+            path: "/usr/bin:/bin"
+        )
+
+        XCTAssertFalse(succeeded)
+    }
+
+    func test_herdrWorkspaceFocus_tmuxTarget_returnsFalseWithoutRunningAnything() {
+        let target = MultiplexerTarget(
+            backend: .tmux,
+            executable: captureURL.path,
+            tmuxSocketPath: nil,
+            environment: ["OUT": outputDirectory.path]
+        )
+
+        let succeeded = HerdrWorkspaceFocus.focus(
+            sessionName: "my-session",
+            target: target,
+            workspaceID: "ws-1",
+            path: "/usr/bin:/bin"
+        )
+
+        XCTAssertFalse(succeeded)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: outputDirectory.appendingPathComponent("argv").path))
+    }
 }

@@ -71,6 +71,13 @@ final class SessionStore: ObservableObject {
         didSet { updateDockBadge() }
     }
 
+    /// A herdr session's workspaces (local machine only -- see
+    /// `HerdrWorkspace.swift`), fetched once when its sidebar row is first
+    /// expanded (gated by `HerdrPreferencesStore.showWorkspaces`), not
+    /// continuously polled. `nil` until fetched at least once; `[]` means
+    /// "fetched, none" -- both display the same empty disclosure.
+    @Published private(set) var herdrWorkspaces: [Session.ID: [HerdrWorkspace]] = [:]
+
     /// Repeating poll for `agentStatus`.
     private var statusTimer: Timer?
     /// At most one agent-status poll, and separately at most one discovery
@@ -688,6 +695,7 @@ final class SessionStore: ObservableObject {
         sessions.removeAll { $0.id == id }
         hostContainer.removeSession(id)
         agentStatus[id] = nil
+        herdrWorkspaces[id] = nil
 
         let fallback = SessionSelectionPlanner.fallbackAfterRemoval(
             removedID: id,
@@ -708,6 +716,56 @@ final class SessionStore: ObservableObject {
         selectedID = id
         hostContainer.select(id)
         saveWorkspace()
+    }
+
+    /// Queries `id`'s workspaces (off the main thread) and publishes the
+    /// result into `herdrWorkspaces`, once, for the sidebar's disclosure to
+    /// show when it's first expanded. Not a herdr session, or a target that
+    /// can't be reliably queried (e.g. `--remote`): no-op. A failed query
+    /// leaves any previous value alone rather than flicker to empty.
+    /// `HerdrWorkspaceFetchPlanner.shouldApply` drops the result if `id` was
+    /// closed while the query was in flight.
+    func fetchHerdrWorkspaces(for id: Session.ID) {
+        guard let session = sessions.first(where: { $0.id == id }) else { return }
+        guard case .multiplexer(let target) = LaunchTargetResolver.resolve(session.profile) else { return }
+        let sessionName = session.sessionName
+        let path = resolvedPATH
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            guard let workspaces = HerdrWorkspaceQuery.workspaces(
+                sessionName: sessionName,
+                target: target,
+                path: path,
+                isCancelled: { [weak self] in self?.isShuttingDown ?? true }
+            ) else { return }
+            DispatchQueue.main.async {
+                guard HerdrWorkspaceFetchPlanner.shouldApply(sessionID: id, liveSessionIDs: Set(self.sessions.map(\.id))) else { return }
+                self.herdrWorkspaces[id] = workspaces
+            }
+        }
+    }
+
+    /// Switches `id`'s herdr server to `workspaceID` and brings `id` itself
+    /// forward -- the same effect as clicking the session row, scoped to a
+    /// specific workspace. The focus command runs off the main thread and is
+    /// fire-and-forget: `select` doesn't wait on it, matching how every other
+    /// sidebar click behaves.
+    func focusHerdrWorkspace(_ workspaceID: String, in id: Session.ID) {
+        guard let session = sessions.first(where: { $0.id == id }) else { return }
+        guard case .multiplexer(let target) = LaunchTargetResolver.resolve(session.profile) else { return }
+        let sessionName = session.sessionName
+        let path = resolvedPATH
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            _ = HerdrWorkspaceFocus.focus(
+                sessionName: sessionName,
+                target: target,
+                workspaceID: workspaceID,
+                path: path,
+                isCancelled: { self?.isShuttingDown ?? true }
+            )
+        }
+        select(id)
     }
 
     /// Adds a new profile or replaces the existing one with the same id.

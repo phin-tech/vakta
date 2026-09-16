@@ -76,6 +76,20 @@ struct MultiplexerTarget: Equatable {
         guard backend == .herdr else { return nil }
         return [executable, "--session", sessionName, "agent", "list"]
     }
+
+    /// The argv to list `sessionName`'s workspaces, or `nil` for a backend
+    /// with no equivalent (only herdr has workspaces).
+    func workspaceListArgv(sessionName: String) -> [String]? {
+        guard backend == .herdr else { return nil }
+        return [executable, "--session", sessionName, "workspace", "list"]
+    }
+
+    /// The argv to focus `workspaceID` on `sessionName`, or `nil` for a
+    /// backend with no equivalent.
+    func workspaceFocusArgv(sessionName: String, workspaceID: String) -> [String]? {
+        guard backend == .herdr else { return nil }
+        return [executable, "--session", sessionName, "workspace", "focus", workspaceID]
+    }
 }
 
 /// The outcome of querying (or not attempting to query) a profile's server

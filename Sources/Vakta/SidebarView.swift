@@ -21,9 +21,15 @@ struct SidebarView: View {
     @EnvironmentObject private var appearanceStore: AppearanceStore
     @EnvironmentObject private var terminalSettings: TerminalSettingsStore
     @EnvironmentObject private var keybindingMatcher: KeybindingMatcher
+    @EnvironmentObject private var herdrPreferences: HerdrPreferencesStore
 
     /// The session whose row is currently in rename mode, if any.
     @State private var editingID: Session.ID?
+
+    /// Herdr session rows currently expanded to show their workspaces (see
+    /// `HerdrPreferencesView`'s "Show workspaces" toggle). Transient UI
+    /// state, not persisted -- collapses again on relaunch.
+    @State private var expandedHerdrSessionIDs: Set<Session.ID> = []
 
     /// The profile being created/edited in the modal, if any. `sheet(item:)`
     /// keys off this being non-nil.
@@ -37,6 +43,11 @@ struct SidebarView: View {
     /// Height of the traffic-light band the full-height sidebar now runs under
     /// (see `App.makeWindow`). Used to clear the window controls.
     private let titlebarInset: CGFloat = 28
+
+    /// Width of the herdr disclosure's icon column -- shared with
+    /// `HerdrWorkspaceRow` so a workspace's focused-dot lines up under the
+    /// session row's own disclosure/status icon, not at an arbitrary indent.
+    fileprivate static let herdrGutterWidth: CGFloat = 10
 
     /// Whether the sidebar is in terminal style (font + prompt caret + squared
     /// full-width selection).
@@ -144,18 +155,41 @@ struct SidebarView: View {
     private var fullList: some View {
         List {
             ForEach(sessionStore.sessions) { session in
-                SessionRow(
-                    session: session,
-                    status: sessionStore.agentStatus[session.id] ?? .none,
-                    font: rowFont,
-                    terminalStyle: terminalStyle,
-                    isEditing: editingID == session.id,
-                    onCommitName: { name in
-                        sessionStore.renameSession(session.id, to: name)
-                        editingID = nil
-                    },
-                    onEndEditing: { editingID = nil }
-                )
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    // Reserved for every row once the preference is on --
+                    // even a non-herdr row's, so a session's prompt caret/
+                    // status dot lines up in the same column whether or not
+                    // that particular row has a disclosure to show.
+                    if herdrPreferences.showWorkspaces {
+                        Group {
+                            if isHerdrSession(session) {
+                                Button {
+                                    toggleHerdrDisclosure(session)
+                                } label: {
+                                    herdrDisclosureGlyph(expanded: expandedHerdrSessionIDs.contains(session.id))
+                                        .foregroundStyle(.secondary)
+                                }
+                                .buttonStyle(.plain)
+                            } else {
+                                Color.clear
+                            }
+                        }
+                        .frame(width: Self.herdrGutterWidth, alignment: .center)
+                    }
+
+                    SessionRow(
+                        session: session,
+                        status: sessionStore.agentStatus[session.id] ?? .none,
+                        font: rowFont,
+                        terminalStyle: terminalStyle,
+                        isEditing: editingID == session.id,
+                        onCommitName: { name in
+                            sessionStore.renameSession(session.id, to: name)
+                            editingID = nil
+                        },
+                        onEndEditing: { editingID = nil }
+                    )
+                }
                 // Drive selection ourselves (a tap) and paint the highlight with
                 // herdr's selection color. Using the List's own `selection:`
                 // draws its inactive system-gray highlight on top -- doubling
@@ -178,6 +212,16 @@ struct SidebarView: View {
                     Button("Rename…") { editingID = session.id }
                     Button("Close Session") { sessionStore.requestClose(session.id) }
                 }
+
+                if herdrPreferences.showWorkspaces, isHerdrSession(session), expandedHerdrSessionIDs.contains(session.id) {
+                    ForEach(sessionStore.herdrWorkspaces[session.id] ?? [], id: \.id) { workspace in
+                        HerdrWorkspaceRow(workspace: workspace, font: rowFont)
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                sessionStore.focusHerdrWorkspace(workspace.id, in: session.id)
+                            }
+                    }
+                }
             }
         }
         .listStyle(.sidebar)
@@ -185,6 +229,38 @@ struct SidebarView: View {
         // through, and tint controls with the terminal theme's accent.
         .scrollContentBackground(.hidden)
         .tint(Color(nsColor: sessionStore.terminalAccentColor))
+    }
+
+    private func isHerdrSession(_ session: Session) -> Bool {
+        guard case .multiplexer(let target) = LaunchTargetResolver.resolve(session.profile) else { return false }
+        return target.backend == .herdr
+    }
+
+    /// A native SF Symbol chevron reads oddly next to terminal-style rows'
+    /// monospace "❯" prompt caret and plain-text look, so terminal style
+    /// gets a classic terminal-tree +/- glyph instead -- matching herdr's own
+    /// "distinct symbols" convention rather than mixing icon fonts with
+    /// terminal text.
+    @ViewBuilder
+    private func herdrDisclosureGlyph(expanded: Bool) -> some View {
+        if terminalStyle {
+            Text(expanded ? "-" : "+")
+                .font(rowFont)
+        } else {
+            Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                .font(.caption2)
+        }
+    }
+
+    private func toggleHerdrDisclosure(_ session: Session) {
+        if expandedHerdrSessionIDs.contains(session.id) {
+            expandedHerdrSessionIDs.remove(session.id)
+        } else {
+            expandedHerdrSessionIDs.insert(session.id)
+            if sessionStore.herdrWorkspaces[session.id] == nil {
+                sessionStore.fetchHerdrWorkspaces(for: session.id)
+            }
+        }
     }
 
     // MARK: Icon rail
@@ -435,6 +511,34 @@ private struct SessionRow: View {
             Spacer()
         }
         .contentShape(Rectangle())
+    }
+}
+
+/// One workspace under an expanded herdr session row (see `SidebarView.fullList`).
+/// Tapping it (handled by the caller) focuses that workspace on the session's
+/// herdr server and brings the session itself forward.
+private struct HerdrWorkspaceRow: View {
+    let workspace: HerdrWorkspace
+    let font: Font?
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Circle()
+                .fill(workspace.focused ? Color.secondary : Color.clear)
+                .frame(width: 6, height: 6)
+                // Same width as the session row's own disclosure/status icon
+                // column above, so this dot lines up under it rather than
+                // floating at an arbitrary indent.
+                .frame(width: SidebarView.herdrGutterWidth, alignment: .center)
+            Text(workspace.label)
+                .font(font)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            Spacer()
+        }
+        // Disclosure column width + the outer row's spacing -- lands this
+        // row's icon column directly under the session row's.
+        .padding(.leading, SidebarView.herdrGutterWidth + 4)
     }
 }
 
