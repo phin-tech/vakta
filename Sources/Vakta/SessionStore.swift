@@ -66,6 +66,10 @@ final class SessionStore: ObservableObject {
 
     /// Repeating poll for `agentStatus`.
     private var statusTimer: Timer?
+    /// At most one agent-status poll, and separately at most one discovery
+    /// refresh, in flight at a time -- see `SingleFlightGate`.
+    private let agentStatusPollGate = SingleFlightGate()
+    private let discoveryGate = SingleFlightGate()
 
     /// Surfaces agent-status transitions as notifications / a Dock bounce.
     /// `AppDelegate` finishes wiring it (settings, activation callback, and
@@ -305,7 +309,15 @@ final class SessionStore: ObservableObject {
     /// default `.none` would look identical to "queried this server, no
     /// agents," which is exactly the wrong-server display this issue exists
     /// to prevent.
+    ///
+    /// `agentStatusPollGate` drops this tick entirely (rather than queueing
+    /// it) if the previous poll hasn't finished -- see `SingleFlightGate`.
+    /// `AgentStatusApplyPlanner` then drops any result for a session that
+    /// was removed while the query was in flight, so a stale completion
+    /// can't resurrect its status/Dock count/notification.
     private func pollAgentStatus() {
+        guard agentStatusPollGate.beginIfIdle() else { return }
+
         var herdrSessions: [(id: Session.ID, name: String, target: MultiplexerTarget)] = []
         for session in sessions {
             guard (session.profile.command as NSString).lastPathComponent == "herdr" else { continue }
@@ -316,30 +328,39 @@ final class SessionStore: ObservableObject {
                 agentStatus[session.id] = .unavailable
             }
         }
-        guard !herdrSessions.isEmpty else { return }
+        guard !herdrSessions.isEmpty else {
+            agentStatusPollGate.end()
+            return
+        }
         let path = resolvedPATH
 
         DispatchQueue.global(qos: .utility).async {
-            var updates: [Session.ID: AgentStatus] = [:]
+            var updates: [AgentStatusUpdate] = []
             for session in herdrSessions {
                 if let status = HerdrAgentStatus.status(sessionName: session.name, target: session.target, path: path) {
-                    updates[session.id] = status
+                    updates.append(AgentStatusUpdate(sessionID: session.id, status: status))
                 }
             }
             DispatchQueue.main.async {
-                for (id, status) in updates {
-                    let previous = self.agentStatus[id]
-                    if previous != status, let session = self.sessions.first(where: { $0.id == id }) {
+                defer { self.agentStatusPollGate.end() }
+                let liveIDs = Set(self.sessions.map(\.id))
+                let accepted = AgentStatusApplyPlanner.accepted(
+                    updates,
+                    liveSessionIDs: liveIDs,
+                    previous: self.agentStatus
+                )
+                for entry in accepted {
+                    if entry.previous != entry.status, let session = self.sessions.first(where: { $0.id == entry.sessionID }) {
                         self.notifier.handleTransition(
-                            sessionID: id,
+                            sessionID: entry.sessionID,
                             title: session.displayTitle,
-                            from: previous,
-                            to: status,
-                            isSelected: self.selectedID == id,
+                            from: entry.previous,
+                            to: entry.status,
+                            isSelected: self.selectedID == entry.sessionID,
                             appActive: NSApp.isActive
                         )
                     }
-                    self.agentStatus[id] = status
+                    self.agentStatus[entry.sessionID] = entry.status
                 }
             }
         }
@@ -348,8 +369,7 @@ final class SessionStore: ObservableObject {
     /// The Dock badge shows how many sessions are waiting on the user (agent
     /// status `.attention`); cleared when none are.
     private func updateDockBadge() {
-        let waiting = agentStatus.values.lazy.filter { $0 == .attention }.count
-        NSApp.dockTile.badgeLabel = waiting > 0 ? String(waiting) : nil
+        NSApp.dockTile.badgeLabel = DockBadgePlanner.label(for: Array(agentStatus.values))
     }
 
     func toggleSidebar() {
@@ -359,26 +379,39 @@ final class SessionStore: ObservableObject {
     /// Re-queries each multiplexer for its existing sessions (off the main
     /// thread) and republishes `discovered`. Cheap; call on launch and when the
     /// app becomes active so the "New Session" menu is reasonably fresh.
+    /// `discoveryGate` drops this call entirely (rather than queueing it) if
+    /// a previous refresh hasn't finished -- see `SingleFlightGate`.
+    /// `DiscoveryApplyPlanner` then drops any result for a profile that was
+    /// deleted, or changed enough to resolve to a different target, while
+    /// the query was in flight -- a stale query result must not be applied
+    /// as if it described the profile's current target.
     func refreshDiscovery() {
+        guard discoveryGate.beginIfIdle() else { return }
+
         let candidates = profiles
         let path = resolvedPATH
         DispatchQueue.global(qos: .userInitiated).async {
-            var result: [Profile.ID: DiscoveryResult] = [:]
+            var results: [DiscoveryQueryResult] = []
             for profile in candidates {
-                switch LaunchTargetResolver.resolve(profile) {
-                case .multiplexer(let target):
-                    result[profile.id] = .sessions(SessionDiscovery.names(for: target, path: path))
+                let target = LaunchTargetResolver.resolve(profile)
+                switch target {
+                case .multiplexer(let multiplexerTarget):
+                    let names = SessionDiscovery.names(for: multiplexerTarget, path: path)
+                    results.append(DiscoveryQueryResult(profileID: profile.id, queriedTarget: target, result: .sessions(names)))
                 case .unsupported:
                     // Only a known-multiplexer profile whose target can't be
                     // reliably queried gets `.unsupported` -- a profile that
                     // isn't a multiplexer at all (e.g. a plain shell) gets no
                     // entry, since there was never anything to discover.
                     if LaunchTargetResolver.isKnownMultiplexerCommand(profile) {
-                        result[profile.id] = .unsupported
+                        results.append(DiscoveryQueryResult(profileID: profile.id, queriedTarget: target, result: .unsupported))
                     }
                 }
             }
-            DispatchQueue.main.async { self.discovered = result }
+            DispatchQueue.main.async {
+                defer { self.discoveryGate.end() }
+                self.discovered = DiscoveryApplyPlanner.accepted(results, currentProfiles: self.profiles)
+            }
         }
     }
 
@@ -561,6 +594,22 @@ final class SessionStore: ObservableObject {
     func selectSession(at index: Int) {
         guard sessions.indices.contains(index) else { return }
         select(sessions[index].id)
+    }
+
+    /// Documents intent more than it changes behavior: `SessionStore` is
+    /// owned by `Stores`, itself owned by `AppDelegate` for the app's whole
+    /// lifetime, and nothing calls `applicationWillTerminate` today, so in
+    /// practice this `deinit` never runs before process exit -- the timer
+    /// stops because the process does. AC#4's "shutdown stops timers and
+    /// pending work" is only half met even if it did run: `invalidate()`
+    /// stops the *timer*, but an in-flight `HerdrAgentStatus`/
+    /// `SessionDiscovery` call isn't cooperative-cancellation aware and
+    /// keeps running to its own timeout regardless -- its result is
+    /// harmless (`AgentStatusApplyPlanner`/`DiscoveryApplyPlanner` discard
+    /// anything for a session/profile that's gone by completion), but that
+    /// is "discarded," not "stopped."
+    deinit {
+        statusTimer?.invalidate()
     }
 }
 
