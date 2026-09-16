@@ -272,9 +272,13 @@ struct SidebarView: View {
                 Menu(profile.name) {
                     Button("New Session") { sessionStore.createSession(profile: profile) }
                     // Existing sessions to *attach* (your `default`, named ones)
-                    // -- offered here, never auto-listed in the sidebar.
-                    let existing = sessionStore.discovered[profile.id] ?? []
-                    if !existing.isEmpty {
+                    // -- offered here, never auto-listed in the sidebar. A
+                    // multiplexer profile whose actual server can't be
+                    // reliably queried (e.g. herdr `--remote`) shows as
+                    // explicitly unsupported rather than looking identical
+                    // to "queried, found nothing."
+                    switch sessionStore.discovered[profile.id] {
+                    case .sessions(let existing) where !existing.isEmpty:
                         Section("Attach existing") {
                             ForEach(existing, id: \.self) { name in
                                 Button(name) {
@@ -282,6 +286,13 @@ struct SidebarView: View {
                                 }
                             }
                         }
+                    case .unsupported:
+                        Section {
+                            Button("Can't list sessions for this profile (e.g. a remote target)") {}
+                                .disabled(true)
+                        }
+                    case .sessions, .none:
+                        EmptyView()
                     }
                     Divider()
                     Button("Edit Profile…") {
@@ -333,7 +344,7 @@ func sidebarStatusColor(_ status: AgentStatus, isFocused: Bool) -> Color {
     case .working: return .orange
     case .attention: return .yellow
     case .idle: return .green
-    case .none: return isFocused ? .accentColor : .secondary.opacity(0.35)
+    case .none, .unavailable: return isFocused ? .accentColor : .secondary.opacity(0.35)
     }
 }
 
@@ -376,6 +387,7 @@ private struct SessionRow: View {
         case .attention: return "Needs attention"
         case .idle: return "Idle"
         case .none: return session.displayTitle
+        case .unavailable: return "Status unavailable (remote target)"
         }
     }
 

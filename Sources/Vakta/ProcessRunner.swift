@@ -9,16 +9,23 @@
 import Foundation
 
 enum ProcessRunner {
-    /// Runs `argv` via `/usr/bin/env` with `path` as PATH. Returns stdout, or
-    /// nil on launch failure, timeout, or non-zero exit.
-    static func run(_ argv: [String], path: String, timeout: TimeInterval = 3) -> String? {
+    /// Runs `argv` via `/usr/bin/env` with `path` as PATH plus any
+    /// `environment` overrides (e.g. a `MultiplexerTarget`'s server-selecting
+    /// variables) layered on top of PATH/HOME. Returns stdout, or nil on
+    /// launch failure, timeout, or non-zero exit.
+    static func run(
+        _ argv: [String],
+        path: String,
+        environment: [String: String] = [:],
+        timeout: TimeInterval = 3
+    ) -> String? {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         process.arguments = argv
-        process.environment = [
-            "PATH": path,
-            "HOME": NSHomeDirectory(),
-        ]
+        process.environment = environment.merging(
+            ["PATH": path, "HOME": NSHomeDirectory()],
+            uniquingKeysWith: { profileValue, _ in profileValue }
+        )
         let outPipe = Pipe()
         process.standardOutput = outPipe
         process.standardError = FileHandle.nullDevice

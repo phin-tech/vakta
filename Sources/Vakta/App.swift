@@ -486,7 +486,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .working: color = .systemOrange
         case .attention: color = .systemYellow
         case .idle: color = .systemGreen
-        case .none: color = .tertiaryLabelColor
+        case .none, .unavailable: color = .tertiaryLabelColor
         }
         let size = NSSize(width: 10, height: 10)
         let image = NSImage(size: size)

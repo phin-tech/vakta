@@ -10,33 +10,17 @@
 import Foundation
 
 enum SessionDiscovery {
-    /// Existing session names for the multiplexer a profile drives. Empty for
-    /// profiles that aren't a known multiplexer, or when nothing is running.
-    /// Runs a short-lived query with the resolved PATH so the tool is found
-    /// under a `.app`'s minimal environment.
-    static func names(for profile: Profile, path: String) -> [String] {
-        switch multiplexer(of: profile) {
-        case .herdr:
-            return parseHerdr(ProcessRunner.run(["herdr", "session", "list"], path: path))
-        case .tmux:
-            return parseLines(ProcessRunner.run(["tmux", "list-sessions", "-F", "#{session_name}"], path: path))
-        case .none:
-            return []
-        }
-    }
-
-    /// Whether a profile drives a multiplexer Vakta knows how to enumerate.
-    static func supportsDiscovery(_ profile: Profile) -> Bool {
-        multiplexer(of: profile) != nil
-    }
-
-    private enum Multiplexer { case herdr, tmux }
-
-    private static func multiplexer(of profile: Profile) -> Multiplexer? {
-        switch (profile.command as NSString).lastPathComponent {
-        case "herdr": return .herdr
-        case "tmux": return .tmux
-        default: return nil
+    /// Existing session names on `target`'s server. Runs a short-lived query
+    /// with the resolved PATH (so the tool is found under a `.app`'s minimal
+    /// environment) plus `target.environment` (e.g. a custom
+    /// `HERDR_SOCKET_PATH`), and `target.executable` -- never a hardcoded
+    /// `"herdr"`/`"tmux"` literal, so an absolute/custom-named binary is
+    /// honored.
+    static func names(for target: MultiplexerTarget, path: String) -> [String] {
+        let output = ProcessRunner.run(target.discoveryArgv, path: path, environment: target.environment)
+        switch target.backend {
+        case .herdr: return parseHerdr(output)
+        case .tmux: return parseLines(output)
         }
     }
 

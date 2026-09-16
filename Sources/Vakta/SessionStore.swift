@@ -39,7 +39,11 @@ final class SessionStore: ObservableObject {
     /// Existing multiplexer sessions discovered on the server, keyed by the
     /// profile that can attach them. Populated on demand by `refreshDiscovery`
     /// and offered in the "New Session" menu -- never auto-added to the sidebar.
-    @Published private(set) var discovered: [Profile.ID: [String]] = [:]
+    /// No entry at all for a profile that isn't a known multiplexer (nothing
+    /// to show); `.unsupported` for one that is, but whose target can't be
+    /// reliably queried (e.g. herdr `--remote`) -- kept distinct from
+    /// `.sessions([])` so "can't tell you" never looks like "confirmed empty."
+    @Published private(set) var discovered: [Profile.ID: DiscoveryResult] = [:]
 
     /// Whether the sidebar is collapsed to its icon rail. Driven by the
     /// sidebar's own button and the View menu; `AppDelegate` animates the width.
@@ -295,18 +299,30 @@ final class SessionStore: ObservableObject {
 
     /// Queries `herdr agent list` per herdr session (off the main thread) and
     /// republishes `agentStatus`. Non-herdr sessions and failed queries keep
-    /// their previous value rather than flicker.
+    /// their previous value rather than flicker. A herdr session whose
+    /// target can't be reliably queried (e.g. `--remote`) is set to
+    /// `.unavailable` directly, without a query -- leaving it at the
+    /// default `.none` would look identical to "queried this server, no
+    /// agents," which is exactly the wrong-server display this issue exists
+    /// to prevent.
     private func pollAgentStatus() {
-        let herdrSessions: [(id: Session.ID, name: String)] = sessions
-            .filter { ($0.profile.command as NSString).lastPathComponent == "herdr" }
-            .map { ($0.id, $0.sessionName) }
+        var herdrSessions: [(id: Session.ID, name: String, target: MultiplexerTarget)] = []
+        for session in sessions {
+            guard (session.profile.command as NSString).lastPathComponent == "herdr" else { continue }
+            switch LaunchTargetResolver.resolve(session.profile) {
+            case .multiplexer(let target):
+                herdrSessions.append((session.id, session.sessionName, target))
+            case .unsupported:
+                agentStatus[session.id] = .unavailable
+            }
+        }
         guard !herdrSessions.isEmpty else { return }
         let path = resolvedPATH
 
         DispatchQueue.global(qos: .utility).async {
             var updates: [Session.ID: AgentStatus] = [:]
             for session in herdrSessions {
-                if let status = HerdrAgentStatus.status(sessionName: session.name, path: path) {
+                if let status = HerdrAgentStatus.status(sessionName: session.name, target: session.target, path: path) {
                     updates[session.id] = status
                 }
             }
@@ -344,22 +360,38 @@ final class SessionStore: ObservableObject {
     /// thread) and republishes `discovered`. Cheap; call on launch and when the
     /// app becomes active so the "New Session" menu is reasonably fresh.
     func refreshDiscovery() {
-        let discoverable = profiles.filter(SessionDiscovery.supportsDiscovery)
+        let candidates = profiles
         let path = resolvedPATH
         DispatchQueue.global(qos: .userInitiated).async {
-            var result: [Profile.ID: [String]] = [:]
-            for profile in discoverable {
-                let names = SessionDiscovery.names(for: profile, path: path)
-                if !names.isEmpty { result[profile.id] = names }
+            var result: [Profile.ID: DiscoveryResult] = [:]
+            for profile in candidates {
+                switch LaunchTargetResolver.resolve(profile) {
+                case .multiplexer(let target):
+                    result[profile.id] = .sessions(SessionDiscovery.names(for: target, path: path))
+                case .unsupported:
+                    // Only a known-multiplexer profile whose target can't be
+                    // reliably queried gets `.unsupported` -- a profile that
+                    // isn't a multiplexer at all (e.g. a plain shell) gets no
+                    // entry, since there was never anything to discover.
+                    if LaunchTargetResolver.isKnownMultiplexerCommand(profile) {
+                        result[profile.id] = .unsupported
+                    }
+                }
             }
             DispatchQueue.main.async { self.discovered = result }
         }
     }
 
     /// Opens an existing multiplexer session by name. If Vakta already has it
-    /// open, just selects that row instead of attaching a second view.
+    /// open, just selects that row instead of attaching a second view --
+    /// matched on target (backend + executable + environment/socket), not
+    /// name alone, so a same-named session on a different server/backend is
+    /// never mistaken for this one.
     func attachExisting(profile: Profile, name: String) {
-        if let existing = sessions.first(where: { $0.sessionName == name }) {
+        let target = LaunchTargetResolver.resolve(profile)
+        if let existing = sessions.first(where: {
+            $0.sessionName == name && LaunchTargetResolver.resolve($0.profile) == target
+        }) {
             select(existing.id)
         } else {
             createSession(profile: profile, sessionName: name)

@@ -1,0 +1,144 @@
+//
+//  LaunchTargetShellTests.swift
+//  VaktaIntegrationTests
+//
+//  Shell cases proving `ProcessRunner`/`SessionDiscovery`/`HerdrAgentStatus`
+//  actually thread a `MultiplexerTarget`'s executable/environment/socket
+//  through to a real child process -- not just that the pure argv-building
+//  functions look right in isolation (see `LaunchTargetTests`). Uses a real
+//  temporary helper executable that captures its argv/environment, per
+//  testing.md's strategy for this issue.
+
+import XCTest
+@testable import Vakta
+
+final class LaunchTargetShellTests: XCTestCase {
+    private var tempDirectory: URL!
+    private var outputDirectory: URL!
+    private var captureURL: URL!
+
+    override func setUpWithError() throws {
+        tempDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("LaunchTargetShellTests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
+
+        outputDirectory = tempDirectory.appendingPathComponent("out", isDirectory: true)
+        try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
+
+        // A stand-in "herdr"/"tmux" binary: writes its own argv and a marker
+        // environment variable to $OUT, then prints a fixed session list to
+        // stdout so the real parsers have something to chew on.
+        captureURL = tempDirectory.appendingPathComponent("capture.sh")
+        let script = """
+        #!/bin/sh
+        : > "$OUT/argv"
+        for a in "$@"; do
+            printf '%s\\n' "$a" >> "$OUT/argv"
+        done
+        printf '%s\\n' "${MARKER-<absent>}" > "$OUT/marker"
+        printf 'name\\trunning\\ndefault\\ttrue\\nother\\ttrue\\n'
+        """
+        try script.write(to: captureURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: captureURL.path)
+    }
+
+    override func tearDownWithError() throws {
+        try? FileManager.default.removeItem(at: tempDirectory)
+    }
+
+    private func readOutput(_ name: String) -> String? {
+        try? String(contentsOf: outputDirectory.appendingPathComponent(name), encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    // MARK: ProcessRunner
+
+    func test_processRunner_environmentOverride_reachesTheChild() {
+        _ = ProcessRunner.run(
+            [captureURL.path],
+            path: "/usr/bin:/bin",
+            environment: ["MARKER": "hello", "OUT": outputDirectory.path]
+        )
+        XCTAssertEqual(readOutput("marker"), "hello")
+    }
+
+    func test_processRunner_noOverride_marksAbsent() {
+        _ = ProcessRunner.run([captureURL.path], path: "/usr/bin:/bin", environment: ["OUT": outputDirectory.path])
+        XCTAssertEqual(readOutput("marker"), "<absent>")
+    }
+
+    // MARK: SessionDiscovery
+
+    func test_sessionDiscovery_usesTargetsExecutableAndEnvironment_notAHardcodedBinaryName() {
+        let target = MultiplexerTarget(
+            backend: .herdr,
+            executable: captureURL.path,
+            tmuxSocketPath: nil,
+            environment: ["MARKER": "from-profile", "OUT": outputDirectory.path]
+        )
+
+        let names = SessionDiscovery.names(for: target, path: "/usr/bin:/bin")
+
+        XCTAssertEqual(names, ["default", "other"])
+        XCTAssertEqual(readOutput("argv"), "session\nlist")
+        XCTAssertEqual(readOutput("marker"), "from-profile")
+    }
+
+    func test_sessionDiscovery_tmuxCustomSocket_isPassedAsAnArgument() {
+        let target = MultiplexerTarget(
+            backend: .tmux,
+            executable: captureURL.path,
+            tmuxSocketPath: "/tmp/custom.sock",
+            environment: ["OUT": outputDirectory.path]
+        )
+
+        _ = SessionDiscovery.names(for: target, path: "/usr/bin:/bin")
+
+        XCTAssertEqual(readOutput("argv"), "-S\n/tmp/custom.sock\nlist-sessions\n-F\n#{session_name}")
+    }
+
+    // MARK: HerdrAgentStatus
+
+    func test_herdrAgentStatus_usesTargetsExecutableAndEnvironment() {
+        // Override the fixture with one that emits a minimal valid `agent
+        // list` JSON payload instead of the table format.
+        let script = """
+        #!/bin/sh
+        : > "$OUT/argv"
+        for a in "$@"; do
+            printf '%s\\n' "$a" >> "$OUT/argv"
+        done
+        printf '%s\\n' "${MARKER-<absent>}" > "$OUT/marker"
+        printf '{"result":{"agents":[{"agent_status":"working"}]}}'
+        """
+        try? script.write(to: captureURL, atomically: true, encoding: .utf8)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: captureURL.path)
+
+        let target = MultiplexerTarget(
+            backend: .herdr,
+            executable: captureURL.path,
+            tmuxSocketPath: nil,
+            environment: ["MARKER": "status-poll", "OUT": outputDirectory.path]
+        )
+
+        let status = HerdrAgentStatus.status(sessionName: "my-session", target: target, path: "/usr/bin:/bin")
+
+        XCTAssertEqual(status, .working)
+        XCTAssertEqual(readOutput("argv"), "--session\nmy-session\nagent\nlist")
+        XCTAssertEqual(readOutput("marker"), "status-poll")
+    }
+
+    func test_herdrAgentStatus_tmuxTarget_returnsNilWithoutRunningAnything() {
+        let target = MultiplexerTarget(
+            backend: .tmux,
+            executable: captureURL.path,
+            tmuxSocketPath: nil,
+            environment: ["OUT": outputDirectory.path]
+        )
+
+        let status = HerdrAgentStatus.status(sessionName: "my-session", target: target, path: "/usr/bin:/bin")
+
+        XCTAssertNil(status)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: outputDirectory.appendingPathComponent("argv").path))
+    }
+}
