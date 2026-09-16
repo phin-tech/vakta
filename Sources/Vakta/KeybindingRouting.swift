@@ -29,7 +29,7 @@ extension KeybindingAction {
     var scope: KeybindingActionScope {
         switch self {
         case .quit: return .global
-        case .selectSession, .toggleSidebar, .openPreferences, .openSessionSwitcher:
+        case .selectSession, .toggleSidebar, .openPreferences, .openSessionSwitcher, .copy, .paste, .cut:
             return .contextSensitive
         }
     }

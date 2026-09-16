@@ -31,6 +31,17 @@ enum KeybindingAction: Hashable, Codable {
     case openSessionSwitcher
     /// Quit Vakta.
     case quit
+    /// Copy the terminal's current selection to the pasteboard (or the
+    /// field editor's selection, when a text field is focused -- see
+    /// `KeybindingActionScope.contextSensitive`).
+    case copy
+    /// Paste the pasteboard's contents into the terminal (or a focused
+    /// text field).
+    case paste
+    /// Standard Edit-menu cut. The terminal surface has no editable text
+    /// to cut, so on the terminal this is a no-op; a focused text field
+    /// cuts normally.
+    case cut
 
     /// A human label for the Preferences list.
     var title: String {
@@ -40,6 +51,9 @@ enum KeybindingAction: Hashable, Codable {
         case .openPreferences: return "Open Preferences"
         case .openSessionSwitcher: return "Session Switcher"
         case .quit: return "Quit"
+        case .copy: return "Copy"
+        case .paste: return "Paste"
+        case .cut: return "Cut"
         }
     }
 }
@@ -107,13 +121,20 @@ extension Keybinding {
     static let kKeyCode: UInt16 = 40
     /// `kVK_ANSI_Q` -- the "Q" in the default ⌘Q quit chord.
     static let qKeyCode: UInt16 = 12
+    /// `kVK_ANSI_C` -- the "C" in the default ⌘C copy chord.
+    static let cKeyCode: UInt16 = 8
+    /// `kVK_ANSI_V` -- the "V" in the default ⌘V paste chord.
+    static let vKeyCode: UInt16 = 9
+    /// `kVK_ANSI_X` -- the "X" in the default ⌘X cut chord.
+    static let xKeyCode: UInt16 = 7
 
     /// Default bindings: Ctrl+Shift+1 ... Ctrl+Shift+9 select session 0...8,
-    /// ⌘K opens the session switcher, and ⌘Q quits. `toggleSidebar` and
-    /// `openPreferences` ship unbound (absent from the array); the Preferences
-    /// pane lets the user assign, reassign, or clear any of these. Note that a
-    /// bound chord is consumed before it reaches herdr (docs/architecture.md's
-    /// "The matcher runs in front of every surface" invariant) -- clear the
+    /// ⌘K opens the session switcher, ⌘Q quits, and ⌘C/⌘V/⌘X are the standard
+    /// macOS copy/paste/cut chords. `toggleSidebar` and `openPreferences`
+    /// ship unbound (absent from the array); the Preferences pane lets the
+    /// user assign, reassign, or clear any of these. Note that a bound chord
+    /// is consumed before it reaches herdr (docs/architecture.md's "The
+    /// matcher runs in front of every surface" invariant) -- clear the
     /// binding to hand that key back to the terminal.
     static var defaults: [Keybinding] {
         var bindings = digitKeyCodes.enumerated().map { index, code in
@@ -121,6 +142,9 @@ extension Keybinding {
         }
         bindings.append(Keybinding(modifierMask: [.command], keyCode: kKeyCode, action: .openSessionSwitcher))
         bindings.append(Keybinding(modifierMask: [.command], keyCode: qKeyCode, action: .quit))
+        bindings.append(Keybinding(modifierMask: [.command], keyCode: cKeyCode, action: .copy))
+        bindings.append(Keybinding(modifierMask: [.command], keyCode: vKeyCode, action: .paste))
+        bindings.append(Keybinding(modifierMask: [.command], keyCode: xKeyCode, action: .cut))
         return bindings
     }
 

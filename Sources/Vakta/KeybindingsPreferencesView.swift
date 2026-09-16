@@ -28,7 +28,9 @@ struct KeybindingsPreferencesView: View {
     /// selection covers the nine default chords; the two app actions ship
     /// unbound and can be assigned here.
     private static let sessionActions: [KeybindingAction] = (0..<9).map { .selectSession($0) }
-    private static let appActions: [KeybindingAction] = [.openSessionSwitcher, .toggleSidebar, .openPreferences, .quit]
+    private static let appActions: [KeybindingAction] = [
+        .openSessionSwitcher, .toggleSidebar, .openPreferences, .quit, .copy, .paste, .cut,
+    ]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {

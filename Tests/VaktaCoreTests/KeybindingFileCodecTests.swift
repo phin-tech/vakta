@@ -59,4 +59,15 @@ final class KeybindingFileCodecTests: XCTestCase {
         let data = try XCTUnwrap(codec.encode(payload))
         XCTAssertEqual(codec.decode(data), payload)
     }
+
+    // vakta copy/paste/cut: v4 adds default ⌘C/⌘V/⌘X bindings (see
+    // `KeybindingStartupPlannerTests`). Bump documented alongside
+    // `KeybindingFileCodec.currentVersion`'s doc comment when this lands.
+    func test_currentVersion_isFour_forCopyPasteCutDefaults() {
+        XCTAssertEqual(
+            KeybindingFileCodec.currentVersion,
+            4,
+            "adding default ⌘C/⌘V/⌘X bindings is a schema migration and must bump currentVersion"
+        )
+    }
 }

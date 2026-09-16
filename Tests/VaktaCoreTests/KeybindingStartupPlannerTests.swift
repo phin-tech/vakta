@@ -82,4 +82,55 @@ final class KeybindingStartupPlannerTests: XCTestCase {
         XCTAssertEqual(bindings, Keybinding.defaults)
         XCTAssertFalse(shouldPersist, "an unreadable file must not be overwritten with reseeded defaults")
     }
+
+    // vakta copy/paste/cut -- standard ⌘C/⌘V/⌘X defaults, rebindable like
+    // every other `KeybindingAction`. Asserted here by chord (modifiers +
+    // physical key code) rather than by action name: `KeybindingAction`
+    // doesn't have `.copy`/`.paste`/`.cut` cases yet (RED), and these three
+    // cases alone are enough to prove the chords exist without depending on
+    // the still-to-be-added enum surface. kVK_ANSI_C = 8, kVK_ANSI_V = 9,
+    // kVK_ANSI_X = 7 (Carbon HIToolbox/Events.h).
+    private static let cKeyCode: UInt16 = 8
+    private static let vKeyCode: UInt16 = 9
+    private static let xKeyCode: UInt16 = 7
+
+    private func hasCommandChord(_ bindings: [Keybinding], keyCode: UInt16) -> Bool {
+        bindings.contains { $0.modifierMask == [.command] && $0.keyCode == keyCode }
+    }
+
+    func test_missing_seedsDefaults_includesCopyPasteCutChords() {
+        guard case .use(let bindings, let shouldPersist) = KeybindingStartupPlanner.plan(for: .missing) else {
+            return XCTFail("unreachable")
+        }
+        XCTAssertTrue(hasCommandChord(bindings, keyCode: Self.cKeyCode), "⌘C must be a default copy chord")
+        XCTAssertTrue(hasCommandChord(bindings, keyCode: Self.vKeyCode), "⌘V must be a default paste chord")
+        XCTAssertTrue(hasCommandChord(bindings, keyCode: Self.xKeyCode), "⌘X must be a default cut chord")
+        XCTAssertTrue(shouldPersist)
+    }
+
+    func test_loaded_versionThree_addsCopyPasteCutChordsAndPersists() {
+        let payload = StoredKeybindingsPayload(version: 3, bindings: [])
+        guard case .use(let bindings, let shouldPersist) = KeybindingStartupPlanner.plan(for: .loaded(payload)) else {
+            return XCTFail("unreachable")
+        }
+        XCTAssertTrue(hasCommandChord(bindings, keyCode: Self.cKeyCode))
+        XCTAssertTrue(hasCommandChord(bindings, keyCode: Self.vKeyCode))
+        XCTAssertTrue(hasCommandChord(bindings, keyCode: Self.xKeyCode))
+        XCTAssertTrue(shouldPersist, "the v3->v4 migration ran and must be written back")
+    }
+
+    func test_loaded_versionThree_chordAlreadyTakenBySomethingElse_skipsOnlyThatChord_stillAddsOthersAndPersists() {
+        // A user who rebound ⌘C to an existing action before this migration
+        // ever ran keeps that binding; the migration must not clobber it,
+        // but ⌘V/⌘X (untouched) still get their new defaults.
+        let conflicting = binding(Self.cKeyCode, action: .toggleSidebar, modifiers: .command)
+        let payload = StoredKeybindingsPayload(version: 3, bindings: [conflicting])
+        guard case .use(let bindings, let shouldPersist) = KeybindingStartupPlanner.plan(for: .loaded(payload)) else {
+            return XCTFail("unreachable")
+        }
+        XCTAssertTrue(bindings.contains(conflicting), "the pre-existing ⌘C binding must survive untouched")
+        XCTAssertTrue(hasCommandChord(bindings, keyCode: Self.vKeyCode), "⌘V's chord is free and must still be added")
+        XCTAssertTrue(hasCommandChord(bindings, keyCode: Self.xKeyCode), "⌘X's chord is free and must still be added")
+        XCTAssertTrue(shouldPersist, "the migration adding ⌘V/⌘X must be written back even though ⌘C was skipped")
+    }
 }

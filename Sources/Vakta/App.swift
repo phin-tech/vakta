@@ -158,6 +158,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             case .openPreferences: self.preferencesController.show()
             case .openSessionSwitcher: self.showSessionSwitcher()
             case .quit: NSApp.terminate(nil)
+            // Dispatched down the real first-responder chain rather than
+            // called directly: `AppTerminalView` (GhosttyTerminal) already
+            // overrides `copy(_:)`/`paste(_:)` as NSResponder actions, and a
+            // focused text field's own field editor implements all three
+            // natively -- one dispatch serves both without a seam.
+            case .copy: NSApp.sendAction(#selector(NSText.copy(_:)), to: nil, from: nil)
+            case .paste: NSApp.sendAction(#selector(NSText.paste(_:)), to: nil, from: nil)
+            case .cut: NSApp.sendAction(#selector(NSText.cut(_:)), to: nil, from: nil)
             }
         }
 
@@ -373,6 +381,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         appMenu.addItem(quitItem)
         appMenuItem.submenu = appMenu
         mainMenu.addItem(appMenuItem)
+
+        let editMenuItem = NSMenuItem()
+        let editMenu = NSMenu(title: "Edit")
+        // Standard Cut/Copy/Paste, `target = nil` so AppKit routes each down
+        // the real first-responder chain (auto-enabling/disabling to match)
+        // -- the same dispatch `KeybindingMatcher`'s ⌘X/⌘C/⌘V onMatch handler
+        // uses. No keyEquivalent, per this method's doc comment: the chords
+        // are handled by the matcher before the menu could ever see them.
+        let cutItem = NSMenuItem(title: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "")
+        editMenu.addItem(cutItem)
+        let copyItem = NSMenuItem(title: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "")
+        editMenu.addItem(copyItem)
+        let pasteItem = NSMenuItem(title: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "")
+        editMenu.addItem(pasteItem)
+        editMenuItem.submenu = editMenu
+        mainMenu.addItem(editMenuItem)
 
         let sessionMenuItem = NSMenuItem()
         let sessionMenu = NSMenu(title: "Session")
