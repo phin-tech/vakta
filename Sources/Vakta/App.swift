@@ -170,6 +170,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // Closes whichever window is actually key (main window or
             // Preferences), same as clicking its red button.
             case .closeWindow: NSApp.sendAction(#selector(NSWindow.performClose(_:)), to: nil, from: nil)
+            case .increaseFontSize: self.sessionStore.performBindingActionOnSelectedSession("increase_font_size:1")
+            case .decreaseFontSize: self.sessionStore.performBindingActionOnSelectedSession("decrease_font_size:1")
+            case .resetFontSize: self.sessionStore.performBindingActionOnSelectedSession("reset_font_size")
             }
         }
 
@@ -244,6 +247,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func toggleSidebar() {
         sessionStore.toggleSidebar()
+    }
+
+    @objc private func increaseFontSize() {
+        sessionStore.performBindingActionOnSelectedSession("increase_font_size:1")
+    }
+
+    @objc private func decreaseFontSize() {
+        sessionStore.performBindingActionOnSelectedSession("decrease_font_size:1")
+    }
+
+    @objc private func resetFontSize() {
+        sessionStore.performBindingActionOnSelectedSession("reset_font_size")
     }
 
     /// Re-applies the terminal theme's background to the AppKit sidebar/terminal
@@ -472,6 +487,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         toggleItem.target = self
         viewMenu.addItem(toggleItem)
+        viewMenu.addItem(.separator())
+        let increaseFontItem = NSMenuItem(title: "Increase Font Size", action: #selector(increaseFontSize), keyEquivalent: "")
+        increaseFontItem.target = self
+        viewMenu.addItem(increaseFontItem)
+        let decreaseFontItem = NSMenuItem(title: "Decrease Font Size", action: #selector(decreaseFontSize), keyEquivalent: "")
+        decreaseFontItem.target = self
+        viewMenu.addItem(decreaseFontItem)
+        let resetFontItem = NSMenuItem(title: "Reset Font Size", action: #selector(resetFontSize), keyEquivalent: "")
+        resetFontItem.target = self
+        viewMenu.addItem(resetFontItem)
         viewMenuItem.submenu = viewMenu
         mainMenu.addItem(viewMenuItem)
 

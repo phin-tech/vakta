@@ -660,6 +660,19 @@ final class SessionStore: ObservableObject {
         lastRejectedClose = accepted ? nil : id
     }
 
+    /// Forwards a Ghostty binding-action name to the selected session's
+    /// surface (e.g. font-size zoom from `KeybindingMatcher`). A no-op with
+    /// no selected session. Verified against the pinned libghostty-spm
+    /// checkout the same way as `requestClose`'s `"close_surface"`: `strings`
+    /// on GhosttyKit.xcframework's macos-arm64_x86_64/libghostty.a lists
+    /// "increase_font_size"/"decrease_font_size"/"reset_font_size" as real
+    /// embedded binding-action names.
+    @discardableResult
+    func performBindingActionOnSelectedSession(_ action: String) -> Bool {
+        guard let selectedID, let session = sessions.first(where: { $0.id == selectedID }) else { return false }
+        return session.viewState.performBindingAction(action)
+    }
+
     /// `processAlive` (from `terminalDidClose`) is a hint on the child's pty
     /// state, not a verified exit code (see the call site's doc comment) --
     /// deliberately not acted on here; the row is removed the same way

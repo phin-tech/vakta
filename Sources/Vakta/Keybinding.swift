@@ -50,6 +50,14 @@ enum KeybindingAction: Hashable, Codable {
     /// multiplexer running *inside* the session instead (e.g. closing a
     /// pane), and clear this binding so the keystroke reaches the terminal.
     case closeWindow
+    /// Grow the terminal's font size (Ghostty's `increase_font_size` binding
+    /// action on the selected session's surface).
+    case increaseFontSize
+    /// Shrink the terminal's font size (`decrease_font_size`).
+    case decreaseFontSize
+    /// Reset the terminal's font size to the configured default
+    /// (`reset_font_size`).
+    case resetFontSize
 
     /// A human label for the Preferences list.
     var title: String {
@@ -64,6 +72,9 @@ enum KeybindingAction: Hashable, Codable {
         case .cut: return "Cut"
         case .selectAll: return "Select All"
         case .closeWindow: return "Close Window"
+        case .increaseFontSize: return "Increase Font Size"
+        case .decreaseFontSize: return "Decrease Font Size"
+        case .resetFontSize: return "Reset Font Size"
         }
     }
 }
@@ -141,14 +152,21 @@ extension Keybinding {
     static let aKeyCode: UInt16 = 0
     /// `kVK_ANSI_W` -- the "W" in the default ⌘W close-window chord.
     static let wKeyCode: UInt16 = 13
+    /// `kVK_ANSI_Equal` -- the "=" in the default ⌘= increase-font-size chord.
+    static let equalKeyCode: UInt16 = 24
+    /// `kVK_ANSI_Minus` -- the "-" in the default ⌘- decrease-font-size chord.
+    static let minusKeyCode: UInt16 = 27
+    /// `kVK_ANSI_0` -- the "0" in the default ⌘0 reset-font-size chord.
+    static let zeroKeyCode: UInt16 = 29
 
     /// Default bindings: Ctrl+Shift+1 ... Ctrl+Shift+9 select session 0...8,
     /// ⌘K opens the session switcher, ⌘Q quits, ⌘C/⌘V/⌘X are the standard
-    /// macOS copy/paste/cut chords, ⌘A selects all, and ⌘W closes the front
-    /// window. `toggleSidebar` and `openPreferences` ship unbound (absent
-    /// from the array); the Preferences pane lets the user assign, reassign,
-    /// or clear any of these -- including ⌘W, for a user who wants that
-    /// chord to reach a terminal multiplexer running inside the session
+    /// macOS copy/paste/cut chords, ⌘A selects all, ⌘W closes the front
+    /// window, and ⌘=/⌘-/⌘0 zoom the terminal font size (Terminal.app's own
+    /// convention). `toggleSidebar` and `openPreferences` ship unbound
+    /// (absent from the array); the Preferences pane lets the user assign,
+    /// reassign, or clear any of these -- including ⌘W, for a user who wants
+    /// that chord to reach a terminal multiplexer running inside the session
     /// instead. Note that a bound chord is consumed before it reaches herdr
     /// (docs/architecture.md's "The matcher runs in front of every surface"
     /// invariant) -- clear the binding to hand that key back to the terminal.
@@ -163,6 +181,9 @@ extension Keybinding {
         bindings.append(Keybinding(modifierMask: [.command], keyCode: xKeyCode, action: .cut))
         bindings.append(Keybinding(modifierMask: [.command], keyCode: aKeyCode, action: .selectAll))
         bindings.append(Keybinding(modifierMask: [.command], keyCode: wKeyCode, action: .closeWindow))
+        bindings.append(Keybinding(modifierMask: [.command], keyCode: equalKeyCode, action: .increaseFontSize))
+        bindings.append(Keybinding(modifierMask: [.command], keyCode: minusKeyCode, action: .decreaseFontSize))
+        bindings.append(Keybinding(modifierMask: [.command], keyCode: zeroKeyCode, action: .resetFontSize))
         return bindings
     }
 

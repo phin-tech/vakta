@@ -182,4 +182,48 @@ final class KeybindingStartupPlannerTests: XCTestCase {
         XCTAssertTrue(hasCommandChord(bindings, keyCode: Self.aKeyCode), "⌘A's chord is free and must still be added")
         XCTAssertTrue(shouldPersist, "the migration adding ⌘A must be written back even though ⌘W was skipped")
     }
+
+    // vakta font-size zoom -- v5->v6 default chords: ⌘= increases, ⌘- decreases,
+    // ⌘0 resets, mirroring Terminal.app's own convention. Verified against
+    // the pinned GhosttyKit.xcframework binary (`strings ... | grep
+    // increase_font_size` etc.) that "increase_font_size"/"decrease_font_size"/
+    // "reset_font_size" are real embedded binding-action names, same
+    // verification style as `SessionStore.requestClose`'s "close_surface".
+    // kVK_ANSI_Equal = 24, kVK_ANSI_Minus = 27, kVK_ANSI_0 = 29.
+    private static let equalKeyCode: UInt16 = 24
+    private static let minusKeyCode: UInt16 = 27
+    private static let zeroKeyCode: UInt16 = 29
+
+    func test_missing_seedsDefaults_includesFontSizeZoomChords() {
+        guard case .use(let bindings, let shouldPersist) = KeybindingStartupPlanner.plan(for: .missing) else {
+            return XCTFail("unreachable")
+        }
+        XCTAssertTrue(hasCommandChord(bindings, keyCode: Self.equalKeyCode), "⌘= must be a default increase-font-size chord")
+        XCTAssertTrue(hasCommandChord(bindings, keyCode: Self.minusKeyCode), "⌘- must be a default decrease-font-size chord")
+        XCTAssertTrue(hasCommandChord(bindings, keyCode: Self.zeroKeyCode), "⌘0 must be a default reset-font-size chord")
+        XCTAssertTrue(shouldPersist)
+    }
+
+    func test_loaded_versionFive_addsFontSizeZoomChordsAndPersists() {
+        let payload = StoredKeybindingsPayload(version: 5, bindings: [])
+        guard case .use(let bindings, let shouldPersist) = KeybindingStartupPlanner.plan(for: .loaded(payload)) else {
+            return XCTFail("unreachable")
+        }
+        XCTAssertTrue(hasCommandChord(bindings, keyCode: Self.equalKeyCode))
+        XCTAssertTrue(hasCommandChord(bindings, keyCode: Self.minusKeyCode))
+        XCTAssertTrue(hasCommandChord(bindings, keyCode: Self.zeroKeyCode))
+        XCTAssertTrue(shouldPersist, "the v5->v6 migration ran and must be written back")
+    }
+
+    func test_loaded_versionFive_resetChordAlreadyTakenBySomethingElse_skipsOnlyThatChord_stillAddsOthersAndPersists() {
+        let conflicting = binding(Self.zeroKeyCode, action: .toggleSidebar, modifiers: .command)
+        let payload = StoredKeybindingsPayload(version: 5, bindings: [conflicting])
+        guard case .use(let bindings, let shouldPersist) = KeybindingStartupPlanner.plan(for: .loaded(payload)) else {
+            return XCTFail("unreachable")
+        }
+        XCTAssertTrue(bindings.contains(conflicting), "the pre-existing ⌘0 binding must survive untouched")
+        XCTAssertTrue(hasCommandChord(bindings, keyCode: Self.equalKeyCode), "⌘='s chord is free and must still be added")
+        XCTAssertTrue(hasCommandChord(bindings, keyCode: Self.minusKeyCode), "⌘-'s chord is free and must still be added")
+        XCTAssertTrue(shouldPersist, "the migration adding ⌘=/⌘- must be written back even though ⌘0 was skipped")
+    }
 }

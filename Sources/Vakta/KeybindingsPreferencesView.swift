@@ -31,6 +31,7 @@ struct KeybindingsPreferencesView: View {
     private static let appActions: [KeybindingAction] = [
         .openSessionSwitcher, .toggleSidebar, .openPreferences, .quit,
         .copy, .paste, .cut, .selectAll, .closeWindow,
+        .increaseFontSize, .decreaseFontSize, .resetFontSize,
     ]
 
     var body: some View {

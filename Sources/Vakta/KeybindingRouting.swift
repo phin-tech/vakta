@@ -29,7 +29,8 @@ extension KeybindingAction {
     var scope: KeybindingActionScope {
         switch self {
         case .quit, .closeWindow: return .global
-        case .selectSession, .toggleSidebar, .openPreferences, .openSessionSwitcher, .copy, .paste, .cut, .selectAll:
+        case .selectSession, .toggleSidebar, .openPreferences, .openSessionSwitcher, .copy, .paste, .cut, .selectAll,
+             .increaseFontSize, .decreaseFontSize, .resetFontSize:
             return .contextSensitive
         }
     }
