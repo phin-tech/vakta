@@ -22,8 +22,24 @@ final class UnreadAttentionPolicyTests: XCTestCase {
         UnreadAttentionPolicy.shouldMarkUnread(from: from, to: to, isSelected: isSelected, appActive: appActive)
     }
 
-    func test_firstObservation_fromNil_isNotMarkedUnread() {
-        XCTAssertFalse(shouldMark(from: nil, to: .attention))
+    func test_firstObservation_fromNil_toAttention_notFocused_isMarkedUnread() {
+        // A session already blocked/waiting when Vakta reattaches to it at
+        // launch must still show up as unread -- otherwise a session paused
+        // on a question before Vakta was even opened would never surface in
+        // the bell popover at all. This is deliberately different from
+        // `AttentionTransitionPolicy.decide`, which silences the first
+        // observation to avoid a banner-spam burst on launch: that's a
+        // banner-noise concern, not a "does the user know this needs them"
+        // concern, and the two must not share one guard.
+        XCTAssertTrue(shouldMark(from: nil, to: .attention, isSelected: false, appActive: true))
+    }
+
+    func test_firstObservation_fromNil_toAttention_alreadyFocused_isNotMarkedUnread() {
+        XCTAssertFalse(shouldMark(from: nil, to: .attention, isSelected: true, appActive: true))
+    }
+
+    func test_firstObservation_fromNil_toWorking_isNotMarkedUnread() {
+        XCTAssertFalse(shouldMark(from: nil, to: .working, isSelected: false, appActive: true))
     }
 
     func test_transitionIntoAttention_notFocused_isMarkedUnread() {

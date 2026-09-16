@@ -13,18 +13,25 @@
 import Foundation
 
 enum UnreadAttentionPolicy {
-    /// True exactly when this is a fresh transition into `.attention` the
-    /// user hasn't already seen: not the first observation (`from == nil`,
-    /// e.g. reattaching a still-running session on launch), a genuine
-    /// transition (not `.attention -> .attention`), and the session wasn't
-    /// already the one being looked at (`isSelected && appActive`).
+    /// True whenever a session is (or becomes) `.attention` and the user
+    /// hasn't looked at it: this deliberately includes the first observation
+    /// (`from == nil`, e.g. reattaching a still-running session on launch
+    /// that was already waiting) -- a session paused on a question before
+    /// Vakta was even opened must still surface in the bell popover.
+    /// `AttentionTransitionPolicy.decide` silences that same first
+    /// observation, but for a different reason (avoiding a banner-spam
+    /// burst on launch); that's a banner-noise concern, not a "does the
+    /// user know this needs them" concern, so the two intentionally don't
+    /// share this guard. Excludes a repeated `.attention -> .attention`
+    /// observation (no new information) and any session already being
+    /// looked at (`isSelected && appActive`).
     static func shouldMarkUnread(
         from: AgentStatus?,
         to: AgentStatus,
         isSelected: Bool,
         appActive: Bool
     ) -> Bool {
-        guard let from, from != .attention, to == .attention else { return false }
+        guard to == .attention, from != .attention else { return false }
         return !(isSelected && appActive)
     }
 }
