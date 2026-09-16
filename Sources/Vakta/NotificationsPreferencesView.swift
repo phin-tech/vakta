@@ -11,6 +11,7 @@ import SwiftUI
 struct NotificationsPreferencesView: View {
     @EnvironmentObject private var store: NotificationSettingsStore
     @EnvironmentObject private var notifier: AttentionNotifier
+    @EnvironmentObject private var unreadTracking: UnreadTrackingSettingsStore
 
     var body: some View {
         Form {
@@ -30,6 +31,21 @@ struct NotificationsPreferencesView: View {
                 Text("The Dock badge always shows how many sessions are waiting on "
                     + "you. Banners require the packaged app (a plain `swift run` "
                     + "build has no bundle identifier).")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section {
+                Toggle("Needs attention", isOn: $unreadTracking.trackAttention)
+                Toggle("Done", isOn: $unreadTracking.trackDone)
+                Toggle("Working", isOn: $unreadTracking.trackWorking)
+                Toggle("Idle", isOn: $unreadTracking.trackIdle)
+            } header: {
+                Text("Sidebar Bell")
+            } footer: {
+                Text("Which status changes show up in the sidebar bell's popover "
+                    + "and count toward its badge. Independent of the banner/Dock "
+                    + "settings above -- the bell tracks even when banners are off.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

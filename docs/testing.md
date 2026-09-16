@@ -4,7 +4,7 @@
 
 Updated 2026-09-16: `Package.swift` defines `VaktaCoreTests` and
 `VaktaIntegrationTests` targets; `.github/workflows/ci.yml` runs `swift test`
-(431 tests as of this update) plus `Tests/scripts/test_*.sh` (the release
+(445 tests as of this update) plus `Tests/scripts/test_*.sh` (the release
 version/signing/install scripts) on every push/PR, alongside `swift build`
 and the generated Xcode app build. Every ticket in the tables below is
 closed under kata epic `vakta#mkwv` -- the tables describe what was
@@ -40,7 +40,7 @@ owned resources, clean them up even on failure, and bound waits with diagnostics
 Avoid real user settings, existing multiplexer sessions, network endpoints, and
 notification permissions in automated unit/integration tests.
 
-`swift test` must execute a nonzero test suite in CI (it does: 431 tests as of
+`swift test` must execute a nonzero test suite in CI (it does: 445 tests as of
 this update). Keep the existing SwiftPM and generated-Xcode build checks. Add
 an Xcode test action only when the generated scheme has actual test targets
 (it doesn't yet -- `swift test` covers `VaktaCoreTests`/`VaktaIntegrationTests`
@@ -77,7 +77,7 @@ counts calls is an interaction mock, not a state-based substitute.
 | Effective terminal settings — `1148` | Finite/ranged font size before integer conversion; missing font/theme; consistent fallback; emitted configuration retains keybind clearing | Persist/reload; live font/theme changes update all surfaces and chrome without recreation; invalid saved values cannot crash preference rendering |
 | Session/surface lifecycle — `eers` | Close selected/nonselected/last; fallback selection; duplicate close; rejected close; title precedence; rename trimming | Pinned close action accepted/rejected; deferred teardown; one controller; stable surface identity across switching; visible/focused session agrees with selection; owned timers/monitors stop |
 | Release/install — `9w8w` | Valid/invalid tag/manual versions; no/partial/full signing field sets with synthetic values | Validate generated bundle/artifact version; workflow branches; staged install failure preserves prior app; use temporary app roots, never production credentials or `/Applications` in tests |
-| Unread-pane navigation and bell — `apdk` | `UnreadAttentionPolicy.shouldMarkUnread` (deliberately independent of notifyOnAttention/bounceDock; first observation counts as unread -- a session already blocked/waiting on reattach must still surface, confirmed live: a workspace can be `.attention` while a *different* workspace sharing the same herdr session has focus); `NextUnreadSessionPlanner.next` wraparound; `HerdrAgentStatus.panes` per-pane decode (workspace id, cwd-derived label, herdr's own `focused` flag, missing-field fallbacks) | `SessionStore`'s per-pane wiring (`applyPaneUpdates`: mark/opportunistic-clear composing session selection with herdr's per-pane `focused`, `focusUnreadPane`, `applicationDidBecomeActive`) and the bell popover aren't independently unit-tested -- same constraint as the rest of `SessionStore`/`SidebarView`; verify via the desktop regression checklist |
+| Unread-pane navigation and bell — `apdk`, `rcnw` | `UnreadAttentionPolicy.shouldMarkUnread` against an arbitrary `trackedStatuses: Set<AgentStatus>` (deliberately independent of notifyOnAttention/bounceDock; first observation counts as unread -- a session already blocked/waiting on reattach must still surface, confirmed live: a workspace can be `.attention` while a *different* workspace sharing the same herdr session has focus); `UnreadTrackingSettings.trackedStatuses` derivation from its four toggles; `NextUnreadSessionPlanner.next` wraparound; `HerdrAgentStatus.panes` per-pane decode (workspace id, cwd-derived label, herdr's own `focused` flag, missing-field fallbacks) | `SessionStore`'s per-pane wiring (`applyPaneUpdates`: mark/opportunistic-clear composing session selection with herdr's per-pane `focused`, `focusUnreadPane`, `applicationDidBecomeActive`, `paneStatusByWorkspaceID` for the disclosure rows' own status) and the bell popover aren't independently unit-tested -- same constraint as the rest of `SessionStore`/`SidebarView`; `UnreadTrackingSettingsStore` first-launch seed/corrupt-file recovery/immediate persist, matching every other settings store; verify via the desktop regression checklist |
 
 ## Desktop regression checklist
 

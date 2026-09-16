@@ -7,7 +7,9 @@
 //  bakes the notifyOnAttention/notifyOnFinished/bounceDock preference
 //  toggles into its early returns, but "unread" bookkeeping for the bell
 //  popover must track regardless of whether banners are silenced -- a user
-//  who disables banners may still want the in-app indicator.
+//  who disables banners may still want the in-app indicator. Which statuses
+//  count as unread-worthy is instead its own, independent preference (see
+//  `UnreadTrackingSettings`) -- `trackedStatuses` here.
 
 import XCTest
 @testable import Vakta
@@ -17,10 +19,19 @@ final class UnreadAttentionPolicyTests: XCTestCase {
         from: AgentStatus?,
         to: AgentStatus,
         isSelected: Bool = false,
-        appActive: Bool = false
+        appActive: Bool = false,
+        trackedStatuses: Set<AgentStatus> = [.attention, .done]
     ) -> Bool {
-        UnreadAttentionPolicy.shouldMarkUnread(from: from, to: to, isSelected: isSelected, appActive: appActive)
+        UnreadAttentionPolicy.shouldMarkUnread(
+            from: from,
+            to: to,
+            isSelected: isSelected,
+            appActive: appActive,
+            trackedStatuses: trackedStatuses
+        )
     }
+
+    // MARK: default tracked set ([.attention, .done])
 
     func test_firstObservation_fromNil_toAttention_notFocused_isMarkedUnread() {
         // A session already blocked/waiting when Vakta reattaches to it at
@@ -39,6 +50,7 @@ final class UnreadAttentionPolicyTests: XCTestCase {
     }
 
     func test_firstObservation_fromNil_toWorking_isNotMarkedUnread() {
+        // .working isn't in the default tracked set.
         XCTAssertFalse(shouldMark(from: nil, to: .working, isSelected: false, appActive: true))
     }
 
@@ -67,15 +79,54 @@ final class UnreadAttentionPolicyTests: XCTestCase {
         XCTAssertFalse(shouldMark(from: .attention, to: .attention, isSelected: false, appActive: true))
     }
 
-    func test_transitionToWorking_isNotMarkedUnread() {
+    func test_transitionIntoDone_notFocused_isMarkedUnread() {
+        // .done is in the default tracked set alongside .attention -- a
+        // finished workspace should surface in the bell too, not just a
+        // blocked one.
+        XCTAssertTrue(shouldMark(from: .working, to: .done, isSelected: false, appActive: true))
+    }
+
+    func test_repeatedDone_fromDoneToDone_isNotMarkedUnread() {
+        XCTAssertFalse(shouldMark(from: .done, to: .done, isSelected: false, appActive: true))
+    }
+
+    func test_transitionToWorking_isNotMarkedUnread_byDefault() {
         XCTAssertFalse(shouldMark(from: .idle, to: .working, isSelected: false, appActive: true))
     }
 
-    func test_transitionToIdle_isNotMarkedUnread() {
+    func test_transitionToIdle_isNotMarkedUnread_byDefault() {
         XCTAssertFalse(shouldMark(from: .working, to: .idle, isSelected: false, appActive: true))
     }
 
     func test_transitionToUnavailable_isNotMarkedUnread() {
+        // .unavailable is never trackable -- it's not a real agent-status
+        // observation, just SessionStore's own "can't query this target"
+        // marker.
         XCTAssertFalse(shouldMark(from: .attention, to: .unavailable, isSelected: false, appActive: true))
+    }
+
+    // MARK: tracked-set preference (see UnreadTrackingSettings)
+
+    func test_workingTracked_transitionIntoWorking_isMarkedUnread() {
+        XCTAssertTrue(shouldMark(from: .idle, to: .working, isSelected: false, appActive: true, trackedStatuses: [.working]))
+    }
+
+    func test_idleTracked_transitionIntoIdle_isMarkedUnread() {
+        XCTAssertTrue(shouldMark(from: .working, to: .idle, isSelected: false, appActive: true, trackedStatuses: [.idle]))
+    }
+
+    func test_attentionUntracked_transitionIntoAttention_isNotMarkedUnread() {
+        // The user turned off attention tracking entirely.
+        XCTAssertFalse(shouldMark(from: .working, to: .attention, isSelected: false, appActive: true, trackedStatuses: [.done]))
+    }
+
+    func test_emptyTrackedSet_marksNothing() {
+        for to: AgentStatus in [.attention, .done, .working, .idle] {
+            XCTAssertFalse(shouldMark(from: .none, to: to, isSelected: false, appActive: true, trackedStatuses: []), "\(to)")
+        }
+    }
+
+    func test_trackedStatus_stillRespectsAlreadyFocused() {
+        XCTAssertFalse(shouldMark(from: .idle, to: .working, isSelected: true, appActive: true, trackedStatuses: [.working]))
     }
 }

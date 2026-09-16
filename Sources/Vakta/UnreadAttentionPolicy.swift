@@ -13,8 +13,9 @@
 import Foundation
 
 enum UnreadAttentionPolicy {
-    /// True whenever a session is (or becomes) `.attention` and the user
-    /// hasn't looked at it: this deliberately includes the first observation
+    /// True whenever a session/workspace transitions to a status in
+    /// `trackedStatuses` (see `UnreadTrackingSettings`) and the user hasn't
+    /// looked at it: this deliberately includes the first observation
     /// (`from == nil`, e.g. reattaching a still-running session on launch
     /// that was already waiting) -- a session paused on a question before
     /// Vakta was even opened must still surface in the bell popover.
@@ -22,16 +23,17 @@ enum UnreadAttentionPolicy {
     /// observation, but for a different reason (avoiding a banner-spam
     /// burst on launch); that's a banner-noise concern, not a "does the
     /// user know this needs them" concern, so the two intentionally don't
-    /// share this guard. Excludes a repeated `.attention -> .attention`
-    /// observation (no new information) and any session already being
-    /// looked at (`isSelected && appActive`).
+    /// share this guard. Excludes a repeated identical observation (no new
+    /// information) and any session already being looked at (`isSelected
+    /// && appActive`).
     static func shouldMarkUnread(
         from: AgentStatus?,
         to: AgentStatus,
         isSelected: Bool,
-        appActive: Bool
+        appActive: Bool,
+        trackedStatuses: Set<AgentStatus>
     ) -> Bool {
-        guard to == .attention, from != .attention else { return false }
+        guard trackedStatuses.contains(to), from != to else { return false }
         return !(isSelected && appActive)
     }
 }

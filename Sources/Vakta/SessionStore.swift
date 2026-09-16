@@ -114,6 +114,15 @@ final class SessionStore: ObservableObject {
     /// "fetched, none" -- both display the same empty disclosure.
     @Published private(set) var herdrWorkspaces: [Session.ID: [HerdrWorkspace]] = [:]
 
+    /// A herdr workspace's own agent status, keyed by workspace id -- lets
+    /// `HerdrWorkspaceRow` show a workspace's actual status (e.g. a
+    /// checkmark for `.done`) instead of only the encompassing session's
+    /// aggregate `.busiest` value, which can't distinguish one workspace
+    /// from another sharing the same session (see `UnreadPane`'s doc
+    /// comment for the same discovery). Populated every poll in
+    /// `applyPaneUpdates`; not published until the first poll after launch.
+    @Published private(set) var paneStatusByWorkspaceID: [String: AgentStatus] = [:]
+
     /// Fallback repeating poll for `agentStatus` -- stays active unchanged
     /// even once `herdrEventClients` exist (defense in depth: a bug in the
     /// socket path never regresses status updates below this cadence). Each
@@ -164,6 +173,9 @@ final class SessionStore: ObservableObject {
     /// controller live.
     let terminalSettings: TerminalSettingsStore
     private var terminalSettingsObserver: AnyCancellable?
+
+    /// Which statuses populate `unreadPanes` -- see `UnreadTrackingSettings`.
+    let unreadTrackingSettings: UnreadTrackingSettingsStore
 
     /// The current terminal theme's colors as `NSColor`s, so the sidebar can
     /// match the terminal (background as one continuous surface; selection and
@@ -225,8 +237,9 @@ final class SessionStore: ObservableObject {
     /// discovery, status polling) once the real value is ready, on a
     /// background thread the whole time; only the final `self.resolvedPATH
     /// = path` + `finishLaunch()` hop back to the main actor.
-    init(terminalSettings: TerminalSettingsStore, root: URL, pathResolver: ResolvedPATH) {
+    init(terminalSettings: TerminalSettingsStore, unreadTrackingSettings: UnreadTrackingSettingsStore, root: URL, pathResolver: ResolvedPATH) {
         self.terminalSettings = terminalSettings
+        self.unreadTrackingSettings = unreadTrackingSettings
         self.root = root
         commandOverride = ProcessInfo.processInfo.environment["VAKTA_TERMINAL_COMMAND"]
         resolvedPATH = ShellEnvironment.fallbackPATH()
@@ -533,6 +546,9 @@ final class SessionStore: ObservableObject {
             for pane in panes {
                 let previous = self.previousPaneStatus[pane.paneID]
                 self.previousPaneStatus[pane.paneID] = pane.status
+                if let workspaceID = pane.workspaceID {
+                    self.paneStatusByWorkspaceID[workspaceID] = pane.status
+                }
 
                 // "Actually looking at it right now" -- selected in Vakta,
                 // this exact workspace has herdr's own focus (not some
@@ -555,7 +571,8 @@ final class SessionStore: ObservableObject {
                     from: previous,
                     to: pane.status,
                     isSelected: isSessionSelected && pane.focused,
-                    appActive: appActive
+                    appActive: appActive,
+                    trackedStatuses: self.unreadTrackingSettings.trackedStatuses
                 ), !self.unreadPanes.contains(where: { $0.paneID == pane.paneID }) {
                     self.unreadPanes.append(UnreadPane(
                         sessionID: sessionID,
@@ -824,6 +841,9 @@ final class SessionStore: ObservableObject {
         sessions.removeAll { $0.id == id }
         hostContainer.removeSession(id)
         agentStatus[id] = nil
+        for workspace in herdrWorkspaces[id] ?? [] {
+            paneStatusByWorkspaceID[workspace.id] = nil
+        }
         herdrWorkspaces[id] = nil
         herdrEventClients[id]?.stop()
         herdrEventClients[id] = nil

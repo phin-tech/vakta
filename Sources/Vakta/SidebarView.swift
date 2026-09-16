@@ -309,7 +309,11 @@ struct SidebarView: View {
 
                 if herdrPreferences.showWorkspaces, isHerdrSession(session), expandedHerdrSessionIDs.contains(session.id) {
                     ForEach(sessionStore.herdrWorkspaces[session.id] ?? [], id: \.id) { workspace in
-                        HerdrWorkspaceRow(workspace: workspace, font: rowFont)
+                        HerdrWorkspaceRow(
+                            workspace: workspace,
+                            status: sessionStore.paneStatusByWorkspaceID[workspace.id] ?? .none,
+                            font: rowFont
+                        )
                             .contentShape(Rectangle())
                             .onTapGesture {
                                 sessionStore.focusHerdrWorkspace(workspace.id, in: session.id)
@@ -629,6 +633,11 @@ private struct SessionRow: View {
 /// herdr server and brings the session itself forward.
 private struct HerdrWorkspaceRow: View {
     let workspace: HerdrWorkspace
+    /// This workspace's own status, from `SessionStore.paneStatusByWorkspaceID`
+    /// -- distinct from the session row's aggregated `.busiest` value above,
+    /// which can't tell this workspace apart from another one sharing the
+    /// same herdr session (see `UnreadPane`'s doc comment).
+    let status: AgentStatus
     let font: Font?
 
     var body: some View {
@@ -640,6 +649,16 @@ private struct HerdrWorkspaceRow: View {
                 // column above, so this dot lines up under it rather than
                 // floating at an arbitrary indent.
                 .frame(width: SidebarView.herdrGutterWidth, alignment: .center)
+            if sidebarStatusIsCheckmark(status) {
+                Image(systemName: "checkmark.circle.fill")
+                    .resizable()
+                    .frame(width: 8, height: 8)
+                    .foregroundStyle(.green)
+            } else if status != .none {
+                Circle()
+                    .fill(sidebarStatusColor(status, isFocused: false))
+                    .frame(width: 6, height: 6)
+            }
             Text(workspace.label)
                 .font(font)
                 .foregroundStyle(.secondary)

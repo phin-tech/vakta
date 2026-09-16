@@ -16,6 +16,7 @@ final class Stores {
     let appearanceStore: AppearanceStore
     let sidebarSettings: SidebarSettingsStore
     let notificationSettings: NotificationSettingsStore
+    let unreadTrackingSettings: UnreadTrackingSettingsStore
     let terminalSettings: TerminalSettingsStore
     let herdrPreferences: HerdrPreferencesStore
     let sessionStore: SessionStore
@@ -32,10 +33,17 @@ final class Stores {
         appearanceStore = AppearanceStore(root: root)
         sidebarSettings = SidebarSettingsStore(root: root)
         notificationSettings = NotificationSettingsStore(root: root)
+        unreadTrackingSettings = UnreadTrackingSettingsStore(root: root)
         terminalSettings = TerminalSettingsStore(root: root)
         herdrPreferences = HerdrPreferencesStore(root: root)
-        // `sessionStore` needs `terminalSettings` (already initialized above).
-        sessionStore = SessionStore(terminalSettings: terminalSettings, root: root, pathResolver: resolvedPATH)
+        // `sessionStore` needs `terminalSettings`/`unreadTrackingSettings`
+        // (already initialized above).
+        sessionStore = SessionStore(
+            terminalSettings: terminalSettings,
+            unreadTrackingSettings: unreadTrackingSettings,
+            root: root,
+            pathResolver: resolvedPATH
+        )
     }
 }
 
@@ -46,6 +54,7 @@ extension View {
             .environmentObject(stores.appearanceStore)
             .environmentObject(stores.sidebarSettings)
             .environmentObject(stores.notificationSettings)
+            .environmentObject(stores.unreadTrackingSettings)
             .environmentObject(stores.terminalSettings)
             .environmentObject(stores.herdrPreferences)
             .environmentObject(stores.sessionStore)

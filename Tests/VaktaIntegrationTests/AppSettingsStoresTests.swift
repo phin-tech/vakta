@@ -199,6 +199,46 @@ final class AppSettingsStoresTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: fileURL), corruptBytes)
     }
 
+    // MARK: UnreadTrackingSettingsStore
+
+    @MainActor
+    func test_unreadTrackingSettingsStore_firstLaunch_seedsDefaultsAndWritesFile() {
+        let store = UnreadTrackingSettingsStore(root: tempDirectory)
+        XCTAssertTrue(store.trackAttention)
+        XCTAssertTrue(store.trackDone)
+        XCTAssertFalse(store.trackWorking)
+        XCTAssertFalse(store.trackIdle)
+
+        guard case .loaded(let settings) = UnreadTrackingSettingsPersistence.load(root: tempDirectory) else {
+            return XCTFail("first launch must persist the seeded defaults")
+        }
+        XCTAssertEqual(settings, UnreadTrackingSettings())
+    }
+
+    @MainActor
+    func test_unreadTrackingSettingsStore_corruptFile_usesDefaultsInMemory_butDoesNotOverwriteFile() throws {
+        let fileURL = UnreadTrackingSettingsPersistence.store(root: tempDirectory).fileURL
+        let corruptBytes = Data("garbage".utf8)
+        try corruptBytes.write(to: fileURL)
+
+        let store = UnreadTrackingSettingsStore(root: tempDirectory)
+        XCTAssertEqual(store.trackAttention, UnreadTrackingSettings().trackAttention)
+
+        XCTAssertEqual(try Data(contentsOf: fileURL), corruptBytes)
+    }
+
+    @MainActor
+    func test_unreadTrackingSettingsStore_togglingWorking_persistsImmediately() {
+        let store = UnreadTrackingSettingsStore(root: tempDirectory)
+
+        store.trackWorking = true
+
+        guard case .loaded(let settings) = UnreadTrackingSettingsPersistence.load(root: tempDirectory) else {
+            return XCTFail("toggling must persist")
+        }
+        XCTAssertTrue(settings.trackWorking)
+    }
+
     // MARK: HerdrPreferencesStore
 
     @MainActor
