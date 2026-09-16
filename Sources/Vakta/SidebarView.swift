@@ -216,14 +216,27 @@ struct SidebarView: View {
                         isNotificationsPopoverPresented = false
                     } label: {
                         HStack(spacing: 8) {
-                            Circle().fill(Color.red).frame(width: 6, height: 6)
+                            if sidebarStatusIsCheckmark(pane.status) {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .resizable()
+                                    .frame(width: 8, height: 8)
+                                    .foregroundStyle(.green)
+                            } else {
+                                Circle()
+                                    .fill(sidebarStatusColor(pane.status, isFocused: false))
+                                    .frame(width: 6, height: 6)
+                            }
                             VStack(alignment: .leading, spacing: 1) {
                                 Text(pane.label)
-                                // The Vakta session this workspace lives
-                                // under -- one herdr session/socket can
-                                // host several workspaces sharing one
-                                // sidebar row, so this disambiguates which
-                                // row clicking here will jump to.
+                                // The reason this is unread, then the Vakta
+                                // session this workspace lives under -- one
+                                // herdr session/socket can host several
+                                // workspaces sharing one sidebar row, so
+                                // this disambiguates which row clicking
+                                // here will jump to.
+                                Text(sidebarStatusDescription(pane.status))
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
                                 if let sessionTitle = sessionStore.sessions.first(where: { $0.id == pane.sessionID })?.displayTitle {
                                     Text(sessionTitle)
                                         .font(.caption2)
@@ -535,6 +548,19 @@ func sidebarStatusIsCheckmark(_ status: AgentStatus) -> Bool {
     status == .done
 }
 
+/// A short human label for `status` -- shared by session rows' tooltips and
+/// the bell popover, so an unread entry says *why* it's there.
+func sidebarStatusDescription(_ status: AgentStatus) -> String {
+    switch status {
+    case .working: return "Working"
+    case .attention: return "Needs attention"
+    case .done: return "Done"
+    case .idle: return "Idle"
+    case .none: return "Unknown"
+    case .unavailable: return "Status unavailable (remote target)"
+    }
+}
+
 private struct SessionRow: View {
     @ObservedObject var session: Session
     @ObservedObject private var viewState: TerminalViewState
@@ -569,14 +595,7 @@ private struct SessionRow: View {
     }
 
     private var statusHelp: String {
-        switch status {
-        case .working: return "Working"
-        case .attention: return "Needs attention"
-        case .done: return "Done"
-        case .idle: return "Idle"
-        case .none: return session.displayTitle
-        case .unavailable: return "Status unavailable (remote target)"
-        }
+        status == .none ? session.displayTitle : sidebarStatusDescription(status)
     }
 
     var body: some View {

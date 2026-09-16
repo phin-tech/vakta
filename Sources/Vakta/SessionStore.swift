@@ -30,6 +30,10 @@ struct UnreadPane: Identifiable, Equatable {
     var paneID: String
     var workspaceID: String?
     var label: String
+    /// The status that caused this to be marked unread -- shown in the bell
+    /// popover so an entry says *why* (e.g. "Needs attention" vs. "Done"),
+    /// not just which workspace.
+    var status: AgentStatus
     var id: String { paneID }
 }
 
@@ -573,13 +577,22 @@ final class SessionStore: ObservableObject {
                     isSelected: isSessionSelected && pane.focused,
                     appActive: appActive,
                     trackedStatuses: self.unreadTrackingSettings.trackedStatuses
-                ), !self.unreadPanes.contains(where: { $0.paneID == pane.paneID }) {
-                    self.unreadPanes.append(UnreadPane(
-                        sessionID: sessionID,
-                        paneID: pane.paneID,
-                        workspaceID: pane.workspaceID,
-                        label: pane.label
-                    ))
+                ) {
+                    // Update in place (not just skip) if already unread --
+                    // e.g. marked for .attention, then transitions further
+                    // to .done while still unseen: the bell should reflect
+                    // the current reason, not freeze at the first one.
+                    if let index = self.unreadPanes.firstIndex(where: { $0.paneID == pane.paneID }) {
+                        self.unreadPanes[index].status = pane.status
+                    } else {
+                        self.unreadPanes.append(UnreadPane(
+                            sessionID: sessionID,
+                            paneID: pane.paneID,
+                            workspaceID: pane.workspaceID,
+                            label: pane.label,
+                            status: pane.status
+                        ))
+                    }
                 }
             }
 
