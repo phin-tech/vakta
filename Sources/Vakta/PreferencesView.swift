@@ -43,6 +43,7 @@ enum PreferencesSection: String, CaseIterable, Identifiable {
 
 struct PreferencesView: View {
     @State private var selection: PreferencesSection = .appearance
+    @EnvironmentObject private var persistenceFailures: PersistenceFailureCenter
 
     var body: some View {
         NavigationSplitView {
@@ -65,5 +66,32 @@ struct PreferencesView: View {
                 KeybindingsPreferencesView()
             }
         }
+        .safeAreaInset(edge: .bottom) {
+            if let message = persistenceFailures.latestMessage {
+                saveFailureBanner(message)
+            }
+        }
+    }
+
+    /// A save failure is otherwise invisible -- every persistence call site
+    /// discards its result (see `PersistedFileStore.save`). Shown here,
+    /// rather than in the main window, because Preferences is a plain
+    /// SwiftUI layout; the main window's sidebar is hand-tuned AppKit frame
+    /// math (see `App.makeWindow`) that a new floating element risks
+    /// disturbing without a way to visually verify it in this environment.
+    private func saveFailureBanner(_ message: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.yellow)
+            Text(message)
+                .font(.callout)
+                .lineLimit(2)
+            Spacer()
+            Button("Dismiss") { persistenceFailures.dismiss() }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+        }
+        .padding(10)
+        .background(.regularMaterial)
     }
 }

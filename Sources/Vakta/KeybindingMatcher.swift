@@ -65,7 +65,7 @@ final class KeybindingMatcher: ObservableObject {
     private var sawKeyDuringHold = false
     private let doubleTapWindow: TimeInterval = 0.4
 
-    init(root: URL = ApplicationSupportRoot.resolve()) {
+    init(root: URL) {
         self.root = root
 
         // Plan what to do with the saved passthrough toggle. Assigning

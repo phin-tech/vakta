@@ -97,6 +97,13 @@ final class SessionStore: ObservableObject {
 
     private let root: URL
 
+    /// True only while `init` is recreating sessions from a saved workspace.
+    /// Suppresses `saveWorkspace()` so restoring N records writes the file
+    /// once (via the explicit flush in `init`), or not at all when the
+    /// startup plan says not to persist -- not N times, progressively, as
+    /// each session is created.
+    private var isRestoringWorkspace = false
+
     /// The profile used when `createSession` is called with no explicit one:
     /// the user's chosen default, else the first profile (else the built-in
     /// herdr profile if the list is somehow empty).
@@ -107,7 +114,7 @@ final class SessionStore: ObservableObject {
         return profiles.first ?? .herdr
     }
 
-    init(terminalSettings: TerminalSettingsStore, root: URL = ApplicationSupportRoot.resolve()) {
+    init(terminalSettings: TerminalSettingsStore, root: URL) {
         self.terminalSettings = terminalSettings
         self.root = root
         commandOverride = ProcessInfo.processInfo.environment["VAKTA_TERMINAL_COMMAND"]
@@ -170,38 +177,36 @@ final class SessionStore: ObservableObject {
 
         // Restore the previous workspace: recreate a session per saved record,
         // each re-attaching (herdr/tmux) to its still-running server session.
-        // Nothing saved (first launch) -> one default session.
-        //
-        // KNOWN GAP (kata k916 AC#1, not yet fixed): a corrupt or unreadable
-        // workspace file also falls back to `records = []` here, and
-        // `createSession` below calls `saveWorkspace()`, which then
-        // OVERWRITES the file with that single default-session record --
-        // silently destroying a multi-session workspace on a transient read
-        // failure. The fix (skip `saveWorkspace()` while restoring, flush
-        // once after) needs a test double for `TerminalController`, which
-        // this initializer constructs directly; testing.md forbids
-        // constructing terminal surfaces in headless unit tests, so it is
-        // left for kata `njjm` (workspace recovery, currently blocked-by
-        // k916) rather than made here without coverage.
-        let records: [SessionRecord]
-        switch WorkspacePersistence.load(root: root) {
-        case .missing: records = []
-        case .loaded(let saved): records = saved
-        case .corrupt, .unreadable: records = []
-        }
-        if records.isEmpty {
-            // Fresh launch: attach the persistent `default` session rather than
-            // spawning a brand-new one (verified: `herdr --session default`
-            // attaches, it doesn't create a duplicate).
-            createSession(sessionName: "default")
-        } else {
-            for record in records {
-                let profile = profiles.first { $0.id == record.profileID } ?? defaultProfile
-                createSession(
-                    profile: profile,
-                    sessionName: record.sessionName,
-                    customName: record.customName
-                )
+        // `isRestoringWorkspace` suppresses `saveWorkspace()` for the duration
+        // (each `createSession` below would otherwise call it once per
+        // record, progressively rewriting the file with a partial list) --
+        // the plan decides once, up front, whether the end result needs
+        // persisting at all. In particular a corrupt/unreadable file is
+        // deliberately NOT overwritten with the single-default-session
+        // fallback (see `WorkspaceStartupPlanner`); full recovery UX for that
+        // case (e.g. surfacing the unreadable records) is kata `njjm`'s job.
+        let decision = WorkspaceStartupPlanner.plan(for: WorkspacePersistence.load(root: root))
+        switch decision {
+        case .restore(let records, let shouldPersist):
+            isRestoringWorkspace = true
+            if records.isEmpty {
+                // Fresh launch: attach the persistent `default` session rather
+                // than spawning a brand-new one (verified: `herdr --session
+                // default` attaches, it doesn't create a duplicate).
+                createSession(sessionName: "default")
+            } else {
+                for record in records {
+                    let profile = profiles.first { $0.id == record.profileID } ?? defaultProfile
+                    createSession(
+                        profile: profile,
+                        sessionName: record.sessionName,
+                        customName: record.customName
+                    )
+                }
+            }
+            isRestoringWorkspace = false
+            if shouldPersist {
+                saveWorkspace()
             }
         }
 
@@ -412,6 +417,7 @@ final class SessionStore: ObservableObject {
     /// Writes the current open sessions to disk (profile + multiplexer name +
     /// rename), so the next launch reopens and re-attaches to them.
     private func saveWorkspace() {
+        guard !isRestoringWorkspace else { return }
         WorkspacePersistence.save(
             sessions.map {
                 SessionRecord(

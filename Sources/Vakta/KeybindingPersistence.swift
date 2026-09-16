@@ -10,10 +10,6 @@
 import Foundation
 
 enum KeybindingPersistence {
-    /// Bump when adding a migration in `KeybindingStartupPlanner.plan`.
-    /// v2 added the ⌘K switcher; v3 added ⌘Q quit.
-    static let currentVersion = 3
-
     static func store(root: URL) -> PersistedFileStore<KeybindingFileCodec> {
         PersistedFileStore(root: root, fileName: "keybindings.json", codec: KeybindingFileCodec())
     }
@@ -24,6 +20,8 @@ enum KeybindingPersistence {
 
     @discardableResult
     static func save(_ bindings: [Keybinding], root: URL) -> FileSaveOutcome {
-        store(root: root).save(StoredKeybindingsPayload(version: currentVersion, bindings: bindings))
+        store(root: root).save(
+            StoredKeybindingsPayload(version: KeybindingFileCodec.currentVersion, bindings: bindings)
+        )
     }
 }

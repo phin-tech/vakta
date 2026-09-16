@@ -32,7 +32,7 @@ final class KeybindingPersistenceTests: XCTestCase {
             return XCTFail("expected a loaded payload after save")
         }
         XCTAssertEqual(payload.bindings, bindings)
-        XCTAssertEqual(payload.version, KeybindingPersistence.currentVersion)
+        XCTAssertEqual(payload.version, KeybindingFileCodec.currentVersion)
     }
 
     @MainActor
@@ -77,7 +77,7 @@ final class KeybindingPersistenceTests: XCTestCase {
         guard case .loaded(let payload) = KeybindingPersistence.load(root: tempDirectory) else {
             return XCTFail("migration must persist the upgraded bindings")
         }
-        XCTAssertEqual(payload.version, KeybindingPersistence.currentVersion)
+        XCTAssertEqual(payload.version, KeybindingFileCodec.currentVersion)
     }
 
     @MainActor

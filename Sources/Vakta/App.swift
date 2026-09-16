@@ -35,7 +35,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var splitView: NSSplitView?
     private var sidebarObserver: AnyCancellable?
     private var sidebarStyleObserver: AnyCancellable?
-    private let stores = Stores()
+    /// Constructed in `applicationDidFinishLaunching` once the Application
+    /// Support root is resolved (see the guard there) -- never accessed
+    /// before that guard passes.
+    private var stores: Stores!
     private lazy var preferencesController = PreferencesWindowController(stores: stores)
 
     // Thin forwarders so the rest of `AppDelegate` reads each store directly.
@@ -92,6 +95,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSApp.terminate(nil)
             return
         }
+
+        // Resolve the persisted-settings root once, before any store reads
+        // or writes anything. `ApplicationSupportRoot.resolve()` throws
+        // rather than silently falling back to the temp directory (where an
+        // OS wipe would make every "saved" setting vanish); this is that
+        // failure's one handler, in the same "can't run, say why, exit"
+        // shape as the display-session guard above.
+        let root: URL
+        do {
+            root = try ApplicationSupportRoot.resolve()
+        } catch {
+            presentFatalAlert(
+                "Can't access Application Support",
+                "Vakta stores your settings, profiles, and sessions in "
+                    + "~/Library/Application Support/Vakta, and couldn't "
+                    + "reach it: \(error.localizedDescription)"
+            )
+            NSApp.terminate(nil)
+            return
+        }
+        stores = Stores(root: root)
 
         // Apply the saved UI-chrome appearance before the window appears, so
         // it doesn't flash the system theme first.
@@ -159,6 +183,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidBecomeActive(_: Notification) {
+        // `stores` is nil until partway through `applicationDidFinishLaunching`
+        // (it needs the display-session and Application Support guards to
+        // pass first) -- showing either guard's modal fatal alert can itself
+        // trigger this callback, before `stores` exists.
+        guard stores != nil else { return }
         // Keep the "Attach existing" list fresh when returning to the app.
         sessionStore.refreshDiscovery()
     }

@@ -50,7 +50,7 @@ final class NotificationSettingsStore: ObservableObject {
 
     private let root: URL
 
-    init(root: URL = ApplicationSupportRoot.resolve()) {
+    init(root: URL) {
         self.root = root
         // A corrupt/unreadable file falls back to defaults for this run only
         // -- it is deliberately NOT overwritten (see `PersistedFileStore`).

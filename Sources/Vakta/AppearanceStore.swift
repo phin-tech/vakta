@@ -25,7 +25,7 @@ final class AppearanceStore: ObservableObject {
 
     private let root: URL
 
-    init(root: URL = ApplicationSupportRoot.resolve()) {
+    init(root: URL) {
         self.root = root
         // Load saved choice; first launch seeds defaults and writes them. A
         // corrupt/unreadable file falls back to defaults for this run only

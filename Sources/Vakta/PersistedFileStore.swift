@@ -37,17 +37,23 @@ enum FileSaveOutcome {
 /// root every persisted settings/profile/workspace file lives under. A single
 /// implementation, rather than each `*Persistence` type repeating the same
 /// `FileManager` calls independently.
+///
+/// Throws rather than falling back to the temp directory on failure: silently
+/// writing "persisted" settings somewhere the OS can wipe at any time is
+/// worse than failing loudly, since every store built on top of this treats
+/// its root as durable. The one call site (`AppDelegate.applicationDidFinishLaunching`)
+/// treats resolution failure the same as the existing no-display-session
+/// check: a fatal alert and a clean exit before any store is constructed.
 enum ApplicationSupportRoot {
-    static func resolve(fileManager: FileManager = .default) -> URL {
-        let base = (try? fileManager.url(
+    static func resolve(fileManager: FileManager = .default) throws -> URL {
+        let base = try fileManager.url(
             for: .applicationSupportDirectory,
             in: .userDomainMask,
             appropriateFor: nil,
             create: true
-        )) ?? URL(fileURLWithPath: NSTemporaryDirectory())
-
+        )
         let directory = base.appendingPathComponent("Vakta", isDirectory: true)
-        try? fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
         return directory
     }
 }
@@ -56,6 +62,33 @@ enum PersistedFileStoreError: Error {
     /// `FilePayloadCodec.encode` returned `nil` for a well-formed in-memory
     /// value -- an implementation bug in the codec, not an I/O failure.
     case encodingFailed
+}
+
+extension Notification.Name {
+    /// Posted synchronously, on the calling thread, whenever
+    /// `PersistedFileStore.save` fails. Every `*Persistence.save` call site
+    /// declares its `FileSaveOutcome` `@discardableResult` (most callers
+    /// legitimately have no synchronous recovery to do), so without this a
+    /// write failure was otherwise completely invisible -- this is the one
+    /// choke point every save goes through, so it's the one place that can
+    /// guarantee a failure is observable somewhere. `PersistenceFailureCenter`
+    /// is the (optional) MainActor-observable subscriber.
+    static let vaktaPersistedFileSaveFailed = Notification.Name("vaktaPersistedFileSaveFailed")
+}
+
+enum PersistedFileSaveFailureUserInfoKey {
+    static let fileName = "fileName"
+    static let message = "message"
+}
+
+/// Pure: turns a save failure into a short, user-presentable message. No I/O.
+enum PersistenceFailureMessage {
+    static func describe(fileName: String, error: Error) -> String {
+        if error is PersistedFileStoreError {
+            return "Couldn't save \(fileName): the data to save was invalid."
+        }
+        return "Couldn't save \(fileName): \((error as NSError).localizedDescription)"
+    }
 }
 
 /// Pure decode/encode + migration for one payload type. Implementations must
@@ -98,17 +131,35 @@ struct PersistedFileStore<Codec: FilePayloadCodec> {
     }
 
     /// Atomically writes `payload`. Never creates the injected root itself
-    /// and never falls back to a different location on failure.
+    /// and never falls back to a different location on failure. A failure
+    /// posts `.vaktaPersistedFileSaveFailed` before returning (see that
+    /// notification's doc comment) so it is never entirely silent even when
+    /// the caller discards the result.
     func save(_ payload: Codec.Payload) -> FileSaveOutcome {
         guard let data = codec.encode(payload) else {
-            return .failure(PersistedFileStoreError.encodingFailed)
+            return fail(PersistedFileStoreError.encodingFailed)
         }
         do {
             try data.write(to: fileURL, options: .atomic)
             return .success
         } catch {
-            return .failure(error)
+            return fail(error)
         }
+    }
+
+    private func fail(_ error: Error) -> FileSaveOutcome {
+        NotificationCenter.default.post(
+            name: .vaktaPersistedFileSaveFailed,
+            object: nil,
+            userInfo: [
+                PersistedFileSaveFailureUserInfoKey.fileName: fileName,
+                PersistedFileSaveFailureUserInfoKey.message: PersistenceFailureMessage.describe(
+                    fileName: fileName,
+                    error: error
+                )
+            ]
+        )
+        return .failure(error)
     }
 }
 
@@ -139,7 +190,9 @@ struct StoredKeybindingsPayload: Codable, Equatable {
 /// envelope whose `version` is newer than `currentVersion`) is not decodable
 /// -- the caller must preserve rather than reinterpret it.
 struct KeybindingFileCodec: FilePayloadCodec {
-    static let currentVersion = KeybindingPersistence.currentVersion
+    /// Bump when adding a migration in `KeybindingStartupPlanner.plan`.
+    /// v2 added the ⌘K switcher; v3 added ⌘Q quit.
+    static let currentVersion = 3
 
     func decode(_ data: Data) -> StoredKeybindingsPayload? {
         if let stored = try? JSONDecoder().decode(StoredKeybindingsPayload.self, from: data),

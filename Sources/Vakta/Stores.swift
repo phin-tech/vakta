@@ -12,16 +12,26 @@ import SwiftUI
 
 @MainActor
 final class Stores {
-    let keybindingMatcher = KeybindingMatcher()
-    let appearanceStore = AppearanceStore()
-    let sidebarSettings = SidebarSettingsStore()
-    let notificationSettings = NotificationSettingsStore()
-    let terminalSettings = TerminalSettingsStore()
+    let keybindingMatcher: KeybindingMatcher
+    let appearanceStore: AppearanceStore
+    let sidebarSettings: SidebarSettingsStore
+    let notificationSettings: NotificationSettingsStore
+    let terminalSettings: TerminalSettingsStore
     let sessionStore: SessionStore
+    let persistenceFailures = PersistenceFailureCenter()
 
-    init() {
+    /// `root` is resolved once by the caller (`AppDelegate`, which can fail
+    /// launch cleanly if it throws) and threaded through every store here,
+    /// rather than each store resolving -- and creating -- Application
+    /// Support independently.
+    init(root: URL) {
+        keybindingMatcher = KeybindingMatcher(root: root)
+        appearanceStore = AppearanceStore(root: root)
+        sidebarSettings = SidebarSettingsStore(root: root)
+        notificationSettings = NotificationSettingsStore(root: root)
+        terminalSettings = TerminalSettingsStore(root: root)
         // `sessionStore` needs `terminalSettings` (already initialized above).
-        sessionStore = SessionStore(terminalSettings: terminalSettings)
+        sessionStore = SessionStore(terminalSettings: terminalSettings, root: root)
     }
 }
 
@@ -34,5 +44,6 @@ extension View {
             .environmentObject(stores.notificationSettings)
             .environmentObject(stores.terminalSettings)
             .environmentObject(stores.sessionStore)
+            .environmentObject(stores.persistenceFailures)
     }
 }
