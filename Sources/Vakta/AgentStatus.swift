@@ -58,39 +58,61 @@ enum AgentStatus: Equatable {
 }
 
 enum HerdrAgentStatus {
-    /// Aggregated status for a herdr session on `target`'s server. Returns
-    /// nil when the query fails (protocol mismatch, server down, `target`
-    /// isn't herdr, …) so the caller can keep the last known value rather
-    /// than flicker to "none".
+    /// `status` plus the pane ids behind it, from one decoded `agent list`
+    /// response -- lets a caller that needs both (`SessionStore.pollAgentStatus`,
+    /// which also feeds `HerdrPaneRegistry`) avoid a second subprocess call.
+    struct QueryResult: Equatable {
+        var status: AgentStatus
+        var paneIDs: Set<String>
+    }
+
+    /// Runs `agent list` once and returns both the aggregated status and the
+    /// pane ids behind it. Returns nil when the query fails (protocol
+    /// mismatch, server down, `target` isn't herdr, …) so the caller can
+    /// keep the last known value rather than flicker to "none".
+    static func query(
+        sessionName: String,
+        target: MultiplexerTarget,
+        path: String,
+        isCancelled: @escaping () -> Bool = { false }
+    ) -> QueryResult? {
+        guard let argv = target.statusArgv(sessionName: sessionName) else { return nil }
+        guard let output = ProcessRunner.run(argv, path: path, environment: target.environment, isCancelled: isCancelled)
+        else { return nil }
+        return parse(agentListJSON: output)
+    }
+
+    /// Aggregated status for a herdr session on `target`'s server. Same
+    /// query as `query`, discarding the pane ids -- kept as its own entry
+    /// point for callers that only need the status.
     static func status(
         sessionName: String,
         target: MultiplexerTarget,
         path: String,
         isCancelled: @escaping () -> Bool = { false }
     ) -> AgentStatus? {
-        guard let argv = target.statusArgv(sessionName: sessionName) else { return nil }
-        guard let output = ProcessRunner.run(argv, path: path, environment: target.environment, isCancelled: isCancelled)
-        else { return nil }
-
-        guard let data = output.data(using: .utf8) else { return nil }
-        let decoded = try? JSONDecoder().decode(Response.self, from: data)
-        guard let agents = decoded?.result?.agents else { return nil } // error payload
-        if agents.isEmpty { return AgentStatus.none }
-        return AgentStatus.busiest(agents.map { AgentStatus(herdr: $0.agent_status) })
+        query(sessionName: sessionName, target: target, path: path, isCancelled: isCancelled)?.status
     }
 
     /// Every agent's `pane_id` from an `agent list` JSON response -- the
     /// input `HerdrPaneRegistry` needs to detect pane membership changes.
     /// `pane_id` is optional on `Agent` (rather than required) so a response
     /// missing it -- as some fixtures/older payloads may -- still decodes
-    /// for `status()`; such agents are simply excluded here. Empty on any
-    /// decode failure or error payload, same as `status`.
+    /// for `status`/`query`; such agents are simply excluded here. Empty on
+    /// any decode failure or error payload, same as `status`.
     static func paneIDs(fromAgentListJSON json: String) -> Set<String> {
+        parse(agentListJSON: json)?.paneIDs ?? []
+    }
+
+    /// Pure: decodes one `agent list` JSON response into both derived
+    /// values at once. `nil` on decode failure or an error payload.
+    private static func parse(agentListJSON json: String) -> QueryResult? {
         guard let data = json.data(using: .utf8),
               let decoded = try? JSONDecoder().decode(Response.self, from: data),
               let agents = decoded.result?.agents
-        else { return [] }
-        return Set(agents.compactMap(\.pane_id))
+        else { return nil }
+        let status = agents.isEmpty ? AgentStatus.none : AgentStatus.busiest(agents.map { AgentStatus(herdr: $0.agent_status) })
+        return QueryResult(status: status, paneIDs: Set(agents.compactMap(\.pane_id)))
     }
 
     // Minimal shape of the `agent list` JSON; unknown keys are ignored.

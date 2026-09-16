@@ -78,12 +78,31 @@ final class SessionStore: ObservableObject {
     /// "fetched, none" -- both display the same empty disclosure.
     @Published private(set) var herdrWorkspaces: [Session.ID: [HerdrWorkspace]] = [:]
 
-    /// Repeating poll for `agentStatus`.
+    /// Fallback repeating poll for `agentStatus` -- stays active unchanged
+    /// even once `herdrEventClients` exist (defense in depth: a bug in the
+    /// socket path never regresses status updates below this cadence). Each
+    /// event client's `onTrigger` also calls `pollAgentStatus()` early,
+    /// debounced via `pendingEventTriggeredPoll`, for near-instant updates.
     private var statusTimer: Timer?
     /// At most one agent-status poll, and separately at most one discovery
     /// refresh, in flight at a time -- see `SingleFlightGate`.
     private let agentStatusPollGate = SingleFlightGate()
     private let discoveryGate = SingleFlightGate()
+    /// One socket event-subscription client per live herdr session (see
+    /// `HerdrEventStreamClient`) -- created in `createSession`, stopped and
+    /// removed in `removeSession`. Absent for non-herdr sessions and herdr
+    /// sessions whose target isn't reliably queryable (matches
+    /// `pollAgentStatus`'s own `.unsupported` handling).
+    private var herdrEventClients: [Session.ID: HerdrEventStreamClient] = [:]
+    /// The pane-id set each `herdrEventClients` entry is currently
+    /// subscribed with, so `pollAgentStatus` can detect membership changes
+    /// via `HerdrPaneRegistry` and call `updatePaneIDs` only when it did.
+    private var herdrSubscribedPaneIDs: [Session.ID: Set<String>] = [:]
+    /// Debounces a burst of `HerdrEventStreamClient.onTrigger` calls (e.g.
+    /// several panes changing status at once) into one `pollAgentStatus()`
+    /// call, matching the 150ms debounce already used for terminal
+    /// settings changes elsewhere in this type.
+    private var pendingEventTriggeredPoll: DispatchWorkItem?
     /// Set once, in `deinit`; polled by in-flight `ProcessRunner` calls
     /// (`isCancelled`) from their own background thread, so a helper
     /// process started just before shutdown is terminated instead of
@@ -423,14 +442,16 @@ final class SessionStore: ObservableObject {
 
         DispatchQueue.global(qos: .utility).async {
             var updates: [AgentStatusUpdate] = []
+            var paneIDsBySession: [Session.ID: Set<String>] = [:]
             for session in herdrSessions {
-                if let status = HerdrAgentStatus.status(
+                if let result = HerdrAgentStatus.query(
                     sessionName: session.name,
                     target: session.target,
                     path: path,
                     isCancelled: { [weak self] in self?.isShuttingDown ?? true }
                 ) {
-                    updates.append(AgentStatusUpdate(sessionID: session.id, status: status))
+                    updates.append(AgentStatusUpdate(sessionID: session.id, status: result.status))
+                    paneIDsBySession[session.id] = result.paneIDs
                 }
             }
             DispatchQueue.main.async {
@@ -453,6 +474,13 @@ final class SessionStore: ObservableObject {
                         )
                     }
                     self.agentStatus[entry.sessionID] = entry.status
+                }
+                for (sessionID, paneIDs) in paneIDsBySession {
+                    guard self.sessions.contains(where: { $0.id == sessionID }) else { continue }
+                    let current = self.herdrSubscribedPaneIDs[sessionID] ?? []
+                    guard case .changed(let updated) = HerdrPaneRegistry.update(current: current, latest: paneIDs) else { continue }
+                    self.herdrSubscribedPaneIDs[sessionID] = updated
+                    self.herdrEventClients[sessionID]?.updatePaneIDs(updated)
                 }
             }
         }
@@ -582,9 +610,43 @@ final class SessionStore: ObservableObject {
 
         sessions.append(session)
         hostContainer.addSession(session)
+        startHerdrEventClientIfApplicable(for: session)
         select(session.id)
         saveWorkspace()
         return session
+    }
+
+    /// Starts a `HerdrEventStreamClient` for `session` if it's a herdr
+    /// session on a reliably-queryable target (matching `pollAgentStatus`'s
+    /// own `.unsupported` handling). Starts with no known pane ids -- the
+    /// next `pollAgentStatus` run (the immediate one from
+    /// `startStatusPolling`, or the first timer tick) discovers them and
+    /// calls `updatePaneIDs`.
+    private func startHerdrEventClientIfApplicable(for session: Session) {
+        guard (session.profile.command as NSString).lastPathComponent == "herdr" else { return }
+        guard case .multiplexer(let target) = LaunchTargetResolver.resolve(session.profile), target.backend == .herdr
+        else { return }
+
+        let client = HerdrEventStreamClient(
+            socketPath: HerdrSocketPath.resolve(sessionName: session.sessionName),
+            initialPaneIDs: []
+        )
+        client.onTrigger = { [weak self] in
+            DispatchQueue.main.async { self?.scheduleEventTriggeredPoll() }
+        }
+        herdrEventClients[session.id] = client
+        herdrSubscribedPaneIDs[session.id] = []
+        client.start()
+    }
+
+    /// Debounces a burst of `HerdrEventStreamClient.onTrigger` calls into
+    /// one `pollAgentStatus()` call -- see `pendingEventTriggeredPoll`'s
+    /// doc comment.
+    private func scheduleEventTriggeredPoll() {
+        pendingEventTriggeredPoll?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.pollAgentStatus() }
+        pendingEventTriggeredPoll = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(150), execute: work)
     }
 
     /// Renames a session and persists it. Routed through the store (rather than
@@ -675,6 +737,9 @@ final class SessionStore: ObservableObject {
         hostContainer.removeSession(id)
         agentStatus[id] = nil
         herdrWorkspaces[id] = nil
+        herdrEventClients[id]?.stop()
+        herdrEventClients[id] = nil
+        herdrSubscribedPaneIDs[id] = nil
 
         let fallback = SessionSelectionPlanner.fallbackAfterRemoval(
             removedID: id,
@@ -793,7 +858,9 @@ final class SessionStore: ObservableObject {
     /// own timeout. `terminalSettingsObserver` (the only other owned
     /// subscription) needs no explicit cancellation here -- `AnyCancellable`
     /// cancels itself when it deallocates, which happens immediately after
-    /// this body regardless. Nothing here calls `saveWorkspace()`, so
+    /// this body regardless. `herdrEventClients`' entries each have their
+    /// own defensive `deinit` (see `HerdrEventStreamClient`) for the same
+    /// reason. Nothing here calls `saveWorkspace()`, so
     /// shutdown -- were it ever actually reached -- cannot itself overwrite
     /// the restorable workspace.
     deinit {

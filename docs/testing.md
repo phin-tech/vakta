@@ -4,7 +4,7 @@
 
 Updated 2026-09-16: `Package.swift` defines `VaktaCoreTests` and
 `VaktaIntegrationTests` targets; `.github/workflows/ci.yml` runs `swift test`
-(362 tests as of this update) plus `Tests/scripts/test_*.sh` (the release
+(399 tests as of this update) plus `Tests/scripts/test_*.sh` (the release
 version/signing/install scripts) on every push/PR, alongside `swift build`
 and the generated Xcode app build. Every ticket in the tables below is
 closed under kata epic `vakta#mkwv` -- the tables describe what was
@@ -40,7 +40,7 @@ owned resources, clean them up even on failure, and bound waits with diagnostics
 Avoid real user settings, existing multiplexer sessions, network endpoints, and
 notification permissions in automated unit/integration tests.
 
-`swift test` must execute a nonzero test suite in CI (it does: 362 tests as of
+`swift test` must execute a nonzero test suite in CI (it does: 399 tests as of
 this update). Keep the existing SwiftPM and generated-Xcode build checks. Add
 an Xcode test action only when the generated scheme has actual test targets
 (it doesn't yet -- `swift test` covers `VaktaCoreTests`/`VaktaIntegrationTests`
@@ -59,6 +59,7 @@ and explicit skips; never count skipped desktop checks as passing coverage.
 | Workspace recovery — `njjm` (depends on `k916`) | Restore ordering, selected ID, missing profiles, empty workspace, working-directory overrides; transient command override excluded from durable state | Restore multiple records without partial file rewrites; interrupted restore preserves recovery data; deleted profile never silently launches another command; restart round trip |
 | Agent attention — `vsn0` | Empty/mixed agent sets; aliases/unknown statuses; working plus waiting retains attention; baseline suppression; selected/frontmost suppression; repeat suppression; completion transition; independent banner/bounce settings | Parse real response fixtures; in-memory notification state; stale session activation; packaged-app permission denial, delivery failure, click activation, and Dock behavior |
 | Herdr workspace disclosure (local only) — `hyac` | `workspaceListArgv`/`workspaceFocusArgv` construction (herdr only, nil for tmux); `HerdrWorkspace` decode of the real `result.workspaces[]` shape ignoring unknown keys, empty list, malformed/error payload; `HerdrPreferences` default-off and missing-field migration; fetch-on-expand's stale-completion guard (`HerdrWorkspaceFetchPlanner.shouldApply`) drops a result for a session removed while the query was in flight | Fixture executable threads the target's executable/environment through `workspace list`/`workspace focus`; nonzero exit reported as failure; tmux target skipped without running anything; `HerdrPreferencesStore` first-launch seed, corrupt-file recovery, immediate persist on toggle. Scoped to the local herdr CLI socket only — confirmed remote machines (`herdr machine list`) aren't reachable this way; see `hyac` |
+| Herdr event subscriptions — `s5n3` (see `docs/herdr-events-plan.md`) | `HerdrSocketPath` session-name→socket resolution; `HerdrPaneRegistry` pane-set change detection; `HerdrSocketDecoder` frame classification (ack/pane event/other/malformed) and newline-framing (split-across-reads, multiple-per-read); `HerdrAgentStatus.query`/`paneIDs` decode of real `agent list` JSON | `HerdrEventStreamClient` against a real fixture Unix socket server (`FixtureHerdrSocketServer`): subscribes on connect, triggers on a relevant frame but not an ack, reconnects with the full updated pane set on `updatePaneIDs` (no live patching — confirmed unsupported by the real protocol), reconnects after a server-dropped connection, `stop()` doesn't reconnect. `SessionStore` wiring (client-per-herdr-session lifecycle, debounced trigger → `pollAgentStatus`) isn't independently unit-tested — see `SessionStore`'s existing 0%-coverage rationale; verify via the desktop regression checklist |
 
 Use controlled input time and explicitly delivered asynchronous results for race
 tests. Assert final public state and effects represented as data; a fake that merely

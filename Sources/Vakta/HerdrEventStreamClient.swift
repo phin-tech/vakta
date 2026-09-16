@@ -62,6 +62,16 @@ final class HerdrEventStreamClient: @unchecked Sendable {
         self.reconnectDelay = reconnectDelay
     }
 
+    /// Defensive -- every current caller (`SessionStore.removeSession`)
+    /// already calls `stop()` explicitly before releasing its reference,
+    /// but a future owner that doesn't should still get a real stop path
+    /// (per docs/swift-practices.md: "every long-lived task ... needs ...
+    /// a stop path") rather than relying on ARC to tear the connection down
+    /// as a side effect of deallocation.
+    deinit {
+        connection?.cancel()
+    }
+
     func start() {
         queue.async { [self] in
             guard isStopped else { return }

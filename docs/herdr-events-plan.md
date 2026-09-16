@@ -1,8 +1,12 @@
 # Plan: herdr event subscriptions
 
-Status: **approved for implementation, tracked as `vakta#s5n3`**. Follow the
-phase gates in [AGENTS.md](../AGENTS.md) per slice below (RED: testing
-strategy + failing tests only, halt for GREEN approval).
+Status: **implemented, tracked as `vakta#s5n3`**. All three slices below
+(pure core, `HerdrEventStreamClient` shell, `SessionStore` wiring) landed on
+`main`. `SessionStore`'s wiring itself isn't independently unit-tested --
+see `docs/testing.md`'s `s5n3` row and `SessionStore`'s pre-existing
+0%-coverage rationale (real `TerminalController`/AppKit construction). Real-
+device verification is via the desktop regression checklist, not yet
+recorded here.
 
 ## Motivation
 
