@@ -20,6 +20,10 @@ jobs:
       - name: swift build
         run: swift build
 
+      # Runs the VaktaCoreTests / VaktaIntegrationTests targets.
+      - name: swift test
+        run: swift test
+
       # Verify the app target itself generates and compiles.
       - name: Install XcodeGen
         run: brew install xcodegen

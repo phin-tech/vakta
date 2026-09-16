@@ -28,6 +28,16 @@ let package = Package(
             // The asset catalog (app icon) is consumed by the Xcode/app build
             // only; SwiftPM has nothing to do with it.
             exclude: ["Assets.xcassets"]
+        ),
+        .testTarget(
+            name: "VaktaCoreTests",
+            dependencies: ["Vakta"],
+            path: "Tests/VaktaCoreTests"
+        ),
+        .testTarget(
+            name: "VaktaIntegrationTests",
+            dependencies: ["Vakta"],
+            path: "Tests/VaktaIntegrationTests"
         )
     ]
 )
