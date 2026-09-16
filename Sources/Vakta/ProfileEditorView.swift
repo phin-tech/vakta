@@ -47,9 +47,27 @@ struct ProfileEditorView: View {
         self.onDelete = onDelete
     }
 
+    private var argumentsTemplateError: String? {
+        if case .failure(let error) = LaunchCommandPlanner.validateArgumentsTemplate(draft.arguments) {
+            return error.message
+        }
+        return nil
+    }
+
+    private var environmentParseErrors: [String] {
+        ProfileEditorParsing.parseEnvironment(environmentText).errors
+    }
+
+    private var scrubParseErrors: [String] {
+        ProfileEditorParsing.parseScrubKeys(scrubText).errors
+    }
+
     private var canSave: Bool {
         !draft.name.trimmingCharacters(in: .whitespaces).isEmpty
             && !draft.command.trimmingCharacters(in: .whitespaces).isEmpty
+            && argumentsTemplateError == nil
+            && environmentParseErrors.isEmpty
+            && scrubParseErrors.isEmpty
     }
 
     var body: some View {
@@ -71,6 +89,11 @@ struct ProfileEditorView: View {
                             + "`--session {name}` or `--remote me@host --session {name}`.")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
+                        if let argumentsTemplateError {
+                            Text(argumentsTemplateError)
+                                .font(.caption2)
+                                .foregroundStyle(.red)
+                        }
                     }
                     TextField(
                         "Working Directory",
@@ -89,10 +112,16 @@ struct ProfileEditorView: View {
                             .font(.system(.caption, design: .monospaced))
                             .frame(height: 54)
                     }
+                    ForEach(environmentParseErrors, id: \.self) { error in
+                        Text(error).font(.caption2).foregroundStyle(.red)
+                    }
                     LabeledField(label: "Clear (one name per line)") {
                         TextEditor(text: $scrubText)
                             .font(.system(.caption, design: .monospaced))
                             .frame(height: 54)
+                    }
+                    ForEach(scrubParseErrors, id: \.self) { error in
+                        Text(error).font(.caption2).foregroundStyle(.red)
                     }
                 }
 
@@ -124,33 +153,16 @@ struct ProfileEditorView: View {
     }
 
     /// Folds the text-edited environment/scrub fields back into the draft.
+    /// Only called from the Save button, which `canSave` keeps disabled
+    /// while any parse/validation error exists -- callers can assume the
+    /// text fields parse cleanly here.
     private func committedProfile() -> Profile {
         var profile = draft
         profile.name = draft.name.trimmingCharacters(in: .whitespaces)
         profile.command = draft.command.trimmingCharacters(in: .whitespaces)
-        profile.environment = Self.parseEnvironment(environmentText)
-        profile.scrubbedEnvironmentKeys = Self.parseLines(scrubText)
+        profile.environment = ProfileEditorParsing.parseEnvironment(environmentText).entries
+        profile.scrubbedEnvironmentKeys = ProfileEditorParsing.parseScrubKeys(scrubText).keys
         return profile
-    }
-
-    /// `KEY=VALUE` lines → dictionary. Blank lines and lines without `=` are
-    /// skipped; the value may itself contain `=`.
-    static func parseEnvironment(_ text: String) -> [String: String] {
-        var result: [String: String] = [:]
-        for line in text.split(whereSeparator: \.isNewline) {
-            guard let eq = line.firstIndex(of: "=") else { continue }
-            let key = line[..<eq].trimmingCharacters(in: .whitespaces)
-            guard !key.isEmpty else { continue }
-            result[key] = String(line[line.index(after: eq)...])
-        }
-        return result
-    }
-
-    /// Non-empty, trimmed lines.
-    static func parseLines(_ text: String) -> [String] {
-        text.split(whereSeparator: \.isNewline)
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty }
     }
 }
 

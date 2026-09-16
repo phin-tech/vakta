@@ -91,18 +91,26 @@ struct Profile: Identifiable, Codable, Hashable, Sendable {
     /// prefix, then the command, then arguments with `{name}` substituted.
     /// libghostty shell-wraps this as `exec -l <line>`, so the `env` prefix
     /// unsets the keys for the child only.
+    ///
+    /// `sessionName` is treated as data (see `LaunchCommandPlanner`'s doc
+    /// comment): it's always substituted as a single safely-quoted shell
+    /// word, never interpolated raw, regardless of what it contains. A scrub
+    /// key that isn't a valid environment-variable name is silently dropped
+    /// here as defense in depth -- `ProfileEditorView` is where that's
+    /// surfaced as an actionable validation error before the profile is ever
+    /// saved with one.
     func resolvedCommand(sessionName: String) -> String {
         var parts: [String] = []
-        if !scrubbedEnvironmentKeys.isEmpty {
+        let validScrubKeys = scrubbedEnvironmentKeys.filter(LaunchCommandPlanner.isValidEnvironmentKey)
+        if !validScrubKeys.isEmpty {
             parts.append("/usr/bin/env")
-            for key in scrubbedEnvironmentKeys {
+            for key in validScrubKeys {
                 parts.append("-u")
                 parts.append(key)
             }
         }
         parts.append(command)
-        let args = arguments
-            .replacingOccurrences(of: "{name}", with: sessionName)
+        let args = LaunchCommandPlanner.substitutePlaceholder(in: arguments, sessionName: sessionName)
             .trimmingCharacters(in: .whitespaces)
         if !args.isEmpty {
             parts.append(args)
