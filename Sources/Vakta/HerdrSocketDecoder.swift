@@ -54,4 +54,23 @@ enum HerdrSocketDecoder {
 
         return .malformed
     }
+
+    /// Splits accumulated socket bytes into complete newline-terminated
+    /// lines plus whatever incomplete tail remains to keep buffering -- a
+    /// `recv` can split one frame across two reads, or deliver several in
+    /// one. Empty lines (a lone `\n`) are dropped rather than passed to
+    /// `decode`, matching every real frame observed being non-empty.
+    static func extractLines(from buffer: Data) -> (lines: [String], remainder: Data) {
+        let newline = UInt8(ascii: "\n")
+        var lines: [String] = []
+        var searchStart = buffer.startIndex
+        while let newlineIndex = buffer[searchStart...].firstIndex(of: newline) {
+            let lineData = buffer[searchStart..<newlineIndex]
+            if !lineData.isEmpty, let line = String(data: lineData, encoding: .utf8) {
+                lines.append(line)
+            }
+            searchStart = buffer.index(after: newlineIndex)
+        }
+        return (lines, buffer[searchStart...])
+    }
 }
