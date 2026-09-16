@@ -37,8 +37,18 @@ final class KeybindingMatcher: ObservableObject {
     /// When set, the *next* keyDown is delivered here (and consumed) instead of
     /// being matched -- this is how the Preferences "record a chord" flow
     /// captures a key press through this same monitor, rather than a second
-    /// monitor that this one would shadow. Cleared after one delivery.
-    var captureNext: (@MainActor (NSEvent) -> Void)?
+    /// monitor that this one would shadow. Cleared after one delivery, or by
+    /// `cancelCapture()`.
+    var captureNext: (@MainActor (NSEvent) -> Void)? {
+        didSet { isCapturing = captureNext != nil }
+    }
+
+    /// Mirrors whether `captureNext` is set, as `@Published` -- so the
+    /// recording UI can observe a capture ending for a reason OTHER than
+    /// its own button/Escape/delivered-key paths (namely
+    /// `cancelCaptureWhenResigningKey(from:)`) and drop its own "Recording…"
+    /// state instead of silently going stale.
+    @Published private(set) var isCapturing = false
 
     /// Passthrough mode: while on, NO binding is matched -- every key falls
     /// through raw to the focused session. Transient (always off at launch);
@@ -57,7 +67,14 @@ final class KeybindingMatcher: ObservableObject {
     }
 
     private var monitor: Any?
-    private let relevantModifierMask: NSEvent.ModifierFlags = [.control, .option, .shift, .command]
+    private let relevantModifierMask = SessionSwitcherKeyRouter.relevantModifierMask
+
+    /// The AppKit responder the routing decision is based on. A closure
+    /// (rather than reading `NSApp.keyWindow?.firstResponder` inline) so
+    /// tests can supply a real, standalone `NSTextView` -- one that never
+    /// needed a window or key-window status -- as the focused context
+    /// without needing a live desktop session.
+    var firstResponderProvider: () -> NSResponder? = { NSApp.keyWindow?.firstResponder }
 
     // Double-tap detection state (for the passthrough toggle).
     private var lastRelevantFlags: NSEvent.ModifierFlags = []
@@ -119,12 +136,53 @@ final class KeybindingMatcher: ObservableObject {
         self.monitor = nil
     }
 
+    /// Drops any pending chord-recording capture without delivering a key to
+    /// it. Recording is owned by whichever Preferences window started it;
+    /// this lets that window relinquish ownership (see
+    /// `cancelCaptureWhenResigningKey(from:)`) without the next keystroke,
+    /// typed anywhere else once focus has moved on, being silently bound to
+    /// the action instead of reaching its normal destination.
+    func cancelCapture() {
+        captureNext = nil
+    }
+
+    /// Registers an observer that cancels any in-progress capture the
+    /// moment `window` stops being key -- covers losing ownership by
+    /// switching away, not just closing. Returns the observer token so a
+    /// caller with a shorter lifetime than this matcher can remove it;
+    /// `PreferencesWindowController`'s window lives for the app's lifetime,
+    /// so it doesn't need to.
+    @discardableResult
+    func cancelCaptureWhenResigningKey(from window: NSWindow) -> NSObjectProtocol {
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.didResignKeyNotification,
+            object: window,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.cancelCapture()
+            }
+        }
+    }
+
     /// Sets `binding.action`'s chord, replacing any existing binding for that
     /// action and unbinding any other action that already used this exact chord
     /// (the matcher's `first(where:)` would otherwise silently shadow one).
     func setBinding(_ modifierMask: NSEvent.ModifierFlags, keyCode: UInt16, for action: KeybindingAction) {
-        bindings.removeAll { $0.action == action || ($0.modifierMask == modifierMask && $0.keyCode == keyCode) }
-        bindings.append(Keybinding(modifierMask: modifierMask, keyCode: keyCode, action: action))
+        // Normalize to the same mask `handle` matches against, so a caller
+        // that passes an un-intersected `NSEvent.modifierFlags` (device
+        // flags, caps lock, ...) can't store a chord that then never
+        // matches. Built as one array and assigned once -- not
+        // `removeAll` then `append` on the `@Published` property directly
+        // -- so this is a single snapshot: one `didSet`/persist, and no
+        // observer (the Preferences list, `KeybindingPersistence`) can ever
+        // see the in-between state with the old chord already gone and the
+        // new one not yet added.
+        let normalizedMask = modifierMask.intersection(relevantModifierMask)
+        var updated = bindings
+        updated.removeAll { $0.action == action || ($0.modifierMask == normalizedMask && $0.keyCode == keyCode) }
+        updated.append(Keybinding(modifierMask: normalizedMask, keyCode: keyCode, action: action))
+        bindings = updated
     }
 
     /// Removes any chord bound to `action`.
@@ -143,7 +201,7 @@ final class KeybindingMatcher: ObservableObject {
         bindings = Keybinding.defaults
     }
 
-    private func handle(_ event: NSEvent, onMatch: (KeybindingAction) -> Void) -> NSEvent? {
+    func handle(_ event: NSEvent, onMatch: (KeybindingAction) -> Void) -> NSEvent? {
         // Modifier press/release: never consumed (modifiers must reach the
         // terminal); used only to detect the passthrough double-tap.
         if event.type == .flagsChanged {
@@ -172,6 +230,16 @@ final class KeybindingMatcher: ObservableObject {
         guard let binding = bindings.first(where: { $0.modifierMask == mods && $0.keyCode == event.keyCode }) else {
             // No match: fall through so the key reaches the focused surface
             // and, from there, herdr.
+            return event
+        }
+        // A text-editing view (Preferences fields, the profile editor, the
+        // switcher's own search field) owns first responder: only a global
+        // action still fires. Any contextSensitive action -- including a
+        // user-recorded chord that happens to collide with a standard
+        // editing shortcut like ⌘V -- falls through to its normal text
+        // meaning instead of being silently stolen app-wide.
+        let isTextEntryFocused = firstResponderProvider() is NSTextView
+        guard KeybindingRoutingPlanner.shouldConsume(action: binding.action, isTextEntryFocused: isTextEntryFocused) else {
             return event
         }
         onMatch(binding.action)

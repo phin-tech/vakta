@@ -81,6 +81,15 @@ final class SessionSwitcherModel: ObservableObject {
 final class SessionSwitcherPanel: NSPanel {
     weak var model: SessionSwitcherModel?
 
+    /// Whether the search field's field editor currently owns an
+    /// in-progress input-method composition (marked text). A closure --
+    /// rather than reading `firstResponder` inline -- so a test can supply a
+    /// real, standalone `NSTextView` with `setMarkedText` actually called on
+    /// it, without needing this panel to be key or even on screen.
+    lazy var hasMarkedTextProvider: () -> Bool = { [weak self] in
+        (self?.firstResponder as? NSTextView)?.hasMarkedText() ?? false
+    }
+
     override var canBecomeKey: Bool { true }
 
     override func sendEvent(_ event: NSEvent) {
@@ -89,12 +98,17 @@ final class SessionSwitcherPanel: NSPanel {
             // to call the model's main-actor API without a hop that would let
             // the key fall through first.
             let handled = MainActor.assumeIsolated { () -> Bool in
-                switch event.keyCode {
-                case 125: model.moveDown(); return true // ↓
-                case 126: model.moveUp(); return true   // ↑
-                case 36:  model.commit(); return true   // ↩
-                case 53:  model.cancel(); return true   // ⎋
-                default:  return false
+                let intent = SessionSwitcherKeyRouter.intent(
+                    keyCode: event.keyCode,
+                    modifiers: event.modifierFlags,
+                    hasMarkedText: hasMarkedTextProvider()
+                )
+                switch intent {
+                case .moveDown: model.moveDown(); return true
+                case .moveUp: model.moveUp(); return true
+                case .commit: model.commit(); return true
+                case .cancel: model.cancel(); return true
+                case .passthrough: return false
                 }
             }
             if handled { return }

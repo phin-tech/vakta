@@ -48,6 +48,7 @@ final class PreferencesWindowController {
         // and crash the next time it's shown.
         window.isReleasedWhenClosed = false
         self.window = window
+        stores.keybindingMatcher.cancelCaptureWhenResigningKey(from: window)
 
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)

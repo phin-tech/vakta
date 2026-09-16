@@ -84,6 +84,17 @@ struct KeybindingsPreferencesView: View {
             .padding(16)
         }
         .onDisappear { cancelRecording() }
+        // The matcher can drop a capture for a reason other than this
+        // view's own button/Escape/delivered-key paths -- namely
+        // `cancelCaptureWhenResigningKey(from:)`, when the Preferences
+        // window loses key status mid-recording. Without this, `Self`'s
+        // `recordingAction` would stay set after the matcher has already
+        // stopped capturing, so the row would keep showing "Recording…"
+        // while the next keystroke anywhere quietly matches normally
+        // instead of being recorded.
+        .onChange(of: matcher.isCapturing) { isCapturing in
+            if !isCapturing { recordingAction = nil }
+        }
     }
 
     @ViewBuilder
@@ -118,7 +129,7 @@ struct KeybindingsPreferencesView: View {
         let noticeBinding = $notice
         matcher.captureNext = { event in
             recording.wrappedValue = nil
-            let mods = event.modifierFlags.intersection([.control, .option, .shift, .command])
+            let mods = event.modifierFlags.intersection(SessionSwitcherKeyRouter.relevantModifierMask)
             // ⎋ with no modifiers cancels the recording.
             if event.keyCode == 53, mods.isEmpty { return }
             // A bare key would silently swallow that key in every terminal
@@ -127,6 +138,9 @@ struct KeybindingsPreferencesView: View {
                 noticeBinding.wrappedValue = "A shortcut needs at least one modifier (⌃ ⌥ ⇧ ⌘)."
                 return
             }
+            // `setBinding` normalizes this same mask again -- the
+            // intersection here is only to decide "does this chord have a
+            // modifier at all," not to build the stored mask by hand.
             matcher.setBinding(mods, keyCode: event.keyCode, for: action)
             noticeBinding.wrappedValue = nil
         }
