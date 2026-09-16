@@ -175,8 +175,24 @@ struct SidebarView: View {
     /// Only shown expanded (not in the icon rail) -- the rail is already a
     /// narrow strip of session icons with no room for a second control
     /// beyond the collapse toggle.
+    /// The single badge dot's color: the worst (busiest-ranked, see
+    /// `AgentStatus.busiest`) status among all unread panes -- e.g. one
+    /// `.done` and one `.attention` shows red, not green, since attention
+    /// outranks done. A dedicated urgency palette, distinct from
+    /// `sidebarStatusColor`'s softer session-row yellow: this badge is
+    /// meant to read as "something needs you" at a glance.
+    private func bellBadgeColor(_ status: AgentStatus) -> Color {
+        switch status {
+        case .attention: return .red
+        case .working: return .orange
+        case .done, .idle: return .green
+        case .none, .unavailable: return .secondary
+        }
+    }
+
     private var notificationsBellButton: some View {
-        Button {
+        let worstUnread = AgentStatus.busiest(sessionStore.unreadPanes.map(\.status))
+        return Button {
             isNotificationsPopoverPresented = true
         } label: {
             ZStack(alignment: .topTrailing) {
@@ -185,7 +201,7 @@ struct SidebarView: View {
                     .foregroundStyle(.secondary)
                 if !sessionStore.unreadPanes.isEmpty {
                     Circle()
-                        .fill(Color.red)
+                        .fill(bellBadgeColor(worstUnread))
                         .frame(width: 6, height: 6)
                         .offset(x: 3, y: -2)
                 }
