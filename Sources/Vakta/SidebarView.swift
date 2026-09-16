@@ -42,16 +42,22 @@ struct SidebarView: View {
     /// full-width selection).
     private var terminalStyle: Bool { appearanceStore.sidebarFont == .matchTerminal }
 
-    /// The font for session-name rows: the terminal font when terminal style is
-    /// chosen (falling back to the system monospaced font when no family is
-    /// set), otherwise `nil` to keep the default sidebar font.
+    /// The font for session-name rows: the terminal font family and size when
+    /// terminal style is chosen and a custom family is set; the system
+    /// monospaced text style (Dynamic Type, no fixed size) when terminal
+    /// style is chosen but the family is ghostty's own default; otherwise
+    /// `nil` to keep the default sidebar font. The family-less branch
+    /// deliberately does not also apply `terminalSettings.fontSize`:
+    /// `Font.system(size:design:)` has no `relativeTo:` counterpart, so
+    /// doing that would drop Dynamic Type scaling for that case.
     private var rowFont: Font? {
         guard terminalStyle else { return nil }
         let family = terminalSettings.fontFamily.trimmingCharacters(in: .whitespaces)
         if family.isEmpty {
             return .system(.body, design: .monospaced)
         }
-        return .custom(family, size: 13, relativeTo: .body)
+        let size = SidebarRowFontResolver.fontSize(matchingTerminal: terminalSettings.fontSize)
+        return .custom(family, size: size, relativeTo: .body)
     }
 
     var body: some View {
