@@ -45,6 +45,13 @@ final class SessionStore: ObservableObject {
     /// sidebar's own button and the View menu; `AppDelegate` animates the width.
     @Published var sidebarCollapsed = false
 
+    /// Saved workspace records whose profile no longer exists, set once at
+    /// startup by `WorkspaceStartupPlanner` and never auto-launched under a
+    /// substituted profile. Not surfaced in any UI yet (no recovery flow
+    /// exists) -- kept here so one exists to build against, and so this data
+    /// isn't simply discarded.
+    @Published private(set) var unresolvedWorkspaceRecords: [SessionRecord] = []
+
     /// Per-session agent status (herdr sessions only), polled from
     /// `herdr agent list` and shown as a colored dot in the sidebar. The Dock
     /// badge (count of sessions needing attention) is derived here so both the
@@ -175,33 +182,47 @@ final class SessionStore: ObservableObject {
         // colors can be set (synchronously, before the window reads them).
         applyThemeColors(from: definition)
 
-        // Restore the previous workspace: recreate a session per saved record,
-        // each re-attaching (herdr/tmux) to its still-running server session.
-        // `isRestoringWorkspace` suppresses `saveWorkspace()` for the duration
-        // (each `createSession` below would otherwise call it once per
-        // record, progressively rewriting the file with a partial list) --
-        // the plan decides once, up front, whether the end result needs
-        // persisting at all. In particular a corrupt/unreadable file is
-        // deliberately NOT overwritten with the single-default-session
-        // fallback (see `WorkspaceStartupPlanner`); full recovery UX for that
-        // case (e.g. surfacing the unreadable records) is kata `njjm`'s job.
-        let decision = WorkspaceStartupPlanner.plan(for: WorkspacePersistence.load(root: root))
+        // Restore the previous workspace: recreate a session per resolved
+        // record, each re-attaching (herdr/tmux) to its still-running server
+        // session. `isRestoringWorkspace` suppresses `saveWorkspace()` for
+        // the duration (each `createSession` below would otherwise call it
+        // once per record, progressively rewriting the file with a partial
+        // list) -- the plan decides once, up front, whether the end result
+        // needs persisting at all. A corrupt/unreadable file is deliberately
+        // NOT overwritten with the single-default-session fallback (see
+        // `WorkspaceStartupPlanner`).
+        let decision = WorkspaceStartupPlanner.plan(
+            for: WorkspacePersistence.load(root: root),
+            profiles: profiles
+        )
         switch decision {
-        case .restore(let records, let shouldPersist):
+        case .restore(let toCreate, let unresolved, let selectedSessionName, let shouldPersist):
+            unresolvedWorkspaceRecords = unresolved
             isRestoringWorkspace = true
-            if records.isEmpty {
-                // Fresh launch: attach the persistent `default` session rather
-                // than spawning a brand-new one (verified: `herdr --session
-                // default` attaches, it doesn't create a duplicate).
+            if toCreate.isEmpty {
+                // Fresh launch, or every saved record's profile is gone
+                // (`unresolved`, kept above rather than launched under an
+                // unrelated substituted profile): attach the persistent
+                // `default` session rather than spawning a brand-new one
+                // (verified: `herdr --session default` attaches, it doesn't
+                // create a duplicate).
                 createSession(sessionName: "default")
             } else {
-                for record in records {
-                    let profile = profiles.first { $0.id == record.profileID } ?? defaultProfile
+                for resolved in toCreate {
                     createSession(
-                        profile: profile,
-                        sessionName: record.sessionName,
-                        customName: record.customName
+                        profile: resolved.profile,
+                        sessionName: resolved.record.sessionName,
+                        customName: resolved.record.customName,
+                        workingDirectory: resolved.record.workingDirectory
                     )
+                }
+                // `createSession` selects whatever it just created, so the
+                // loop above leaves the LAST restored session selected.
+                // Override with the actually-saved selection, if it's one of
+                // the sessions just restored.
+                if let selectedSessionName,
+                   let match = sessions.first(where: { $0.sessionName == selectedSessionName }) {
+                    select(match.id)
                 }
             }
             isRestoringWorkspace = false
@@ -418,14 +439,31 @@ final class SessionStore: ObservableObject {
     /// rename), so the next launch reopens and re-attaches to them.
     private func saveWorkspace() {
         guard !isRestoringWorkspace else { return }
+        let records = sessions.map { session -> SessionRecord in
+            // Only an explicit per-session override is worth pinning to this
+            // record -- a value merely inherited from the profile should keep
+            // following the profile if it's edited later, so it's persisted
+            // as `nil` (restore re-resolves it from the profile) rather than
+            // baked in as if the user had chosen it.
+            let inheritedFromProfile = profiles.first { $0.id == session.profile.id }?.workingDirectory
+            let explicitOverride = session.profile.workingDirectory == inheritedFromProfile
+                ? nil
+                : session.profile.workingDirectory
+            return SessionRecord(
+                profileID: session.profile.id,
+                sessionName: session.sessionName,
+                customName: session.customName,
+                workingDirectory: explicitOverride
+            )
+        }
+        // Records whose profile was missing at the last restore aren't in
+        // `sessions` (they were never launched -- see `WorkspaceStartupPlanner`)
+        // but must still round-trip through every subsequent save, or the
+        // first rename/close/create after launch would silently drop them
+        // for good instead of preserving them for a future recovery choice.
+        let selectedSessionName = sessions.first { $0.id == selectedID }?.sessionName
         WorkspacePersistence.save(
-            sessions.map {
-                SessionRecord(
-                    profileID: $0.profile.id,
-                    sessionName: $0.sessionName,
-                    customName: $0.customName
-                )
-            },
+            WorkspacePayload(records: records + unresolvedWorkspaceRecords, selectedSessionName: selectedSessionName),
             root: root
         )
     }
@@ -467,6 +505,7 @@ final class SessionStore: ObservableObject {
         guard sessions.contains(where: { $0.id == id }) else { return }
         selectedID = id
         hostContainer.select(id)
+        saveWorkspace()
     }
 
     /// Adds a new profile or replaces the existing one with the same id.

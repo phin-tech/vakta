@@ -47,13 +47,27 @@ final class SessionPersistenceLayerTests: XCTestCase {
     }
 
     func test_workspacePersistence_load_afterSave_roundTrips() {
-        let records = [SessionRecord(profileID: UUID(), sessionName: "one", customName: "Renamed")]
-        WorkspacePersistence.save(records, root: tempDirectory)
+        let records = [
+            SessionRecord(profileID: UUID(), sessionName: "one", customName: "Renamed", workingDirectory: "/tmp")
+        ]
+        let payload = WorkspacePayload(records: records, selectedSessionName: "one")
+        WorkspacePersistence.save(payload, root: tempDirectory)
 
         guard case .loaded(let loaded) = WorkspacePersistence.load(root: tempDirectory) else {
             return XCTFail("expected a loaded payload after save")
         }
-        XCTAssertEqual(loaded, records)
+        XCTAssertEqual(loaded, payload)
+    }
+
+    func test_workspacePersistence_legacyBareArray_migratesWithNoSelection() throws {
+        let legacyRecords = [SessionRecord(profileID: UUID(), sessionName: "legacy", customName: nil, workingDirectory: nil)]
+        let data = try JSONEncoder().encode(legacyRecords)
+        try data.write(to: WorkspacePersistence.store(root: tempDirectory).fileURL)
+
+        guard case .loaded(let loaded) = WorkspacePersistence.load(root: tempDirectory) else {
+            return XCTFail("expected a loaded payload for a legacy bare-array file")
+        }
+        XCTAssertEqual(loaded, WorkspacePayload(records: legacyRecords, selectedSessionName: nil))
     }
 
     func test_sessionSettingsPersistence_load_afterSave_roundTrips() {
