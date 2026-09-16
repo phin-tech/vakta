@@ -4,7 +4,9 @@
 //
 //  Runs a short-lived helper command with an explicit PATH (so tools resolve
 //  under a `.app`'s minimal environment) and returns stdout. Shared by session
-//  discovery and agent-status polling.
+//  discovery and agent-status polling. A thin `String?`-returning wrapper
+//  over `BoundedProcessRunner` (which distinguishes every failure mode);
+//  callers here have never needed more than "did it work."
 
 import Foundation
 
@@ -12,35 +14,25 @@ enum ProcessRunner {
     /// Runs `argv` via `/usr/bin/env` with `path` as PATH plus any
     /// `environment` overrides (e.g. a `MultiplexerTarget`'s server-selecting
     /// variables) layered on top of PATH/HOME. Returns stdout, or nil on
-    /// launch failure, timeout, or non-zero exit.
+    /// launch failure, timeout, non-zero exit, or invalid UTF-8.
     static func run(
         _ argv: [String],
         path: String,
         environment: [String: String] = [:],
-        timeout: TimeInterval = 3
+        timeout: TimeInterval = 3,
+        isCancelled: @escaping () -> Bool = { false }
     ) -> String? {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = argv
-        process.environment = environment.merging(
-            ["PATH": path, "HOME": NSHomeDirectory()],
-            uniquingKeysWith: { profileValue, _ in profileValue }
+        let result = BoundedProcessRunner.run(
+            executable: "/usr/bin/env",
+            arguments: argv,
+            environment: environment.merging(
+                ["PATH": path, "HOME": NSHomeDirectory()],
+                uniquingKeysWith: { profileValue, _ in profileValue }
+            ),
+            timeout: timeout,
+            isCancelled: isCancelled
         )
-        let outPipe = Pipe()
-        process.standardOutput = outPipe
-        process.standardError = FileHandle.nullDevice
-        process.standardInput = FileHandle.nullDevice
-
-        let done = DispatchSemaphore(value: 0)
-        process.terminationHandler = { _ in done.signal() }
-        do { try process.run() } catch { return nil }
-
-        if done.wait(timeout: .now() + timeout) == .timedOut {
-            process.terminate()
-            return nil
-        }
-        guard process.terminationStatus == 0 else { return nil }
-        let data = outPipe.fileHandleForReading.readDataToEndOfFile()
-        return String(data: data, encoding: .utf8)
+        guard case .success(let output) = result else { return nil }
+        return output
     }
 }

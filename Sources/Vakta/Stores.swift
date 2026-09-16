@@ -23,15 +23,17 @@ final class Stores {
     /// `root` is resolved once by the caller (`AppDelegate`, which can fail
     /// launch cleanly if it throws) and threaded through every store here,
     /// rather than each store resolving -- and creating -- Application
-    /// Support independently.
-    init(root: URL) {
+    /// Support independently. `resolvedPATH` is likewise created by the
+    /// caller as early in launch as possible, so its background shell
+    /// resolution has the maximum head start before `SessionStore` needs it.
+    init(root: URL, resolvedPATH: ResolvedPATH) {
         keybindingMatcher = KeybindingMatcher(root: root)
         appearanceStore = AppearanceStore(root: root)
         sidebarSettings = SidebarSettingsStore(root: root)
         notificationSettings = NotificationSettingsStore(root: root)
         terminalSettings = TerminalSettingsStore(root: root)
         // `sessionStore` needs `terminalSettings` (already initialized above).
-        sessionStore = SessionStore(terminalSettings: terminalSettings, root: root)
+        sessionStore = SessionStore(terminalSettings: terminalSettings, root: root, pathResolver: resolvedPATH)
     }
 }
 

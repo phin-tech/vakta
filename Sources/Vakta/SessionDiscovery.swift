@@ -16,8 +16,13 @@ enum SessionDiscovery {
     /// `HERDR_SOCKET_PATH`), and `target.executable` -- never a hardcoded
     /// `"herdr"`/`"tmux"` literal, so an absolute/custom-named binary is
     /// honored.
-    static func names(for target: MultiplexerTarget, path: String) -> [String] {
-        let output = ProcessRunner.run(target.discoveryArgv, path: path, environment: target.environment)
+    static func names(for target: MultiplexerTarget, path: String, isCancelled: @escaping () -> Bool = { false }) -> [String] {
+        let output = ProcessRunner.run(
+            target.discoveryArgv,
+            path: path,
+            environment: target.environment,
+            isCancelled: isCancelled
+        )
         switch target.backend {
         case .herdr: return parseHerdr(output)
         case .tmux: return parseLines(output)

@@ -76,6 +76,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let titlebarInset: CGFloat = 28
 
     func applicationDidFinishLaunching(_: Notification) {
+        // Kicked off first, before any other launch work: resolving the
+        // login-shell PATH runs a real shell + rc files on a background
+        // thread (see `ResolvedPATH`), so starting it here -- rather than
+        // where `SessionStore` used to call `ShellEnvironment.resolvedPATH()`
+        // directly, synchronously, on the main actor -- gives it the
+        // longest possible head start against everything else below before
+        // `Stores.init` needs the result.
+        let resolvedPATH = ResolvedPATH()
+
         // libghostty renders every surface with Metal and dereferences its
         // rendering context without a nil check, so `ghostty_surface_new`
         // segfaults when there is no usable GPU/window-server context. That
@@ -115,7 +124,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSApp.terminate(nil)
             return
         }
-        stores = Stores(root: root)
+        stores = Stores(root: root, resolvedPATH: resolvedPATH)
 
         // Apply the saved UI-chrome appearance before the window appears, so
         // it doesn't flash the system theme first.

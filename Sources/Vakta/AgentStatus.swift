@@ -57,9 +57,15 @@ enum HerdrAgentStatus {
     /// nil when the query fails (protocol mismatch, server down, `target`
     /// isn't herdr, …) so the caller can keep the last known value rather
     /// than flicker to "none".
-    static func status(sessionName: String, target: MultiplexerTarget, path: String) -> AgentStatus? {
+    static func status(
+        sessionName: String,
+        target: MultiplexerTarget,
+        path: String,
+        isCancelled: @escaping () -> Bool = { false }
+    ) -> AgentStatus? {
         guard let argv = target.statusArgv(sessionName: sessionName) else { return nil }
-        guard let output = ProcessRunner.run(argv, path: path, environment: target.environment) else { return nil }
+        guard let output = ProcessRunner.run(argv, path: path, environment: target.environment, isCancelled: isCancelled)
+        else { return nil }
 
         guard let data = output.data(using: .utf8) else { return nil }
         let decoded = try? JSONDecoder().decode(Response.self, from: data)

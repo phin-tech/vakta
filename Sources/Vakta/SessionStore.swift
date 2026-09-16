@@ -70,6 +70,17 @@ final class SessionStore: ObservableObject {
     /// refresh, in flight at a time -- see `SingleFlightGate`.
     private let agentStatusPollGate = SingleFlightGate()
     private let discoveryGate = SingleFlightGate()
+    /// Set once, in `deinit`; polled by in-flight `ProcessRunner` calls
+    /// (`isCancelled`) from their own background thread, so a helper
+    /// process started just before shutdown is terminated instead of
+    /// running to its own timeout regardless. `nonisolated(unsafe)` rather
+    /// than actor-hopping on every poll iteration of a tight cancellation
+    /// check: a `Bool` write/read can't tear on this platform, this is the
+    /// only writer, and it only ever transitions `false` -> `true` -- a
+    /// reader that still observes `false` for one more 20ms poll iteration
+    /// after the true write simply cancels one iteration later, which is
+    /// harmless (see `BoundedProcessRunner`'s poll loop).
+    private nonisolated(unsafe) var isShuttingDown = false
 
     /// Surfaces agent-status transitions as notifications / a Dock bounce.
     /// `AppDelegate` finishes wiring it (settings, activation callback, and
@@ -105,10 +116,15 @@ final class SessionStore: ObservableObject {
     /// the persisted file.
     private let commandOverride: String?
 
-    /// The user's login-shell PATH, resolved once. Injected into every spawned
-    /// session so a bare command (e.g. `herdr` in `~/.local/bin`) resolves even
-    /// when Vakta was launched from a `.app` with a minimal PATH.
-    private let resolvedPATH: String
+    /// The user's login-shell PATH. Injected into every spawned session so a
+    /// bare command (e.g. `herdr` in `~/.local/bin`) resolves even when
+    /// Vakta was launched from a `.app` with a minimal PATH. Starts as the
+    /// static fallback (see `ShellEnvironment.fallbackPATH`) and is updated
+    /// once the real value resolves in the background -- see `init` and
+    /// `finishLaunch`. Sessions created before it lands (the restored
+    /// workspace, or one the user manually creates in that window) use the
+    /// fallback; there is no retroactive fixup for already-spawned children.
+    private var resolvedPATH: String
 
     private let root: URL
 
@@ -118,6 +134,10 @@ final class SessionStore: ObservableObject {
     /// startup plan says not to persist -- not N times, progressively, as
     /// each session is created.
     private var isRestoringWorkspace = false
+
+    /// Computed in `init` (see there for why it can't wait for `finishLaunch`)
+    /// and consumed exactly once by `finishLaunch`.
+    private var pendingWorkspaceDecision: WorkspaceStartupDecision?
 
     /// The profile used when `createSession` is called with no explicit one:
     /// the user's chosen default, else the first profile (else the built-in
@@ -129,11 +149,21 @@ final class SessionStore: ObservableObject {
         return profiles.first ?? .herdr
     }
 
-    init(terminalSettings: TerminalSettingsStore, root: URL) {
+    /// `pathResolver` (kicked off by the caller as early in launch as
+    /// possible -- see `ResolvedPATH`) resolves the login-shell PATH on a
+    /// background thread. `init` does NOT wait on it: waiting here, even on
+    /// a background thread, would still keep the caller (the main actor,
+    /// during app launch) blocked until the result lands -- exactly what
+    /// this issue exists to fix. Instead `init` uses the static fallback
+    /// PATH immediately and finishes launching (workspace restore,
+    /// discovery, status polling) once the real value is ready, on a
+    /// background thread the whole time; only the final `self.resolvedPATH
+    /// = path` + `finishLaunch()` hop back to the main actor.
+    init(terminalSettings: TerminalSettingsStore, root: URL, pathResolver: ResolvedPATH) {
         self.terminalSettings = terminalSettings
         self.root = root
         commandOverride = ProcessInfo.processInfo.environment["VAKTA_TERMINAL_COMMAND"]
-        resolvedPATH = ShellEnvironment.resolvedPATH()
+        resolvedPATH = ShellEnvironment.fallbackPATH()
 
         // Load saved profiles; first launch seeds the built-ins and writes
         // them. A corrupt/unreadable file falls back to the built-ins for
@@ -190,19 +220,62 @@ final class SessionStore: ObservableObject {
         // colors can be set (synchronously, before the window reads them).
         applyThemeColors(from: definition)
 
-        // Restore the previous workspace: recreate a session per resolved
-        // record, each re-attaching (herdr/tmux) to its still-running server
-        // session. `isRestoringWorkspace` suppresses `saveWorkspace()` for
-        // the duration (each `createSession` below would otherwise call it
-        // once per record, progressively rewriting the file with a partial
-        // list) -- the plan decides once, up front, whether the end result
-        // needs persisting at all. A corrupt/unreadable file is deliberately
-        // NOT overwritten with the single-default-session fallback (see
-        // `WorkspaceStartupPlanner`).
-        let decision = WorkspaceStartupPlanner.plan(
+        // Decided here, before any window/UI exists and therefore before
+        // the user can possibly act, NOT inside the deferred `finishLaunch`
+        // below: if this read were deferred too, a session the user
+        // manually creates during the PATH-resolution gap would call
+        // `saveWorkspace()` and overwrite `workspace.json` with just that
+        // one session BEFORE `finishLaunch` ever read it -- silently
+        // discarding the entire previous workspace. Reading now means
+        // `finishLaunch` restores from what was actually on disk at launch,
+        // regardless of what happens in between.
+        pendingWorkspaceDecision = WorkspaceStartupPlanner.plan(
             for: WorkspacePersistence.load(root: root),
             profiles: profiles
         )
+
+        // The rest of launch (workspace restore, discovery, status polling)
+        // waits for the real PATH -- see the `init` doc comment. The wait
+        // itself runs entirely on a background thread; only applying the
+        // result hops back to the main actor.
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let path = pathResolver.value(waitingUpTo: 4)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.resolvedPATH = path
+                self.finishLaunch()
+            }
+        }
+    }
+
+    /// Restores the previous workspace (from `pendingWorkspaceDecision`,
+    /// computed in `init`), then starts discovery/status polling. Split out
+    /// of `init` so it can run once the real PATH is resolved (or its
+    /// bounded wait falls back) instead of blocking launch on it -- see
+    /// `init`. A session the user manually creates in the window before
+    /// this runs (the sidebar's `+`, e.g.) uses whatever `resolvedPATH` is
+    /// at that moment -- the fallback, most likely, since this typically
+    /// finishes well under a second -- with no retroactive fixup; it
+    /// coexists with whatever `finishLaunch` then restores rather than
+    /// being replaced by it, since the restore decision was already fixed
+    /// before that manual session could exist.
+    private func finishLaunch() {
+        // Restore the previous workspace: recreate a session per resolved
+        // record, each re-attaching (herdr/tmux) to its still-running server
+        // session, from the decision `init` already computed -- reading
+        // `workspace.json` again here, instead, would race a session the
+        // user manually created during the PATH-resolution gap: that
+        // session's own `saveWorkspace()` would have already overwritten
+        // the file with just itself, and this would "restore" from that
+        // instead of what was actually saved at launch. `isRestoringWorkspace`
+        // suppresses `saveWorkspace()` for the duration (each `createSession`
+        // below would otherwise call it once per record, progressively
+        // rewriting the file with a partial list) -- the plan decided once,
+        // in `init`, whether the end result needs persisting at all. A
+        // corrupt/unreadable file is deliberately NOT overwritten with the
+        // single-default-session fallback (see `WorkspaceStartupPlanner`).
+        guard let decision = pendingWorkspaceDecision else { return }
+        pendingWorkspaceDecision = nil
         switch decision {
         case .restore(let toCreate, let unresolved, let selectedSessionName, let shouldPersist):
             unresolvedWorkspaceRecords = unresolved
@@ -337,7 +410,12 @@ final class SessionStore: ObservableObject {
         DispatchQueue.global(qos: .utility).async {
             var updates: [AgentStatusUpdate] = []
             for session in herdrSessions {
-                if let status = HerdrAgentStatus.status(sessionName: session.name, target: session.target, path: path) {
+                if let status = HerdrAgentStatus.status(
+                    sessionName: session.name,
+                    target: session.target,
+                    path: path,
+                    isCancelled: { [weak self] in self?.isShuttingDown ?? true }
+                ) {
                     updates.append(AgentStatusUpdate(sessionID: session.id, status: status))
                 }
             }
@@ -396,7 +474,11 @@ final class SessionStore: ObservableObject {
                 let target = LaunchTargetResolver.resolve(profile)
                 switch target {
                 case .multiplexer(let multiplexerTarget):
-                    let names = SessionDiscovery.names(for: multiplexerTarget, path: path)
+                    let names = SessionDiscovery.names(
+                        for: multiplexerTarget,
+                        path: path,
+                        isCancelled: { [weak self] in self?.isShuttingDown ?? true }
+                    )
                     results.append(DiscoveryQueryResult(profileID: profile.id, queriedTarget: target, result: .sessions(names)))
                 case .unsupported:
                     // Only a known-multiplexer profile whose target can't be
@@ -596,20 +678,19 @@ final class SessionStore: ObservableObject {
         select(sessions[index].id)
     }
 
-    /// Documents intent more than it changes behavior: `SessionStore` is
-    /// owned by `Stores`, itself owned by `AppDelegate` for the app's whole
-    /// lifetime, and nothing calls `applicationWillTerminate` today, so in
-    /// practice this `deinit` never runs before process exit -- the timer
-    /// stops because the process does. AC#4's "shutdown stops timers and
-    /// pending work" is only half met even if it did run: `invalidate()`
-    /// stops the *timer*, but an in-flight `HerdrAgentStatus`/
-    /// `SessionDiscovery` call isn't cooperative-cancellation aware and
-    /// keeps running to its own timeout regardless -- its result is
-    /// harmless (`AgentStatusApplyPlanner`/`DiscoveryApplyPlanner` discard
-    /// anything for a session/profile that's gone by completion), but that
-    /// is "discarded," not "stopped."
+    /// Documents intent more than it changes behavior in practice:
+    /// `SessionStore` is owned by `Stores`, itself owned by `AppDelegate`
+    /// for the app's whole lifetime, and nothing calls
+    /// `applicationWillTerminate` today, so this `deinit` never actually
+    /// runs before process exit -- the timer stops because the process
+    /// does. If it did run: `invalidate()` stops the timer, and setting
+    /// `isShuttingDown` is polled cooperatively (`isCancelled`) by any
+    /// in-flight `BoundedProcessRunner` call, so a helper process started
+    /// just before shutdown is terminated rather than left to run to its
+    /// own timeout.
     deinit {
         statusTimer?.invalidate()
+        isShuttingDown = true
     }
 }
 
