@@ -3,8 +3,10 @@
 //  Vakta
 //
 //  Reads/writes the chosen UI-chrome appearance as JSON in Application
-//  Support, matching the `ProfilePersistence` / `KeybindingPersistence`
-//  pattern -- one atomic file at a stable path.
+//  Support, matching the `ProfilePersistence` pattern -- one atomic file at
+//  a stable path. Not yet migrated onto the shared `PersistedFileStore`
+//  boundary (see kata k916); `KeybindingPersistence` and
+//  `PassthroughSettingsPersistence` are the migrated examples.
 
 import Foundation
 

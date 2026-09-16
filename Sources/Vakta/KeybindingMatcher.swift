@@ -29,8 +29,10 @@ final class KeybindingMatcher: ObservableObject {
     /// persisted immediately. The event monitor reads this on each keyDown, so
     /// edits take effect with no reinstall.
     @Published var bindings: [Keybinding] {
-        didSet { KeybindingPersistence.save(bindings) }
+        didSet { KeybindingPersistence.save(bindings, root: root) }
     }
+
+    private let root: URL
 
     /// When set, the *next* keyDown is delivered here (and consumed) instead of
     /// being matched -- this is how the Preferences "record a chord" flow
@@ -45,7 +47,7 @@ final class KeybindingMatcher: ObservableObject {
 
     /// Which double-tap modifier toggles `passthrough`. Persisted.
     @Published var passthroughToggle: PassthroughToggle {
-        didSet { PassthroughSettingsPersistence.save(passthroughToggle) }
+        didSet { PassthroughSettingsPersistence.save(passthroughToggle, root: root) }
     }
 
     /// Flips passthrough mode. Exposed so a UI affordance (the sidebar status
@@ -63,52 +65,36 @@ final class KeybindingMatcher: ObservableObject {
     private var sawKeyDuringHold = false
     private let doubleTapWindow: TimeInterval = 0.4
 
-    init() {
-        // Default passthrough toggle: double-tap Shift. Assigning in init does
-        // not fire `didSet`, so seed the file on first launch.
-        let loadedToggle = PassthroughSettingsPersistence.load()
-        passthroughToggle = loadedToggle ?? .shift
-        if loadedToggle == nil {
-            PassthroughSettingsPersistence.save(.shift)
+    init(root: URL = ApplicationSupportRoot.resolve()) {
+        self.root = root
+
+        // Plan what to do with the saved passthrough toggle. Assigning
+        // `passthroughToggle` in init does not fire its `didSet`, so a
+        // startup write (seed only) is issued explicitly. A corrupt or
+        // unreadable file is deliberately NOT overwritten here -- see
+        // `PassthroughStartupPlanner`.
+        let passthroughDecision = PassthroughStartupPlanner.plan(for: PassthroughSettingsPersistence.load(root: root))
+        switch passthroughDecision {
+        case .use(let toggle, let shouldPersist):
+            passthroughToggle = toggle
+            if shouldPersist {
+                PassthroughSettingsPersistence.save(toggle, root: root)
+            }
         }
 
-        // Load saved bindings; first launch (or an unreadable file) seeds the
-        // defaults and writes them. Assigning `bindings` in init does not fire
-        // its `didSet`, so the first-run seed is saved explicitly.
-        if let loaded = KeybindingPersistence.load() {
-            var existing = loaded.bindings
-            // Step-wise migrations, each applied once: after we re-save at the
-            // current version, later launches leave the file untouched -- so a
-            // user who clears a migrated default keeps it cleared rather than
-            // having it re-added. Each step adds its default only if the action
-            // is unbound and its chord is free, so it never clobbers a choice.
-            if loaded.version < 2 {
-                Self.addDefaultIfFree(&existing, chord: Keybinding.kKeyCode, action: .openSessionSwitcher)
+        // Plan what to do with the saved keybindings file, then apply it.
+        // Assigning `bindings` in init does not fire its `didSet`, so a
+        // startup write (seed or migration) is issued explicitly. A corrupt
+        // or unreadable file is deliberately NOT overwritten here -- see
+        // `KeybindingStartupPlanner`.
+        let decision = KeybindingStartupPlanner.plan(for: KeybindingPersistence.load(root: root))
+        switch decision {
+        case .use(let planned, let shouldPersist):
+            bindings = planned
+            if shouldPersist {
+                KeybindingPersistence.save(planned, root: root)
             }
-            if loaded.version < 3 {
-                Self.addDefaultIfFree(&existing, chord: Keybinding.qKeyCode, action: .quit)
-            }
-            bindings = existing
-            if loaded.version < KeybindingPersistence.currentVersion {
-                KeybindingPersistence.save(existing) // rewrites at currentVersion
-            }
-        } else {
-            bindings = Keybinding.defaults
-            KeybindingPersistence.save(Keybinding.defaults)
         }
-    }
-
-    /// Appends a `⌘<chord>` default binding for `action` unless the action is
-    /// already bound or that exact ⌘ chord is already taken.
-    private static func addDefaultIfFree(
-        _ bindings: inout [Keybinding],
-        chord keyCode: UInt16,
-        action: KeybindingAction
-    ) {
-        let actionBound = bindings.contains { $0.action == action }
-        let chordTaken = bindings.contains { $0.modifierMask == [.command] && $0.keyCode == keyCode }
-        guard !actionBound, !chordTaken else { return }
-        bindings.append(Keybinding(modifierMask: [.command], keyCode: keyCode, action: action))
     }
 
     /// Installs the monitor. `onMatch` receives the matched binding's action.

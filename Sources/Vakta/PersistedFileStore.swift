@@ -33,6 +33,25 @@ enum FileSaveOutcome {
     case failure(Error)
 }
 
+/// Resolves (and creates) `~/Library/Application Support/Vakta`, the shared
+/// root every persisted settings/profile/workspace file lives under. A single
+/// implementation, rather than each `*Persistence` type repeating the same
+/// `FileManager` calls independently.
+enum ApplicationSupportRoot {
+    static func resolve(fileManager: FileManager = .default) -> URL {
+        let base = (try? fileManager.url(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: true
+        )) ?? URL(fileURLWithPath: NSTemporaryDirectory())
+
+        let directory = base.appendingPathComponent("Vakta", isDirectory: true)
+        try? fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory
+    }
+}
+
 enum PersistedFileStoreError: Error {
     /// `FilePayloadCodec.encode` returned `nil` for a well-formed in-memory
     /// value -- an implementation bug in the codec, not an I/O failure.

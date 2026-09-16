@@ -11,7 +11,7 @@
 import AppKit
 
 /// Which modifier's double-tap toggles passthrough, or `off` to disable it.
-enum PassthroughToggle: String, Codable, CaseIterable, Identifiable {
+enum PassthroughToggle: String, Codable, CaseIterable, Identifiable, Equatable {
     case off
     case shift
     case command
@@ -43,30 +43,16 @@ enum PassthroughToggle: String, Codable, CaseIterable, Identifiable {
 }
 
 enum PassthroughSettingsPersistence {
-    /// `~/Library/Application Support/Vakta/passthrough.json`.
-    static var fileURL: URL {
-        let base = (try? FileManager.default.url(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: true
-        )) ?? URL(fileURLWithPath: NSTemporaryDirectory())
-
-        let directory = base.appendingPathComponent("Vakta", isDirectory: true)
-        try? FileManager.default.createDirectory(
-            at: directory,
-            withIntermediateDirectories: true
-        )
-        return directory.appendingPathComponent("passthrough.json")
+    static func store(root: URL) -> PersistedFileStore<JSONCodec<PassthroughToggle>> {
+        PersistedFileStore(root: root, fileName: "passthrough.json", codec: JSONCodec())
     }
 
-    static func load() -> PassthroughToggle? {
-        guard let data = try? Data(contentsOf: fileURL) else { return nil }
-        return try? JSONDecoder().decode(PassthroughToggle.self, from: data)
+    static func load(root: URL) -> FileLoadOutcome<PassthroughToggle> {
+        store(root: root).load()
     }
 
-    static func save(_ toggle: PassthroughToggle) {
-        guard let data = try? JSONEncoder().encode(toggle) else { return }
-        try? data.write(to: fileURL, options: .atomic)
+    @discardableResult
+    static func save(_ toggle: PassthroughToggle, root: URL) -> FileSaveOutcome {
+        store(root: root).save(toggle)
     }
 }
