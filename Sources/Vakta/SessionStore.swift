@@ -56,6 +56,11 @@ final class SessionStore: ObservableObject {
     /// isn't simply discarded.
     @Published private(set) var unresolvedWorkspaceRecords: [SessionRecord] = []
 
+    /// The session id `requestClose` most recently asked to close that
+    /// Ghostty rejected (or had no surface to ask) -- `nil` once a close
+    /// request succeeds. Not surfaced in any UI yet; see `requestClose`.
+    @Published private(set) var lastRejectedClose: Session.ID?
+
     /// Per-session agent status (herdr sessions only), polled from
     /// `herdr agent list` and shown as a colored dot in the sidebar. The Dock
     /// badge (count of sessions needing attention) is derived here so both the
@@ -618,34 +623,56 @@ final class SessionStore: ObservableObject {
     /// Asks the still-running session's surface to close (e.g. a sidebar
     /// "Close Session" action). This does not itself remove the row --
     /// `onClose` above does that once libghostty confirms the surface
-    /// actually closed.
+    /// actually closed. `performBindingAction` reports whether Ghostty
+    /// accepted the request; a rejection (or no surface to ask -- see its
+    /// own doc comment) previously discarded that outcome entirely. It's
+    /// now observable via `lastRejectedClose`, an idempotent outcome:
+    /// calling this again on a session that keeps rejecting just re-records
+    /// the same id; a later accepted call on the same or another session
+    /// clears it.
     func requestClose(_ id: Session.ID) {
         guard let session = sessions.first(where: { $0.id == id }) else { return }
-        // TODO(verify): "close_surface" is presumed to be the upstream
-        // Ghostty binding-action name for this (mirrors the app menu /
-        // Cmd+W action in the reference apps). `performBindingAction` only
-        // forwards the string to `ghostty_surface_binding_action`; the
-        // table of valid action names lives in upstream Ghostty's Zig
-        // source, not in this Swift wrapper, so this was not re-derived
-        // from the resolved package checkout the way the rest of this file
-        // was.
-        _ = session.viewState.performBindingAction("close_surface")
+        // Verified against the pinned libghostty-spm checkout: `strings` on
+        // GhosttyKit.xcframework's macos-arm64_x86_64/libghostty.a lists
+        // "close_surface" as a real embedded binding-action name (alongside
+        // "close_tab"/"close_window", ruling out a typo'd near-miss). The
+        // table itself is compiled from upstream Ghostty's Zig source and
+        // isn't otherwise present as text in this Swift wrapper, so this is
+        // as far as static verification goes without building Ghostty from
+        // source; `performBindingAction`'s own return value is the runtime
+        // confirmation on top of that (surfaced via `lastRejectedClose`).
+        let accepted = session.viewState.performBindingAction("close_surface")
+        lastRejectedClose = accepted ? nil : id
     }
 
+    /// `processAlive` (from `terminalDidClose`) is a hint on the child's pty
+    /// state, not a verified exit code (see the call site's doc comment) --
+    /// deliberately not acted on here; the row is removed the same way
+    /// whether the close was user-requested or the child simply exited.
+    /// `SessionRemovalPlanner.shouldRemove` makes the resulting idempotency
+    /// explicit: a second close callback for an already-removed session
+    /// (the exact "repeated close callback" case) is a documented no-op,
+    /// not a re-derived guard.
     private func removeSession(_ id: Session.ID, processAlive: Bool) {
-        guard let index = sessions.firstIndex(where: { $0.id == id }) else { return }
-        sessions.remove(at: index)
+        let sessionIDsBeforeRemoval = sessions.map(\.id)
+        guard SessionRemovalPlanner.shouldRemove(id, from: sessionIDsBeforeRemoval) else { return }
+
+        sessions.removeAll { $0.id == id }
         hostContainer.removeSession(id)
         agentStatus[id] = nil
-        saveWorkspace()
 
-        guard selectedID == id else { return }
-        let fallbackIndex = min(index, sessions.count - 1)
-        if sessions.indices.contains(fallbackIndex) {
-            select(sessions[fallbackIndex].id)
-        } else {
-            selectedID = nil
+        let fallback = SessionSelectionPlanner.fallbackAfterRemoval(
+            removedID: id,
+            sessionIDsBeforeRemoval: sessionIDsBeforeRemoval,
+            previousSelection: selectedID
+        )
+        if fallback != selectedID {
+            selectedID = fallback
+            if let fallback {
+                hostContainer.select(fallback)
+            }
         }
+        saveWorkspace()
     }
 
     func select(_ id: Session.ID) {
@@ -687,7 +714,12 @@ final class SessionStore: ObservableObject {
     /// `isShuttingDown` is polled cooperatively (`isCancelled`) by any
     /// in-flight `BoundedProcessRunner` call, so a helper process started
     /// just before shutdown is terminated rather than left to run to its
-    /// own timeout.
+    /// own timeout. `terminalSettingsObserver` (the only other owned
+    /// subscription) needs no explicit cancellation here -- `AnyCancellable`
+    /// cancels itself when it deallocates, which happens immediately after
+    /// this body regardless. Nothing here calls `saveWorkspace()`, so
+    /// shutdown -- were it ever actually reached -- cannot itself overwrite
+    /// the restorable workspace.
     deinit {
         statusTimer?.invalidate()
         isShuttingDown = true
