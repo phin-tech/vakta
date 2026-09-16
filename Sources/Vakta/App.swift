@@ -32,6 +32,9 @@ enum VaktaMain {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var window: NSWindow?
+    /// The app menu's "New Session" submenu, rebuilt live -- see
+    /// `menuNeedsUpdate(_:)`.
+    private var newSessionProfilesMenu: NSMenu?
     private var splitView: NSSplitView?
     private var sidebarObserver: AnyCancellable?
     private var sidebarStyleObserver: AnyCancellable?
@@ -361,20 +364,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let sessionMenu = NSMenu(title: "Session")
 
         // "New Session" is a submenu of profiles; its first item (the default
-        // profile) doubles as the plain "new session" action. Built from the
-        // current profiles -- static built-ins today, so no live refresh yet.
+        // profile) doubles as the plain "new session" action. Rebuilt from
+        // current `sessionStore.profiles` every time it's about to open
+        // (`menuNeedsUpdate(_:)` below) rather than once here at launch --
+        // editing/deleting a profile must be reflected immediately, and a
+        // stale item must not be able to launch a deleted profile or an
+        // obsolete command snapshot (hence `representedObject` holding only
+        // the profile's stable id, resolved back to a live `Profile` at
+        // click time in `newSessionFromProfile`).
         let newSessionItem = NSMenuItem(title: "New Session", action: nil, keyEquivalent: "")
         let profilesMenu = NSMenu(title: "New Session")
-        for profile in sessionStore.profiles {
-            let item = NSMenuItem(
-                title: profile.name,
-                action: #selector(newSessionFromProfile(_:)),
-                keyEquivalent: ""
-            )
-            item.target = self
-            item.representedObject = profile
-            profilesMenu.addItem(item)
-        }
+        profilesMenu.delegate = self
+        newSessionProfilesMenu = profilesMenu
         newSessionItem.submenu = profilesMenu
         sessionMenu.addItem(newSessionItem)
 
@@ -420,7 +421,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func newSessionFromProfile(_ sender: NSMenuItem) {
-        guard let profile = sender.representedObject as? Profile else {
+        // Resolved by id against CURRENT profiles, never a value captured
+        // when the menu was built -- the profile may have been edited (a
+        // stale snapshot would launch the old command) or deleted (a stale
+        // id must fall back to the default rather than launching nothing or
+        // crashing) since the menu last opened.
+        guard let id = sender.representedObject as? Profile.ID,
+              let profile = sessionStore.profiles.first(where: { $0.id == id })
+        else {
             sessionStore.createSession()
             return
         }
@@ -599,8 +607,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 // MARK: - Menu-bar dropdown
 
 extension AppDelegate: NSMenuDelegate {
-    /// Rebuilt on each open so session rows and their status dots are current.
+    /// Rebuilt on each open so session rows and their status dots are
+    /// current. Also handles the app menu's "New Session" submenu -- see
+    /// its construction comment in `buildMainMenu` -- so editing/deleting a
+    /// profile is reflected the next time either menu opens, not just in
+    /// the (already-live, SwiftUI-driven) sidebar menu.
     func menuNeedsUpdate(_ menu: NSMenu) {
+        if menu === newSessionProfilesMenu {
+            menu.removeAllItems()
+            for entry in ProfileMenuPlanner.entries(for: sessionStore.profiles) {
+                let item = NSMenuItem(title: entry.title, action: #selector(newSessionFromProfile(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = entry.profileID
+                menu.addItem(item)
+            }
+            return
+        }
         guard menu === statusItem?.menu else { return }
         menu.removeAllItems()
 

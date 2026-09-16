@@ -683,19 +683,29 @@ final class SessionStore: ObservableObject {
     }
 
     /// Adds a new profile or replaces the existing one with the same id.
+    /// Adds a new profile or replaces the existing one with the same id.
+    /// Refreshes discovery so a command/arguments/environment edit that
+    /// changes this profile's actual target (e.g. adding a remote flag, or
+    /// changing which multiplexer it drives) doesn't leave `discovered`
+    /// showing results from the profile's previous target until the next
+    /// unrelated refresh.
     func upsertProfile(_ profile: Profile) {
         if let index = profiles.firstIndex(where: { $0.id == profile.id }) {
             profiles[index] = profile
         } else {
             profiles.append(profile)
         }
+        refreshDiscovery()
     }
 
-    /// Removes a profile. The list never goes empty -- `defaultProfile` falls
-    /// back to `.herdr` -- so removing the last one is harmless.
+    /// Removes a profile, re-seeding the built-in defaults instead of
+    /// leaving (and persisting) an empty list if that was the last one --
+    /// see `ProfileDeletionPlanner`. Also refreshes discovery, same reason
+    /// as `upsertProfile`.
     func deleteProfile(_ id: Profile.ID) {
-        profiles.removeAll { $0.id == id }
+        profiles = ProfileDeletionPlanner.afterDeleting(id, from: profiles)
         if defaultProfileID == id { defaultProfileID = nil }
+        refreshDiscovery()
     }
 
     /// Entry point for `KeybindingMatcher`'s "switch to session N" chords
