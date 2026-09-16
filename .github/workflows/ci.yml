@@ -24,6 +24,17 @@ jobs:
       - name: swift test
         run: swift test
 
+      # Table-driven/shell-integration cases for the release workflow's
+      # version derivation, signing-secret validation, and local install
+      # staging -- real subprocess invocations, synthetic env vars, and
+      # temporary directories only; never real credentials or /Applications.
+      - name: Release script tests
+        run: |
+          for t in Tests/scripts/test_*.sh; do
+            echo "== $t =="
+            bash "$t"
+          done
+
       # Verify the app target itself generates and compiles.
       - name: Install XcodeGen
         run: brew install xcodegen

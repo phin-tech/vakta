@@ -6,8 +6,10 @@ name: Release
 # signs + notarizes it, then attaches the .dmg to a GitHub Release.
 #
 # Optional repo secrets for a *distributable* (Developer ID + notarized) build —
-# without them the job still produces an ad-hoc .dmg that runs locally but trips
-# Gatekeeper on other Macs:
+# without ANY of them the job still produces an ad-hoc .dmg that runs locally
+# but trips Gatekeeper on other Macs. All six must be set together; a partial
+# set fails the job early (see "Validate signing configuration") rather than
+# attempting a signed build with something missing:
 #   MACOS_CERTIFICATE_P12   base64 of your "Developer ID Application" .p12
 #   MACOS_CERTIFICATE_PWD   password for that .p12
 #   MACOS_SIGN_IDENTITY     e.g. "Developer ID Application: Your Name (TEAMID)"
@@ -24,24 +26,31 @@ on:
 permissions:
   contents: write
 
-env:
-  # True only when the full signing secret set is present.
-  HAS_SIGNING: ${{ secrets.MACOS_CERTIFICATE_P12 != '' && secrets.APPLE_ID != '' && secrets.MACOS_SIGN_IDENTITY != '' }}
-
 jobs:
   release:
     runs-on: macos-15 # Apple Silicon runner; libghostty-spm is arm64-only.
     steps:
       - uses: actions/checkout@v4
 
-      - name: Derive version from tag
+      - name: Derive version
         id: version
         run: |
-          REF="${GITHUB_REF_NAME}"
-          VERSION="${REF#v}"
-          [ "$REF" = "$GITHUB_REF" ] && VERSION="0.0.0-dev" # workflow_dispatch
+          VERSION="$(scripts/derive_release_version.sh)"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Building version $VERSION"
+
+      - name: Validate signing configuration
+        id: signing
+        run: |
+          HAS_SIGNING="$(scripts/check_signing.sh)"
+          echo "has_signing=$HAS_SIGNING" >> "$GITHUB_OUTPUT"
+        env:
+          MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
 
       - name: Install XcodeGen
         run: brew install xcodegen
@@ -50,14 +59,14 @@ jobs:
         run: xcodegen generate
 
       - name: Import signing certificate
-        if: env.HAS_SIGNING == 'true'
+        if: steps.signing.outputs.has_signing == 'true'
         uses: apple-actions/import-codesign-certs@v3
         with:
           p12-file-base64: ${{ secrets.MACOS_CERTIFICATE_P12 }}
           p12-password: ${{ secrets.MACOS_CERTIFICATE_PWD }}
 
       - name: Build (signed)
-        if: env.HAS_SIGNING == 'true'
+        if: steps.signing.outputs.has_signing == 'true'
         run: |
           xcodebuild -project Vakta.xcodeproj -scheme Vakta -configuration Release \
             -destination 'platform=macOS' -derivedDataPath build \
@@ -69,7 +78,7 @@ jobs:
             build
 
       - name: Build (ad-hoc, unsigned)
-        if: env.HAS_SIGNING != 'true'
+        if: steps.signing.outputs.has_signing != 'true'
         run: |
           xcodebuild -project Vakta.xcodeproj -scheme Vakta -configuration Release \
             -destination 'platform=macOS' -derivedDataPath build \
@@ -87,8 +96,22 @@ jobs:
           hdiutil create -volname "Vakta" -srcfolder "$STAGING" \
             -ov -format UDZO "Vakta-${{ steps.version.outputs.version }}.dmg"
 
+      - name: Validate bundle version and artifact name agree
+        # Before signing/notarizing (which costs real time against Apple's
+        # service) rather than after, so a version mismatch fails cheaply.
+        run: |
+          APP="build/Build/Products/Release/Vakta.app"
+          EXPECTED="${{ steps.version.outputs.version }}"
+          PLIST_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist")"
+          if [ "$PLIST_VERSION" != "$EXPECTED" ]; then
+            echo "::error::built app's CFBundleShortVersionString ('$PLIST_VERSION') does not match the derived release version ('$EXPECTED')"
+            exit 1
+          fi
+          DMG="Vakta-${EXPECTED}.dmg"
+          test -f "$DMG" || { echo "::error::expected DMG '$DMG' not found"; exit 1; }
+
       - name: Sign & notarize .dmg
-        if: env.HAS_SIGNING == 'true'
+        if: steps.signing.outputs.has_signing == 'true'
         run: |
           DMG="Vakta-${{ steps.version.outputs.version }}.dmg"
           codesign --force --sign "${{ secrets.MACOS_SIGN_IDENTITY }}" --timestamp "$DMG"
@@ -100,7 +123,11 @@ jobs:
           xcrun stapler staple "$DMG"
 
       - name: Publish release
-        if: startsWith(github.ref, 'refs/tags/')
+        # Deliberately keyed on the *trigger* (a tag push), not the ref --
+        # workflow_dispatch can itself be run against a tag ref, which would
+        # give github.ref == refs/tags/v... on a manual run too and publish
+        # a GitHub Release nobody asked for.
+        if: github.event_name == 'push'
         uses: softprops/action-gh-release@v2
         with:
           files: Vakta-${{ steps.version.outputs.version }}.dmg
@@ -108,7 +135,7 @@ jobs:
           fail_on_unmatched_files: true
 
       - name: Upload artifact (dispatch runs)
-        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
           name: Vakta-dmg

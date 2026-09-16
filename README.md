@@ -118,7 +118,9 @@ xattr -dr com.apple.quarantine /Applications/Vakta.app
 (or right-click → Open the first time). For signed + notarized DMGs that skip
 this entirely, add these repo secrets (Settings → Secrets → Actions):
 `MACOS_CERTIFICATE_P12`, `MACOS_CERTIFICATE_PWD`, `MACOS_SIGN_IDENTITY`,
-`APPLE_ID`, `APPLE_TEAM_ID`, `APPLE_APP_PASSWORD`.
+`APPLE_ID`, `APPLE_TEAM_ID`, `APPLE_APP_PASSWORD`. All six must be set
+together — the release job fails fast (before building) on a partial set
+rather than attempting a signed build with one missing.
 
 ## Contributing
 

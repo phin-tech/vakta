@@ -37,13 +37,11 @@ dmg: generate
     rm -rf dmg-staging
     @echo "Built Vakta.dmg"
 
-# Build a Release .app and install it into /Applications
+# Build a Release .app and install it into /Applications (see scripts/install_app.sh)
 install: generate
     xcodebuild -project Vakta.xcodeproj -scheme Vakta -configuration Release \
       -destination 'platform=macOS' -derivedDataPath .build/xcode build
-    rm -rf /Applications/Vakta.app
-    cp -R .build/xcode/Build/Products/Release/Vakta.app /Applications/
-    @echo "Installed Vakta.app to /Applications"
+    scripts/install_app.sh .build/xcode/Build/Products/Release/Vakta.app /Applications
 
 # Cut a release: tag and push (CI builds + attaches the DMG). e.g. `just release 0.1.4`
 release version:
