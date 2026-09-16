@@ -31,7 +31,10 @@ let package = Package(
         ),
         .testTarget(
             name: "VaktaCoreTests",
-            dependencies: ["Vakta"],
+            dependencies: [
+                "Vakta",
+                .product(name: "GhosttyTheme", package: "libghostty-spm")
+            ],
             path: "Tests/VaktaCoreTests"
         ),
         .testTarget(

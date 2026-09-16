@@ -198,11 +198,15 @@ final class SessionStore: ObservableObject {
             defaultProfileID = payload.defaultProfileID
         }
 
-        // Resolve the user's chosen theme (falling back to the wrapper's
-        // built-in default if the name ever goes stale) and derive the sidebar
-        // colors from it.
-        let definition = GhosttyThemeCatalog.theme(named: terminalSettings.themeName)
-        let theme = definition?.toTerminalTheme() ?? .default
+        // Resolve the user's chosen theme through the one shared resolution
+        // path (see `TerminalThemeResolver`) also used by live updates in
+        // `applyTerminalSettings`, so an unknown/stale theme name falls back
+        // the same way at launch as it does mid-session, and the terminal
+        // and derived sidebar colors below always agree (both come from the
+        // same `definition`, never a `TerminalTheme.default` paired with
+        // separately-computed neutral colors).
+        let definition = TerminalThemeResolver.resolve(themeName: terminalSettings.themeName)
+        let theme = definition.toTerminalTheme()
 
         let snapshot = terminalSettings.snapshot
         controller = TerminalController(theme: theme) { builder in
@@ -337,8 +341,15 @@ final class SessionStore: ObservableObject {
         if !family.isEmpty {
             builder.withCustom("font-family", family)
         }
-        if settings.fontSize > 0 {
-            builder.withCustom("font-size", String(format: "%g", settings.fontSize))
+        // Validated first: a decoded fontSize can be negative, non-finite,
+        // or absurdly large (synthesized Codable applies no range check --
+        // see `TerminalFontSizeValidator`). `effective` collapses any of
+        // those to `0` ("use ghostty's default"), the same sentinel this
+        // type's own doc comment already defines, rather than sending
+        // unvalidated text as libghostty configuration.
+        let fontSize = TerminalFontSizeValidator.effective(settings.fontSize)
+        if fontSize > 0 {
+            builder.withCustom("font-size", String(format: "%g", fontSize))
         }
     }
 
@@ -352,21 +363,22 @@ final class SessionStore: ObservableObject {
         }
         controller.setTerminalConfiguration(config)
 
-        let definition = GhosttyThemeCatalog.theme(named: snapshot.themeName)
-        if let theme = definition?.toTerminalTheme() {
-            controller.setTheme(theme)
-        }
+        // Same resolution path `init` uses -- see `TerminalThemeResolver`'s
+        // doc comment for why this must always call `setTheme` (never skip
+        // it for an unknown name) and always derive the sidebar colors from
+        // the identical definition.
+        let definition = TerminalThemeResolver.resolve(themeName: snapshot.themeName)
+        controller.setTheme(definition.toTerminalTheme())
         applyThemeColors(from: definition)
     }
 
-    /// Recomputes the sidebar-matching colors from a theme definition (nil ->
-    /// safe dark-neutral fallbacks).
-    private func applyThemeColors(from definition: GhosttyThemeDefinition?) {
-        terminalBackgroundColor = NSColor(hexString: definition?.background)
+    /// Recomputes the sidebar-matching colors from a theme definition.
+    private func applyThemeColors(from definition: GhosttyThemeDefinition) {
+        terminalBackgroundColor = NSColor(hexString: definition.background)
             ?? NSColor(srgbRed: 0.12, green: 0.12, blue: 0.14, alpha: 1)
-        terminalSelectionColor = NSColor(hexString: definition?.selectionBackground)
+        terminalSelectionColor = NSColor(hexString: definition.selectionBackground)
             ?? NSColor(srgbRed: 0.27, green: 0.28, blue: 0.35, alpha: 1)
-        terminalAccentColor = NSColor(hexString: definition?.palette[4]) ?? .controlAccentColor
+        terminalAccentColor = NSColor(hexString: definition.palette[4]) ?? .controlAccentColor
     }
 
     // MARK: Agent status polling

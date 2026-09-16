@@ -18,7 +18,13 @@ struct TerminalSettings: Codable, Equatable {
     /// Point size. 0 = ghostty default.
     var fontSize: Double = 0
     /// A `GhosttyThemeCatalog` theme name.
-    var themeName: String = "Dracula"
+    var themeName: String = TerminalSettings.defaultThemeName
+
+    /// The built-in theme name every default/fallback resolution falls back
+    /// to -- one constant, referenced both here and by
+    /// `TerminalThemeResolver`, rather than the same string literal
+    /// duplicated in two places.
+    static let defaultThemeName = "Dracula"
 }
 
 enum TerminalSettingsPersistence {
@@ -58,7 +64,13 @@ final class TerminalSettingsStore: ObservableObject {
         case .corrupt, .unreadable: loaded = TerminalSettings()
         }
         fontFamily = loaded.fontFamily
-        fontSize = loaded.fontSize
+        // Validated at load, the one place every other reader (view
+        // rendering, `SessionStore.configureBuilder`) can then trust --
+        // `TerminalSettings` decodes with no range check, so a hand-edited
+        // or corrupt terminal.json could otherwise leave an out-of-range or
+        // non-finite value sitting in `fontSize` indefinitely (including
+        // across every Stepper adjustment, which only nudges by 1).
+        fontSize = TerminalFontSizeValidator.effective(loaded.fontSize)
         themeName = loaded.themeName
 
         if case .missing = outcome {

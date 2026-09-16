@@ -26,9 +26,14 @@ struct TerminalPreferencesView: View {
                 }
                 // 0 means "ghostty default" (omitted from config). Step past the
                 // unusable 1-8pt range so Default sits next to a readable size.
+                // `settings.fontSize` is decoded with no range validation
+                // (synthesized Codable) -- an out-of-range/non-finite value
+                // (a hand-edited or corrupt terminal.json) would TRAP `Int(_:)`
+                // if converted directly, so this always validates first.
                 Stepper {
-                    Text(settings.fontSize > 0
-                        ? "Size: \(Int(settings.fontSize)) pt"
+                    let displaySize = TerminalFontSizeValidator.effective(settings.fontSize)
+                    Text(displaySize > 0
+                        ? "Size: \(Int(displaySize)) pt"
                         : "Size: Default")
                 } onIncrement: {
                     settings.fontSize = settings.fontSize < 9 ? 9 : min(32, settings.fontSize + 1)
