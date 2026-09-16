@@ -79,10 +79,24 @@ enum HerdrAgentStatus {
         return AgentStatus.busiest(agents.map { AgentStatus(herdr: $0.agent_status) })
     }
 
+    /// Every agent's `pane_id` from an `agent list` JSON response -- the
+    /// input `HerdrPaneRegistry` needs to detect pane membership changes.
+    /// `pane_id` is optional on `Agent` (rather than required) so a response
+    /// missing it -- as some fixtures/older payloads may -- still decodes
+    /// for `status()`; such agents are simply excluded here. Empty on any
+    /// decode failure or error payload, same as `status`.
+    static func paneIDs(fromAgentListJSON json: String) -> Set<String> {
+        guard let data = json.data(using: .utf8),
+              let decoded = try? JSONDecoder().decode(Response.self, from: data),
+              let agents = decoded.result?.agents
+        else { return [] }
+        return Set(agents.compactMap(\.pane_id))
+    }
+
     // Minimal shape of the `agent list` JSON; unknown keys are ignored.
     private struct Response: Decodable {
         let result: Result?
         struct Result: Decodable { let agents: [Agent] }
-        struct Agent: Decodable { let agent_status: String }
+        struct Agent: Decodable { let agent_status: String; let pane_id: String? }
     }
 }
