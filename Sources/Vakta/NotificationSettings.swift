@@ -25,31 +25,17 @@ struct NotificationSettings: Codable, Equatable {
 }
 
 enum NotificationSettingsPersistence {
-    /// `~/Library/Application Support/Vakta/notifications.json`.
-    static var fileURL: URL {
-        let base = (try? FileManager.default.url(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: true
-        )) ?? URL(fileURLWithPath: NSTemporaryDirectory())
-
-        let directory = base.appendingPathComponent("Vakta", isDirectory: true)
-        try? FileManager.default.createDirectory(
-            at: directory,
-            withIntermediateDirectories: true
-        )
-        return directory.appendingPathComponent("notifications.json")
+    static func store(root: URL) -> PersistedFileStore<JSONCodec<NotificationSettings>> {
+        PersistedFileStore(root: root, fileName: "notifications.json", codec: JSONCodec())
     }
 
-    static func load() -> NotificationSettings? {
-        guard let data = try? Data(contentsOf: fileURL) else { return nil }
-        return try? JSONDecoder().decode(NotificationSettings.self, from: data)
+    static func load(root: URL) -> FileLoadOutcome<NotificationSettings> {
+        store(root: root).load()
     }
 
-    static func save(_ settings: NotificationSettings) {
-        guard let data = try? JSONEncoder().encode(settings) else { return }
-        try? data.write(to: fileURL, options: .atomic)
+    @discardableResult
+    static func save(_ settings: NotificationSettings, root: URL) -> FileSaveOutcome {
+        store(root: root).save(settings)
     }
 }
 
@@ -62,13 +48,25 @@ final class NotificationSettingsStore: ObservableObject {
     @Published var notifyOnFinished: Bool { didSet { persist() } }
     @Published var bounceDock: Bool { didSet { persist() } }
 
-    init() {
-        let loaded = NotificationSettingsPersistence.load() ?? NotificationSettings()
+    private let root: URL
+
+    init(root: URL = ApplicationSupportRoot.resolve()) {
+        self.root = root
+        // A corrupt/unreadable file falls back to defaults for this run only
+        // -- it is deliberately NOT overwritten (see `PersistedFileStore`).
+        let outcome = NotificationSettingsPersistence.load(root: root)
+        let loaded: NotificationSettings
+        switch outcome {
+        case .missing: loaded = NotificationSettings()
+        case .loaded(let settings): loaded = settings
+        case .corrupt, .unreadable: loaded = NotificationSettings()
+        }
         notifyOnAttention = loaded.notifyOnAttention
         notifyOnFinished = loaded.notifyOnFinished
         bounceDock = loaded.bounceDock
-        if NotificationSettingsPersistence.load() == nil {
-            NotificationSettingsPersistence.save(loaded)
+
+        if case .missing = outcome {
+            NotificationSettingsPersistence.save(loaded, root: root)
         }
     }
 
@@ -78,7 +76,8 @@ final class NotificationSettingsStore: ObservableObject {
                 notifyOnAttention: notifyOnAttention,
                 notifyOnFinished: notifyOnFinished,
                 bounceDock: bounceDock
-            )
+            ),
+            root: root
         )
     }
 }

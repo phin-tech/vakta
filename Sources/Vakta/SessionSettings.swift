@@ -10,36 +10,20 @@
 import Foundation
 
 enum SessionSettingsPersistence {
-    /// `~/Library/Application Support/Vakta/session.json`.
-    static var fileURL: URL {
-        let base = (try? FileManager.default.url(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: true
-        )) ?? URL(fileURLWithPath: NSTemporaryDirectory())
-
-        let directory = base.appendingPathComponent("Vakta", isDirectory: true)
-        try? FileManager.default.createDirectory(
-            at: directory,
-            withIntermediateDirectories: true
-        )
-        return directory.appendingPathComponent("session.json")
-    }
-
-    private struct Payload: Codable {
+    struct Payload: Codable, Equatable {
         var defaultProfileID: UUID?
     }
 
-    /// The chosen default profile id, or nil (use the first profile) if unset
-    /// or unreadable.
-    static func loadDefaultProfileID() -> UUID? {
-        guard let data = try? Data(contentsOf: fileURL) else { return nil }
-        return (try? JSONDecoder().decode(Payload.self, from: data))?.defaultProfileID
+    static func store(root: URL) -> PersistedFileStore<JSONCodec<Payload>> {
+        PersistedFileStore(root: root, fileName: "session.json", codec: JSONCodec())
     }
 
-    static func saveDefaultProfileID(_ id: UUID?) {
-        guard let data = try? JSONEncoder().encode(Payload(defaultProfileID: id)) else { return }
-        try? data.write(to: fileURL, options: .atomic)
+    static func load(root: URL) -> FileLoadOutcome<Payload> {
+        store(root: root).load()
+    }
+
+    @discardableResult
+    static func saveDefaultProfileID(_ id: UUID?, root: URL) -> FileSaveOutcome {
+        store(root: root).save(Payload(defaultProfileID: id))
     }
 }

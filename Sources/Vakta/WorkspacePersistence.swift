@@ -22,33 +22,16 @@ struct SessionRecord: Codable, Hashable {
 }
 
 enum WorkspacePersistence {
-    static var fileURL: URL {
-        let base = (try? FileManager.default.url(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: true
-        )) ?? URL(fileURLWithPath: NSTemporaryDirectory())
-
-        let directory = base.appendingPathComponent("Vakta", isDirectory: true)
-        try? FileManager.default.createDirectory(
-            at: directory,
-            withIntermediateDirectories: true
-        )
-        return directory.appendingPathComponent("workspace.json")
+    static func store(root: URL) -> PersistedFileStore<JSONCodec<[SessionRecord]>> {
+        PersistedFileStore(root: root, fileName: "workspace.json", codec: JSONCodec())
     }
 
-    /// The saved open-session records, or `nil` on first launch / unreadable
-    /// file (treated as "no saved workspace").
-    static func load() -> [SessionRecord]? {
-        guard let data = try? Data(contentsOf: fileURL) else { return nil }
-        return try? JSONDecoder().decode([SessionRecord].self, from: data)
+    static func load(root: URL) -> FileLoadOutcome<[SessionRecord]> {
+        store(root: root).load()
     }
 
-    static func save(_ records: [SessionRecord]) {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        guard let data = try? encoder.encode(records) else { return }
-        try? data.write(to: fileURL, options: .atomic)
+    @discardableResult
+    static func save(_ records: [SessionRecord], root: URL) -> FileSaveOutcome {
+        store(root: root).save(records)
     }
 }

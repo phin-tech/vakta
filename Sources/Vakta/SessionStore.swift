@@ -26,14 +26,14 @@ final class SessionStore: ObservableObject {
     /// (what the sidebar's `+` and the menu's plain "New Session" use).
     /// Persisted to disk on every change (see `ProfilePersistence`).
     @Published var profiles: [Profile] {
-        didSet { ProfilePersistence.save(profiles) }
+        didSet { ProfilePersistence.save(profiles, root: root) }
     }
 
     /// The profile a plain "New Session" uses. `nil` means "the first profile"
     /// (the historical behavior). Editable in the Sessions preferences pane;
     /// persisted on change.
     @Published var defaultProfileID: Profile.ID? {
-        didSet { SessionSettingsPersistence.saveDefaultProfileID(defaultProfileID) }
+        didSet { SessionSettingsPersistence.saveDefaultProfileID(defaultProfileID, root: root) }
     }
 
     /// Existing multiplexer sessions discovered on the server, keyed by the
@@ -95,6 +95,8 @@ final class SessionStore: ObservableObject {
     /// when Vakta was launched from a `.app` with a minimal PATH.
     private let resolvedPATH: String
 
+    private let root: URL
+
     /// The profile used when `createSession` is called with no explicit one:
     /// the user's chosen default, else the first profile (else the built-in
     /// herdr profile if the list is somehow empty).
@@ -105,24 +107,39 @@ final class SessionStore: ObservableObject {
         return profiles.first ?? .herdr
     }
 
-    init(terminalSettings: TerminalSettingsStore) {
+    init(terminalSettings: TerminalSettingsStore, root: URL = ApplicationSupportRoot.resolve()) {
         self.terminalSettings = terminalSettings
+        self.root = root
         commandOverride = ProcessInfo.processInfo.environment["VAKTA_TERMINAL_COMMAND"]
         resolvedPATH = ShellEnvironment.resolvedPATH()
 
-        // Load saved profiles; first launch (or an unreadable file) seeds the
-        // built-ins and writes them. Assigning `profiles` in init does not
-        // fire its `didSet`, so the first-run seed is saved explicitly.
-        let loaded = ProfilePersistence.load()
-        let seeded = loaded ?? [.herdr, .tmux, .shell]
+        // Load saved profiles; first launch seeds the built-ins and writes
+        // them. A corrupt/unreadable file falls back to the built-ins for
+        // this run only -- it is deliberately NOT overwritten (see
+        // `PersistedFileStore`). Assigning `profiles` in init does not fire
+        // its `didSet`, so the first-run seed is saved explicitly.
+        let profilesOutcome = ProfilePersistence.load(root: root)
+        let seeded: [Profile]
+        switch profilesOutcome {
+        case .missing: seeded = [.herdr, .tmux, .shell]
+        case .loaded(let saved): seeded = saved
+        case .corrupt, .unreadable: seeded = [.herdr, .tmux, .shell]
+        }
         profiles = seeded
-        if loaded == nil {
-            ProfilePersistence.save(seeded)
+        if case .missing = profilesOutcome {
+            ProfilePersistence.save(seeded, root: root)
         }
 
-        // The chosen default profile for new sessions (nil -> first profile).
-        // Assigning in init does not fire `didSet`, so nothing is re-saved here.
-        defaultProfileID = SessionSettingsPersistence.loadDefaultProfileID()
+        // The chosen default profile for new sessions (nil -> first profile
+        // is always a safe fallback, whether unset, missing, corrupt, or
+        // unreadable). Assigning in init does not fire `didSet`, so nothing
+        // is re-saved here.
+        switch SessionSettingsPersistence.load(root: root) {
+        case .missing, .corrupt, .unreadable:
+            defaultProfileID = nil
+        case .loaded(let payload):
+            defaultProfileID = payload.defaultProfileID
+        }
 
         // Resolve the user's chosen theme (falling back to the wrapper's
         // built-in default if the name ever goes stale) and derive the sidebar
@@ -154,7 +171,24 @@ final class SessionStore: ObservableObject {
         // Restore the previous workspace: recreate a session per saved record,
         // each re-attaching (herdr/tmux) to its still-running server session.
         // Nothing saved (first launch) -> one default session.
-        let records = WorkspacePersistence.load() ?? []
+        //
+        // KNOWN GAP (kata k916 AC#1, not yet fixed): a corrupt or unreadable
+        // workspace file also falls back to `records = []` here, and
+        // `createSession` below calls `saveWorkspace()`, which then
+        // OVERWRITES the file with that single default-session record --
+        // silently destroying a multi-session workspace on a transient read
+        // failure. The fix (skip `saveWorkspace()` while restoring, flush
+        // once after) needs a test double for `TerminalController`, which
+        // this initializer constructs directly; testing.md forbids
+        // constructing terminal surfaces in headless unit tests, so it is
+        // left for kata `njjm` (workspace recovery, currently blocked-by
+        // k916) rather than made here without coverage.
+        let records: [SessionRecord]
+        switch WorkspacePersistence.load(root: root) {
+        case .missing: records = []
+        case .loaded(let saved): records = saved
+        case .corrupt, .unreadable: records = []
+        }
         if records.isEmpty {
             // Fresh launch: attach the persistent `default` session rather than
             // spawning a brand-new one (verified: `herdr --session default`
@@ -378,13 +412,16 @@ final class SessionStore: ObservableObject {
     /// Writes the current open sessions to disk (profile + multiplexer name +
     /// rename), so the next launch reopens and re-attaches to them.
     private func saveWorkspace() {
-        WorkspacePersistence.save(sessions.map {
-            SessionRecord(
-                profileID: $0.profile.id,
-                sessionName: $0.sessionName,
-                customName: $0.customName
-            )
-        })
+        WorkspacePersistence.save(
+            sessions.map {
+                SessionRecord(
+                    profileID: $0.profile.id,
+                    sessionName: $0.sessionName,
+                    customName: $0.customName
+                )
+            },
+            root: root
+        )
     }
 
     /// Asks the still-running session's surface to close (e.g. a sidebar

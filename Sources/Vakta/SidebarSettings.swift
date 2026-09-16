@@ -31,31 +31,17 @@ enum SidebarCollapseStyle: String, Codable, CaseIterable, Identifiable {
 }
 
 enum SidebarSettingsPersistence {
-    /// `~/Library/Application Support/Vakta/sidebar.json`.
-    static var fileURL: URL {
-        let base = (try? FileManager.default.url(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: true
-        )) ?? URL(fileURLWithPath: NSTemporaryDirectory())
-
-        let directory = base.appendingPathComponent("Vakta", isDirectory: true)
-        try? FileManager.default.createDirectory(
-            at: directory,
-            withIntermediateDirectories: true
-        )
-        return directory.appendingPathComponent("sidebar.json")
+    static func store(root: URL) -> PersistedFileStore<JSONCodec<SidebarCollapseStyle>> {
+        PersistedFileStore(root: root, fileName: "sidebar.json", codec: JSONCodec())
     }
 
-    static func load() -> SidebarCollapseStyle? {
-        guard let data = try? Data(contentsOf: fileURL) else { return nil }
-        return try? JSONDecoder().decode(SidebarCollapseStyle.self, from: data)
+    static func load(root: URL) -> FileLoadOutcome<SidebarCollapseStyle> {
+        store(root: root).load()
     }
 
-    static func save(_ style: SidebarCollapseStyle) {
-        guard let data = try? JSONEncoder().encode(style) else { return }
-        try? data.write(to: fileURL, options: .atomic)
+    @discardableResult
+    static func save(_ style: SidebarCollapseStyle, root: URL) -> FileSaveOutcome {
+        store(root: root).save(style)
     }
 }
 
@@ -64,14 +50,23 @@ enum SidebarSettingsPersistence {
 @MainActor
 final class SidebarSettingsStore: ObservableObject {
     @Published var collapseStyle: SidebarCollapseStyle {
-        didSet { SidebarSettingsPersistence.save(collapseStyle) }
+        didSet { SidebarSettingsPersistence.save(collapseStyle, root: root) }
     }
 
-    init() {
-        let loaded = SidebarSettingsPersistence.load()
-        collapseStyle = loaded ?? .icons
-        if loaded == nil {
-            SidebarSettingsPersistence.save(.icons)
+    private let root: URL
+
+    init(root: URL = ApplicationSupportRoot.resolve()) {
+        self.root = root
+        // A corrupt/unreadable file falls back to `.icons` for this run only
+        // -- it is deliberately NOT overwritten (see `PersistedFileStore`).
+        switch SidebarSettingsPersistence.load(root: root) {
+        case .missing:
+            collapseStyle = .icons
+            SidebarSettingsPersistence.save(.icons, root: root)
+        case .loaded(let style):
+            collapseStyle = style
+        case .corrupt, .unreadable:
+            collapseStyle = .icons
         }
     }
 }

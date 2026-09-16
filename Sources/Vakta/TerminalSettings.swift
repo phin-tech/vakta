@@ -22,31 +22,17 @@ struct TerminalSettings: Codable, Equatable {
 }
 
 enum TerminalSettingsPersistence {
-    /// `~/Library/Application Support/Vakta/terminal.json`.
-    static var fileURL: URL {
-        let base = (try? FileManager.default.url(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: true
-        )) ?? URL(fileURLWithPath: NSTemporaryDirectory())
-
-        let directory = base.appendingPathComponent("Vakta", isDirectory: true)
-        try? FileManager.default.createDirectory(
-            at: directory,
-            withIntermediateDirectories: true
-        )
-        return directory.appendingPathComponent("terminal.json")
+    static func store(root: URL) -> PersistedFileStore<JSONCodec<TerminalSettings>> {
+        PersistedFileStore(root: root, fileName: "terminal.json", codec: JSONCodec())
     }
 
-    static func load() -> TerminalSettings? {
-        guard let data = try? Data(contentsOf: fileURL) else { return nil }
-        return try? JSONDecoder().decode(TerminalSettings.self, from: data)
+    static func load(root: URL) -> FileLoadOutcome<TerminalSettings> {
+        store(root: root).load()
     }
 
-    static func save(_ settings: TerminalSettings) {
-        guard let data = try? JSONEncoder().encode(settings) else { return }
-        try? data.write(to: fileURL, options: .atomic)
+    @discardableResult
+    static func save(_ settings: TerminalSettings, root: URL) -> FileSaveOutcome {
+        store(root: root).save(settings)
     }
 }
 
@@ -58,13 +44,25 @@ final class TerminalSettingsStore: ObservableObject {
     @Published var fontSize: Double { didSet { persist() } }
     @Published var themeName: String { didSet { persist() } }
 
-    init() {
-        let loaded = TerminalSettingsPersistence.load() ?? TerminalSettings()
+    private let root: URL
+
+    init(root: URL = ApplicationSupportRoot.resolve()) {
+        self.root = root
+        // A corrupt/unreadable file falls back to defaults for this run only
+        // -- it is deliberately NOT overwritten (see `PersistedFileStore`).
+        let outcome = TerminalSettingsPersistence.load(root: root)
+        let loaded: TerminalSettings
+        switch outcome {
+        case .missing: loaded = TerminalSettings()
+        case .loaded(let settings): loaded = settings
+        case .corrupt, .unreadable: loaded = TerminalSettings()
+        }
         fontFamily = loaded.fontFamily
         fontSize = loaded.fontSize
         themeName = loaded.themeName
-        if TerminalSettingsPersistence.load() == nil {
-            TerminalSettingsPersistence.save(loaded)
+
+        if case .missing = outcome {
+            TerminalSettingsPersistence.save(loaded, root: root)
         }
     }
 
@@ -73,6 +71,6 @@ final class TerminalSettingsStore: ObservableObject {
     }
 
     private func persist() {
-        TerminalSettingsPersistence.save(snapshot)
+        TerminalSettingsPersistence.save(snapshot, root: root)
     }
 }
