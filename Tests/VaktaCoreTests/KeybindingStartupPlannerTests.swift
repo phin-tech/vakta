@@ -133,4 +133,53 @@ final class KeybindingStartupPlannerTests: XCTestCase {
         XCTAssertTrue(hasCommandChord(bindings, keyCode: Self.xKeyCode), "⌘X's chord is free and must still be added")
         XCTAssertTrue(shouldPersist, "the migration adding ⌘V/⌘X must be written back even though ⌘C was skipped")
     }
+
+    // vakta select-all/close-window -- v4->v5 default chords: ⌘A selects all,
+    // ⌘W closes the front window. Asserted by chord, same reasoning as the
+    // copy/paste/cut block above. kVK_ANSI_A = 0, kVK_ANSI_W = 13.
+    //
+    // Close Window must stay a normal, user-clearable binding like every
+    // other action: some users route ⌘W to a terminal multiplexer running
+    // *inside* the session (e.g. closing a herdr pane) and clear Vakta's own
+    // ⌘W so the keystroke reaches the terminal instead -- see
+    // `Keybinding.defaults`'s existing "clear the binding to hand that key
+    // back to the terminal" note. No test asserts it can't be cleared; the
+    // clearability comes for free from every action going through the same
+    // `KeybindingMatcher.clearBinding` path (see `KeybindingMatcherRoutingTests`).
+    private static let aKeyCode: UInt16 = 0
+    private static let wKeyCode: UInt16 = 13
+
+    func test_missing_seedsDefaults_includesSelectAllAndCloseWindowChords() {
+        guard case .use(let bindings, let shouldPersist) = KeybindingStartupPlanner.plan(for: .missing) else {
+            return XCTFail("unreachable")
+        }
+        XCTAssertTrue(hasCommandChord(bindings, keyCode: Self.aKeyCode), "⌘A must be a default select-all chord")
+        XCTAssertTrue(hasCommandChord(bindings, keyCode: Self.wKeyCode), "⌘W must be a default close-window chord")
+        XCTAssertTrue(shouldPersist)
+    }
+
+    func test_loaded_versionFour_addsSelectAllAndCloseWindowChordsAndPersists() {
+        let payload = StoredKeybindingsPayload(version: 4, bindings: [])
+        guard case .use(let bindings, let shouldPersist) = KeybindingStartupPlanner.plan(for: .loaded(payload)) else {
+            return XCTFail("unreachable")
+        }
+        XCTAssertTrue(hasCommandChord(bindings, keyCode: Self.aKeyCode))
+        XCTAssertTrue(hasCommandChord(bindings, keyCode: Self.wKeyCode))
+        XCTAssertTrue(shouldPersist, "the v4->v5 migration ran and must be written back")
+    }
+
+    func test_loaded_versionFour_closeWindowChordAlreadyTakenBySomethingElse_skipsOnlyThatChord_stillAddsSelectAllAndPersists() {
+        // Mirrors the herdr use case directly: a user who already rebound
+        // ⌘W to something else (or -- once this ships -- cleared it and
+        // rebound it elsewhere) before this migration ever ran keeps that
+        // binding untouched.
+        let conflicting = binding(Self.wKeyCode, action: .toggleSidebar, modifiers: .command)
+        let payload = StoredKeybindingsPayload(version: 4, bindings: [conflicting])
+        guard case .use(let bindings, let shouldPersist) = KeybindingStartupPlanner.plan(for: .loaded(payload)) else {
+            return XCTFail("unreachable")
+        }
+        XCTAssertTrue(bindings.contains(conflicting), "the pre-existing ⌘W binding must survive untouched")
+        XCTAssertTrue(hasCommandChord(bindings, keyCode: Self.aKeyCode), "⌘A's chord is free and must still be added")
+        XCTAssertTrue(shouldPersist, "the migration adding ⌘A must be written back even though ⌘W was skipped")
+    }
 }

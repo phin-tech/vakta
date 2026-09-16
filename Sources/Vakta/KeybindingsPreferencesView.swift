@@ -29,7 +29,8 @@ struct KeybindingsPreferencesView: View {
     /// unbound and can be assigned here.
     private static let sessionActions: [KeybindingAction] = (0..<9).map { .selectSession($0) }
     private static let appActions: [KeybindingAction] = [
-        .openSessionSwitcher, .toggleSidebar, .openPreferences, .quit, .copy, .paste, .cut,
+        .openSessionSwitcher, .toggleSidebar, .openPreferences, .quit,
+        .copy, .paste, .cut, .selectAll, .closeWindow,
     ]
 
     var body: some View {

@@ -42,6 +42,14 @@ enum KeybindingAction: Hashable, Codable {
     /// to cut, so on the terminal this is a no-op; a focused text field
     /// cuts normally.
     case cut
+    /// Select the terminal's entire scrollback (or a focused text field's
+    /// contents).
+    case selectAll
+    /// Close the frontmost window. A normal, user-clearable binding like
+    /// every other action -- some users route this chord to a terminal
+    /// multiplexer running *inside* the session instead (e.g. closing a
+    /// pane), and clear this binding so the keystroke reaches the terminal.
+    case closeWindow
 
     /// A human label for the Preferences list.
     var title: String {
@@ -54,6 +62,8 @@ enum KeybindingAction: Hashable, Codable {
         case .copy: return "Copy"
         case .paste: return "Paste"
         case .cut: return "Cut"
+        case .selectAll: return "Select All"
+        case .closeWindow: return "Close Window"
         }
     }
 }
@@ -127,15 +137,21 @@ extension Keybinding {
     static let vKeyCode: UInt16 = 9
     /// `kVK_ANSI_X` -- the "X" in the default ⌘X cut chord.
     static let xKeyCode: UInt16 = 7
+    /// `kVK_ANSI_A` -- the "A" in the default ⌘A select-all chord.
+    static let aKeyCode: UInt16 = 0
+    /// `kVK_ANSI_W` -- the "W" in the default ⌘W close-window chord.
+    static let wKeyCode: UInt16 = 13
 
     /// Default bindings: Ctrl+Shift+1 ... Ctrl+Shift+9 select session 0...8,
-    /// ⌘K opens the session switcher, ⌘Q quits, and ⌘C/⌘V/⌘X are the standard
-    /// macOS copy/paste/cut chords. `toggleSidebar` and `openPreferences`
-    /// ship unbound (absent from the array); the Preferences pane lets the
-    /// user assign, reassign, or clear any of these. Note that a bound chord
-    /// is consumed before it reaches herdr (docs/architecture.md's "The
-    /// matcher runs in front of every surface" invariant) -- clear the
-    /// binding to hand that key back to the terminal.
+    /// ⌘K opens the session switcher, ⌘Q quits, ⌘C/⌘V/⌘X are the standard
+    /// macOS copy/paste/cut chords, ⌘A selects all, and ⌘W closes the front
+    /// window. `toggleSidebar` and `openPreferences` ship unbound (absent
+    /// from the array); the Preferences pane lets the user assign, reassign,
+    /// or clear any of these -- including ⌘W, for a user who wants that
+    /// chord to reach a terminal multiplexer running inside the session
+    /// instead. Note that a bound chord is consumed before it reaches herdr
+    /// (docs/architecture.md's "The matcher runs in front of every surface"
+    /// invariant) -- clear the binding to hand that key back to the terminal.
     static var defaults: [Keybinding] {
         var bindings = digitKeyCodes.enumerated().map { index, code in
             Keybinding(modifierMask: [.control, .shift], keyCode: code, action: .selectSession(index))
@@ -145,6 +161,8 @@ extension Keybinding {
         bindings.append(Keybinding(modifierMask: [.command], keyCode: cKeyCode, action: .copy))
         bindings.append(Keybinding(modifierMask: [.command], keyCode: vKeyCode, action: .paste))
         bindings.append(Keybinding(modifierMask: [.command], keyCode: xKeyCode, action: .cut))
+        bindings.append(Keybinding(modifierMask: [.command], keyCode: aKeyCode, action: .selectAll))
+        bindings.append(Keybinding(modifierMask: [.command], keyCode: wKeyCode, action: .closeWindow))
         return bindings
     }
 

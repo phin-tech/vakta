@@ -166,6 +166,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             case .copy: NSApp.sendAction(#selector(NSText.copy(_:)), to: nil, from: nil)
             case .paste: NSApp.sendAction(#selector(NSText.paste(_:)), to: nil, from: nil)
             case .cut: NSApp.sendAction(#selector(NSText.cut(_:)), to: nil, from: nil)
+            case .selectAll: NSApp.sendAction(#selector(NSText.selectAll(_:)), to: nil, from: nil)
+            // Closes whichever window is actually key (main window or
+            // Preferences), same as clicking its red button.
+            case .closeWindow: NSApp.sendAction(#selector(NSWindow.performClose(_:)), to: nil, from: nil)
             }
         }
 
@@ -372,6 +376,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         preferencesItem.target = self
         appMenu.addItem(preferencesItem)
         appMenu.addItem(.separator())
+        // Standard selectors sent to `nil`/`NSApp` -- AppKit resolves and
+        // enables/disables these itself, same as every other Mac app. No
+        // keyEquivalent, per this method's doc comment; ⌘H/⌥⌘H aren't routed
+        // through `KeybindingMatcher` (mouse/trackpad-only for now).
+        let hideItem = NSMenuItem(title: "Hide Vakta", action: #selector(NSApplication.hide(_:)), keyEquivalent: "")
+        appMenu.addItem(hideItem)
+        let hideOthersItem = NSMenuItem(
+            title: "Hide Others",
+            action: #selector(NSApplication.hideOtherApplications(_:)),
+            keyEquivalent: ""
+        )
+        appMenu.addItem(hideOthersItem)
+        let showAllItem = NSMenuItem(
+            title: "Show All",
+            action: #selector(NSApplication.unhideAllApplications(_:)),
+            keyEquivalent: ""
+        )
+        appMenu.addItem(showAllItem)
+        appMenu.addItem(.separator())
         let quitItem = NSMenuItem(
             title: "Quit Vakta",
             action: #selector(NSApplication.terminate(_:)),
@@ -395,6 +418,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         editMenu.addItem(copyItem)
         let pasteItem = NSMenuItem(title: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "")
         editMenu.addItem(pasteItem)
+        editMenu.addItem(.separator())
+        let selectAllItem = NSMenuItem(title: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "")
+        editMenu.addItem(selectAllItem)
         editMenuItem.submenu = editMenu
         mainMenu.addItem(editMenuItem)
 
@@ -448,6 +474,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         viewMenu.addItem(toggleItem)
         viewMenuItem.submenu = viewMenu
         mainMenu.addItem(viewMenuItem)
+
+        // A placeholder: assigning `NSApp.helpMenu` is what makes AppKit add
+        // its built-in "search menu items" field (⇧⌘/) to the menu bar, on
+        // top of whatever real content lands here later.
+        let helpMenuItem = NSMenuItem()
+        let helpMenu = NSMenu(title: "Help")
+        helpMenu.addItem(withTitle: "Vakta Help", action: nil, keyEquivalent: "")
+        helpMenuItem.submenu = helpMenu
+        mainMenu.addItem(helpMenuItem)
+        NSApp.helpMenu = helpMenu
 
         NSApp.mainMenu = mainMenu
     }

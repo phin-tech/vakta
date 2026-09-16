@@ -192,8 +192,8 @@ struct StoredKeybindingsPayload: Codable, Equatable {
 struct KeybindingFileCodec: FilePayloadCodec {
     /// Bump when adding a migration in `KeybindingStartupPlanner.plan`.
     /// v2 added the ⌘K switcher; v3 added ⌘Q quit; v4 added ⌘C/⌘V/⌘X
-    /// copy/paste/cut.
-    static let currentVersion = 4
+    /// copy/paste/cut; v5 added ⌘A select-all and ⌘W close-window.
+    static let currentVersion = 5
 
     func decode(_ data: Data) -> StoredKeybindingsPayload? {
         if let stored = try? JSONDecoder().decode(StoredKeybindingsPayload.self, from: data),

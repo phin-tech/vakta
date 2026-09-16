@@ -28,8 +28,8 @@ enum KeybindingActionScope {
 extension KeybindingAction {
     var scope: KeybindingActionScope {
         switch self {
-        case .quit: return .global
-        case .selectSession, .toggleSidebar, .openPreferences, .openSessionSwitcher, .copy, .paste, .cut:
+        case .quit, .closeWindow: return .global
+        case .selectSession, .toggleSidebar, .openPreferences, .openSessionSwitcher, .copy, .paste, .cut, .selectAll:
             return .contextSensitive
         }
     }
