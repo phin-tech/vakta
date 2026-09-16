@@ -120,6 +120,15 @@ this entirely, add these repo secrets (Settings → Secrets → Actions):
 `MACOS_CERTIFICATE_P12`, `MACOS_CERTIFICATE_PWD`, `MACOS_SIGN_IDENTITY`,
 `APPLE_ID`, `APPLE_TEAM_ID`, `APPLE_APP_PASSWORD`.
 
+## Contributing
+
+Read [AGENTS.md](AGENTS.md) for the required TDD approval gates and architecture
+rules. [CLAUDE.md](CLAUDE.md) points Claude to the same instructions.
+The [test coverage plan](docs/testing.md) maps the required core, integration, and
+desktop checks; the [Swift engineering rules](docs/swift-practices.md) cover
+concurrency, persistence, input handling, and compatibility. Test targets are not
+configured yet; build checks alone do not establish behavioral coverage.
+
 ## License
 
 MIT — see [LICENSE](LICENSE). Vakta embeds

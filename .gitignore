@@ -13,3 +13,4 @@ Vakta/Vakta.entitlements
 # Release artifacts
 *.dmg
 dmg-staging/
+.kata.local.toml
