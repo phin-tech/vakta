@@ -46,6 +46,7 @@ extension View {
             .environmentObject(stores.notificationSettings)
             .environmentObject(stores.terminalSettings)
             .environmentObject(stores.sessionStore)
+            .environmentObject(stores.sessionStore.notifier)
             .environmentObject(stores.persistenceFailures)
     }
 }

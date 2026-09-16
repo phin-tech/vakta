@@ -5,7 +5,10 @@
 //  A per-session status derived from `herdr --session <name> agent list`, shown
 //  as a colored dot in the sidebar. herdr manages AI coding agents whose
 //  `agent_status` is "working" / "idle" (anything else is surfaced as
-//  "attention"); a session's status is the busiest of its agents.
+//  "attention"); a session's status is the busiest of its agents -- and
+//  `.attention` outranks `.working`, deliberately: a session with one agent
+//  still working and another waiting on input must show attention, not
+//  working, or the waiting agent's need is hidden behind the busy one.
 
 import Foundation
 
@@ -21,8 +24,8 @@ enum AgentStatus: Equatable {
     /// found nothing. `SessionStore.pollAgentStatus` sets this directly
     /// (never through a query) on every poll tick -- redundant after the
     /// first since a profile's target doesn't change at runtime, but
-    /// harmless (never notifies -- see `AttentionNotifier.handleTransition`,
-    /// which this status never actually reaches).
+    /// harmless (never notifies -- `AttentionTransitionPolicy.decide`
+    /// treats any transition to `.unavailable` as silent, tested).
     case unavailable
 
     init(herdr raw: String) {
@@ -37,11 +40,13 @@ enum AgentStatus: Equatable {
         }
     }
 
-    /// Higher wins when aggregating a session's agents.
+    /// Higher wins when aggregating a session's agents. `.attention` is
+    /// highest -- a waiting agent's need must never be hidden behind a
+    /// still-working one (see the type's doc comment).
     private var rank: Int {
         switch self {
-        case .working: return 3
-        case .attention: return 2
+        case .attention: return 3
+        case .working: return 2
         case .idle: return 1
         case .none, .unavailable: return 0
         }

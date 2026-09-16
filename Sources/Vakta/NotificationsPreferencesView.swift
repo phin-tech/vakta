@@ -10,6 +10,7 @@ import SwiftUI
 
 struct NotificationsPreferencesView: View {
     @EnvironmentObject private var store: NotificationSettingsStore
+    @EnvironmentObject private var notifier: AttentionNotifier
 
     var body: some View {
         Form {
@@ -32,7 +33,31 @@ struct NotificationsPreferencesView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+
+            if let message = problemMessage {
+                Section {
+                    Label(message, systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.yellow)
+                        .font(.callout)
+                }
+            }
         }
         .formStyle(.grouped)
+    }
+
+    /// A denied/failed authorization or delivery, otherwise invisible --
+    /// previously both were silently discarded.
+    private var problemMessage: String? {
+        switch notifier.lastProblem {
+        case nil:
+            return nil
+        case .authorizationDenied:
+            return "Notification banners are off in System Settings for Vakta. "
+                + "The Dock badge and bounce still work without them."
+        case .authorizationError(let description):
+            return "Couldn't ask for notification permission: \(description)"
+        case .deliveryError(let description):
+            return "A notification failed to deliver: \(description)"
+        }
     }
 }
