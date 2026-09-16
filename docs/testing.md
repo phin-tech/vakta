@@ -4,7 +4,7 @@
 
 Updated 2026-09-16: `Package.swift` defines `VaktaCoreTests` and
 `VaktaIntegrationTests` targets; `.github/workflows/ci.yml` runs `swift test`
-(265 tests as of this update) plus `Tests/scripts/test_*.sh` (the release
+(362 tests as of this update) plus `Tests/scripts/test_*.sh` (the release
 version/signing/install scripts) on every push/PR, alongside `swift build`
 and the generated Xcode app build. Every ticket in the tables below is
 closed under kata epic `vakta#mkwv` -- the tables describe what was
@@ -40,7 +40,7 @@ owned resources, clean them up even on failure, and bound waits with diagnostics
 Avoid real user settings, existing multiplexer sessions, network endpoints, and
 notification permissions in automated unit/integration tests.
 
-`swift test` must execute a nonzero test suite in CI (it does: 265 tests as of
+`swift test` must execute a nonzero test suite in CI (it does: 362 tests as of
 this update). Keep the existing SwiftPM and generated-Xcode build checks. Add
 an Xcode test action only when the generated scheme has actual test targets
 (it doesn't yet -- `swift test` covers `VaktaCoreTests`/`VaktaIntegrationTests`

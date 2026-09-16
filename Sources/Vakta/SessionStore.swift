@@ -157,10 +157,7 @@ final class SessionStore: ObservableObject {
     /// the user's chosen default, else the first profile (else the built-in
     /// herdr profile if the list is somehow empty).
     var defaultProfile: Profile {
-        if let id = defaultProfileID, let profile = profiles.first(where: { $0.id == id }) {
-            return profile
-        }
-        return profiles.first ?? .herdr
+        DefaultProfileSelector.select(from: profiles, defaultProfileID: defaultProfileID)
     }
 
     /// `pathResolver` (kicked off by the caller as early in launch as
@@ -341,25 +338,15 @@ final class SessionStore: ObservableObject {
     /// "Keybindings routed through the matcher, not menu key equivalents"
     /// invariant) so a font-only change can't drop it -- `setTerminalConfiguration`
     /// replaces the whole config rather than merging. Empty font family / zero
-    /// size are omitted so ghostty keeps its own default.
+    /// size are omitted so ghostty keeps its own default. The decision of which
+    /// pairs to emit is `TerminalConfigurationDecisions.customPairs`, a pure
+    /// function tested independently of this `Builder` type.
     private static func configureBuilder(
         _ builder: inout TerminalConfiguration.Builder,
         with settings: TerminalSettings
     ) {
-        builder.withCustom("keybind", "clear")
-        let family = settings.fontFamily.trimmingCharacters(in: .whitespaces)
-        if !family.isEmpty {
-            builder.withCustom("font-family", family)
-        }
-        // Validated first: a decoded fontSize can be negative, non-finite,
-        // or absurdly large (synthesized Codable applies no range check --
-        // see `TerminalFontSizeValidator`). `effective` collapses any of
-        // those to `0` ("use ghostty's default"), the same sentinel this
-        // type's own doc comment already defines, rather than sending
-        // unvalidated text as libghostty configuration.
-        let fontSize = TerminalFontSizeValidator.effective(settings.fontSize)
-        if fontSize > 0 {
-            builder.withCustom("font-size", String(format: "%g", fontSize))
+        for pair in TerminalConfigurationDecisions.customPairs(for: settings) {
+            builder.withCustom(pair.key, pair.value)
         }
     }
 
@@ -613,21 +600,13 @@ final class SessionStore: ObservableObject {
     /// rename), so the next launch reopens and re-attaches to them.
     private func saveWorkspace() {
         guard !isRestoringWorkspace else { return }
-        let records = sessions.map { session -> SessionRecord in
-            // Only an explicit per-session override is worth pinning to this
-            // record -- a value merely inherited from the profile should keep
-            // following the profile if it's edited later, so it's persisted
-            // as `nil` (restore re-resolves it from the profile) rather than
-            // baked in as if the user had chosen it.
-            let inheritedFromProfile = profiles.first { $0.id == session.profile.id }?.workingDirectory
-            let explicitOverride = session.profile.workingDirectory == inheritedFromProfile
-                ? nil
-                : session.profile.workingDirectory
-            return SessionRecord(
+        let records = sessions.map { session in
+            SessionRecordBuilder.record(
                 profileID: session.profile.id,
                 sessionName: session.sessionName,
                 customName: session.customName,
-                workingDirectory: explicitOverride
+                workingDirectory: session.profile.workingDirectory,
+                profiles: profiles
             )
         }
         // Records whose profile was missing at the last restore aren't in

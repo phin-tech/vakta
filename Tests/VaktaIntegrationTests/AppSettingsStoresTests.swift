@@ -8,6 +8,7 @@
 //  For each: first launch seeds and persists defaults, and a corrupt file is
 //  recovered from in-memory without being overwritten on disk.
 
+import AppKit
 import XCTest
 @testable import Vakta
 
@@ -50,6 +51,56 @@ final class AppSettingsStoresTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: fileURL), corruptBytes)
     }
 
+    @MainActor
+    func test_appearanceStore_loadedFile_usesSavedValues() {
+        AppearancePersistence.save(AppearanceSettings(appearance: .dark, sidebarFont: .matchTerminal), root: tempDirectory)
+
+        let store = AppearanceStore(root: tempDirectory)
+
+        XCTAssertEqual(store.appearance, .dark)
+        XCTAssertEqual(store.sidebarFont, .matchTerminal)
+    }
+
+    @MainActor
+    func test_appearanceStore_settingAppearance_persistsAndAppliesToNSApp() {
+        // `NSApp` is nil until something touches `NSApplication.shared` --
+        // never true in the real app (AppKit sets it during launch), but
+        // this XCTest host never runs an app lifecycle.
+        _ = NSApplication.shared
+        let store = AppearanceStore(root: tempDirectory)
+
+        store.appearance = .dark
+
+        guard case .loaded(let settings) = AppearancePersistence.load(root: tempDirectory) else {
+            return XCTFail("setting appearance must persist")
+        }
+        XCTAssertEqual(settings.appearance, .dark)
+        XCTAssertEqual(NSApp.appearance, NSAppearance(named: .darkAqua))
+    }
+
+    @MainActor
+    func test_appearanceStore_settingAppearanceToSystem_handsControlBackToTheOS() {
+        _ = NSApplication.shared
+        let store = AppearanceStore(root: tempDirectory)
+        store.appearance = .dark
+
+        store.appearance = .system
+
+        XCTAssertNil(NSApp.appearance)
+    }
+
+    @MainActor
+    func test_appearanceStore_settingSidebarFont_persists() {
+        let store = AppearanceStore(root: tempDirectory)
+
+        store.sidebarFont = .matchTerminal
+
+        guard case .loaded(let settings) = AppearancePersistence.load(root: tempDirectory) else {
+            return XCTFail("setting sidebarFont must persist")
+        }
+        XCTAssertEqual(settings.sidebarFont, .matchTerminal)
+    }
+
     // MARK: SidebarSettingsStore
 
     @MainActor
@@ -73,6 +124,27 @@ final class AppSettingsStoresTests: XCTestCase {
         XCTAssertEqual(store.collapseStyle, .icons)
 
         XCTAssertEqual(try Data(contentsOf: fileURL), corruptBytes)
+    }
+
+    @MainActor
+    func test_sidebarSettingsStore_loadedFile_usesSavedValue() {
+        SidebarSettingsPersistence.save(.hidden, root: tempDirectory)
+
+        let store = SidebarSettingsStore(root: tempDirectory)
+
+        XCTAssertEqual(store.collapseStyle, .hidden)
+    }
+
+    @MainActor
+    func test_sidebarSettingsStore_settingCollapseStyle_persistsImmediately() {
+        let store = SidebarSettingsStore(root: tempDirectory)
+
+        store.collapseStyle = .hidden
+
+        guard case .loaded(let style) = SidebarSettingsPersistence.load(root: tempDirectory) else {
+            return XCTFail("setting collapseStyle must persist")
+        }
+        XCTAssertEqual(style, .hidden)
     }
 
     // MARK: TerminalSettingsStore

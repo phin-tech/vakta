@@ -27,6 +27,28 @@ struct TerminalSettings: Codable, Equatable {
     static let defaultThemeName = "Dracula"
 }
 
+/// The custom libghostty config pairs a given `TerminalSettings` snapshot
+/// should emit. Pure extraction of `SessionStore.configureBuilder`'s
+/// decision, kept separate from the Ghostty `TerminalConfiguration.Builder`
+/// it's ultimately applied to so it's testable without one.
+enum TerminalConfigurationDecisions {
+    static func customPairs(for settings: TerminalSettings) -> [(key: String, value: String)] {
+        var pairs: [(key: String, value: String)] = [("keybind", "clear")]
+
+        let family = settings.fontFamily.trimmingCharacters(in: .whitespaces)
+        if !family.isEmpty {
+            pairs.append(("font-family", family))
+        }
+
+        let fontSize = TerminalFontSizeValidator.effective(settings.fontSize)
+        if fontSize > 0 {
+            pairs.append(("font-size", String(format: "%g", fontSize)))
+        }
+
+        return pairs
+    }
+}
+
 enum TerminalSettingsPersistence {
     static func store(root: URL) -> PersistedFileStore<JSONCodec<TerminalSettings>> {
         PersistedFileStore(root: root, fileName: "terminal.json", codec: JSONCodec())

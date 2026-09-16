@@ -19,8 +19,11 @@ enum ShellEnvironment {
     /// the `PATH=` line is colon-separated regardless of shell (fish included).
     /// Synchronous and blocking -- callers on the main actor should use
     /// `ResolvedPATH` instead, which does the actual process work off it.
-    static func resolvedPATH(timeout: TimeInterval = 4) -> String {
-        loginShellPATH(timeout: timeout) ?? fallbackPATH()
+    static func resolvedPATH(
+        timeout: TimeInterval = 4,
+        shell: String = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
+    ) -> String {
+        loginShellPATH(shell: shell, timeout: timeout) ?? fallbackPATH()
     }
 
     /// Pure: the value of a `PATH=...` line, if one is present. Extracted
@@ -52,8 +55,10 @@ enum ShellEnvironment {
         ].joined(separator: ":")
     }
 
-    private static func loginShellPATH(timeout: TimeInterval) -> String? {
-        let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
+    /// Injectable `shell:` (rather than reading `SHELL` inline) so this can be
+    /// pointed at a fixture executable in tests instead of the user's real
+    /// login shell.
+    static func loginShellPATH(shell: String, timeout: TimeInterval) -> String? {
         guard FileManager.default.isExecutableFile(atPath: shell) else { return nil }
 
         // Login + interactive so profile *and* rc files (where PATH edits
@@ -88,9 +93,12 @@ final class ResolvedPATH: @unchecked Sendable {
     private let lock = NSLock()
     private var resolvedValue: String?
 
-    init(timeout: TimeInterval = 4) {
+    init(
+        timeout: TimeInterval = 4,
+        shell: String = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
+    ) {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let path = ShellEnvironment.resolvedPATH(timeout: timeout)
+            let path = ShellEnvironment.resolvedPATH(timeout: timeout, shell: shell)
             guard let self else { return }
             self.lock.lock()
             self.resolvedValue = path

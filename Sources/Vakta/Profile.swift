@@ -13,6 +13,19 @@
 import Foundation
 import GhosttyTerminal
 
+/// The profile a plain "New Session" uses when no explicit one is given:
+/// the user's chosen default, else the first profile, else the built-in
+/// herdr profile if the list is somehow empty. Pure extraction of
+/// `SessionStore.defaultProfile`.
+enum DefaultProfileSelector {
+    static func select(from profiles: [Profile], defaultProfileID: Profile.ID?) -> Profile {
+        if let id = defaultProfileID, let profile = profiles.first(where: { $0.id == id }) {
+            return profile
+        }
+        return profiles.first ?? .herdr
+    }
+}
+
 struct Profile: Identifiable, Codable, Hashable, Sendable {
     var id: UUID = UUID()
 
