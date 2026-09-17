@@ -898,6 +898,11 @@ private final class SeamlessSplitView: NSSplitView {
         // band stays clear.
         var painted = rect
         painted.size.height = max(0, rect.height - titlebarBand)
+        // Snap to the backing pixel grid before filling: an unaligned 1pt
+        // rect gets antialiased across two pixel columns at less than full
+        // alpha each, which at 8% white reads as a broken/dotted line
+        // rather than a crisp hairline.
+        painted = backingAlignedRect(painted, options: .alignAllEdgesNearest)
         NSColor.white.withAlphaComponent(0.08).setFill()
         painted.fill()
     }
