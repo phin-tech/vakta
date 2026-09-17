@@ -126,8 +126,32 @@ final class KeybindingMatcher: ObservableObject {
         // Also watch `.flagsChanged` for the passthrough double-tap chord --
         // modifier presses/releases arrive as flagsChanged, not keyDown.
         monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { @MainActor [weak self] event in
-            self?.handle(event, onMatch: onMatch) ?? event
+            KeybindingMatcher.monitorCallbackResult(
+                matcherIsAlive: self != nil,
+                handledResult: self?.handle(event, onMatch: onMatch),
+                event: event
+            )
         }
+    }
+
+    /// The value the local-monitor callback returns for `event`: `nil`
+    /// consumes it (AppKit dispatch stops here, so the key never reaches the
+    /// terminal), the event itself falls through. Split out of the
+    /// `addLocalMonitorForEvents` closure so the consume-vs-fall-through
+    /// decision is unit-testable without a live event queue -- the inline
+    /// `self?.handle(...) ?? event` it replaces silently coalesced a
+    /// deliberate consume (`handle` -> `nil`) back into a fall-through.
+    static func monitorCallbackResult(
+        matcherIsAlive: Bool,
+        handledResult: NSEvent?,
+        event: NSEvent
+    ) -> NSEvent? {
+        guard matcherIsAlive else { return event }
+        // Return `handle`'s result directly: it already returns `nil` to
+        // consume and the event itself to fall through. Coalescing with
+        // `?? event` here would turn a deliberate consume back into a
+        // fall-through, leaking the raw key to the terminal.
+        return handledResult
     }
 
     func uninstall() {

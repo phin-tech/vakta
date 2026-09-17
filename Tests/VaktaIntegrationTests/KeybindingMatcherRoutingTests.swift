@@ -98,6 +98,49 @@ final class KeybindingMatcherRoutingTests: XCTestCase {
         XCTAssertNil(fired)
     }
 
+    // MARK: - Live monitor callback: consume must not coalesce back to fall-through
+
+    func test_monitorCallbackResult_liveMatcherConsumes_returnsNil_notTheFallthroughEvent() {
+        // handle() returns nil to consume a matched, terminal-focused ⌘V. The
+        // live monitor must return that nil so AppKit dispatch stops and the
+        // raw ⌘V never reaches the terminal (where herdr would surface a "v").
+        let event = keyDownEvent(modifiers: .command, keyCode: 9)
+
+        let result = KeybindingMatcher.monitorCallbackResult(
+            matcherIsAlive: true,
+            handledResult: nil,
+            event: event
+        )
+
+        XCTAssertNil(result, "a live matcher's consume (handle -> nil) must not fall through to the terminal as a raw ⌘V keystroke")
+    }
+
+    func test_monitorCallbackResult_liveMatcherFallsThrough_returnsTheEvent() {
+        // handle() returns the event itself when it does not consume (no match,
+        // or a contextSensitive action deferred to a focused text view).
+        let event = keyDownEvent(modifiers: .command, keyCode: 9)
+
+        let result = KeybindingMatcher.monitorCallbackResult(
+            matcherIsAlive: true,
+            handledResult: event,
+            event: event
+        )
+
+        XCTAssertTrue(result === event, "a non-consumed key must reach the focused surface unchanged")
+    }
+
+    func test_monitorCallbackResult_deadMatcher_fallsThrough() {
+        let event = keyDownEvent(modifiers: .command, keyCode: 9)
+
+        let result = KeybindingMatcher.monitorCallbackResult(
+            matcherIsAlive: false,
+            handledResult: nil,
+            event: event
+        )
+
+        XCTAssertTrue(result === event, "a deallocated matcher must let the event through untouched")
+    }
+
     // MARK: - setBinding: chord conflicts, modifier normalization, one-snapshot commit
 
     func test_setBinding_stealingAnotherActionsChord_unbindsThatOtherAction() {
