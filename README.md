@@ -4,16 +4,9 @@
 
 # Vakta
 
-Vakta is a native macOS terminal designed with one specific job: managing
-**herdr** (and tmux) multiplexer sessions alongside a visual sidebar. It handles
-terminal rendering via **libghostty** (using the prebuilt Swift package
-[`Lakr233/libghostty-spm`](https://github.com/Lakr233/libghostty-spm)).
+Vakta was born out of basically living in Herdr and Tmux more and more with the rise of agentic coding. The pain point I had was that I wanted to use my normal Mac based shortcuts like `cmd-d` to split a pane. While there were ways to do that with both Ghostty and Wezterm it often made using the actual terminal tool harder. I looked at things like Cmux or Orca but they had a lot of extras such as built in browsers that I don't want or need. 
 
-> **Status:** Early but functional — a real macOS `.app` with tagged
-> [DMG releases](https://github.com/phin-tech/vakta/releases). Release DMGs
-> are ad-hoc (Gatekeeper-quarantined when downloaded) unless the repo's
-> signing secrets are configured — see [Releasing](#releasing) to
-> de-quarantine an ad-hoc build, or to enable signing.
+So with a night of Claude code Vakta was born. At its core it's just a Swift app that uses LibGhostty to manage terminals. The major feature it has is that you can have it always connect to a Herdr instance(and Tmux and regular shell if you want) and use 'normal' Mac commands there. It also integrates some with Herdr and surfaces notifications, lets you use `cmd-k` to jump to any session etc.
 
 <p align="center">
   <img src="docs/screenshot.png" alt="Vakta managing herdr sessions" width="900">
