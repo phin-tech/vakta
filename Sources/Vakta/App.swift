@@ -700,12 +700,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // The palette is the point of asking "what herdr workspaces exist"
         // -- unlike the sidebar disclosure, it queries every herdr session
-        // regardless of `HerdrPreferencesStore.showWorkspaces`. Only
-        // sessions with no cached answer yet are queried; a session already
-        // in `sessionStore.herdrWorkspaces` was included in the sync
-        // snapshot above.
+        // regardless of `HerdrPreferencesStore.showWorkspaces`, and it
+        // re-queries even a session whose workspaces are already cached
+        // (fetch-on-expand only re-asks once otherwise -- see
+        // `SessionStore.fetchHerdrWorkspaces` -- so a workspace created in
+        // herdr since that first fetch would otherwise never appear here).
+        // The initial snapshot above already shows any cached answer; this
+        // replaces it once the fresh one lands, via
+        // `SessionSwitcherModel.replaceWorkspaces`.
         pendingPaletteWorkspaceFetches = Set(sessionStore.sessions
-            .filter { sessionStore.herdrWorkspaces[$0.id] == nil && Self.isHerdrSession($0) }
+            .filter(Self.isHerdrSession)
             .map(\.id))
         for id in pendingPaletteWorkspaceFetches {
             sessionStore.fetchHerdrWorkspaces(for: id)
@@ -717,16 +721,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 guard !arrived.isEmpty else { return }
                 self.pendingPaletteWorkspaceFetches.subtract(arrived)
 
-                let arrivedSessions = self.sessionStore.sessions
-                    .filter { arrived.contains($0.id) }
-                    .map { PaletteItemAssembler.SessionEntry(id: $0.id, title: $0.displayTitle, status: self.sessionStore.agentStatus[$0.id] ?? .none) }
-                let newItems = PaletteItemAssembler.assemble(
-                    sessions: arrivedSessions,
-                    herdrWorkspaces: workspacesByID,
-                    workspaceStatus: self.sessionStore.paneStatusByWorkspaceID,
-                    actions: []
-                ).filter { $0.category == .herdrWorkspace }
-                self.switcherModel.append(newItems, forGeneration: generation)
+                for sessionID in arrived {
+                    guard let session = self.sessionStore.sessions.first(where: { $0.id == sessionID }) else { continue }
+                    let entry = PaletteItemAssembler.SessionEntry(
+                        id: session.id,
+                        title: session.displayTitle,
+                        status: self.sessionStore.agentStatus[session.id] ?? .none
+                    )
+                    let newItems = PaletteItemAssembler.assemble(
+                        sessions: [entry],
+                        herdrWorkspaces: [sessionID: workspacesByID[sessionID] ?? []],
+                        workspaceStatus: self.sessionStore.paneStatusByWorkspaceID,
+                        actions: []
+                    ).filter { $0.category == .herdrWorkspace }
+                    self.switcherModel.replaceWorkspaces(newItems, forSessionID: sessionID, forGeneration: generation)
+                }
 
                 if self.pendingPaletteWorkspaceFetches.isEmpty { self.herdrWorkspacesObserver = nil }
             }

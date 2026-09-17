@@ -202,4 +202,97 @@ final class SessionSwitcherModelTests: XCTestCase {
         XCTAssertEqual(model.query, "session")
         XCTAssertEqual(model.highlighted, 1)
     }
+
+    // MARK: Workspace refresh (bug: ⌘K never re-queries a herdr session
+    // whose workspaces were already cached -- see `fetchHerdrWorkspaces`'s
+    // "once" fetch-on-expand behavior and `showSessionSwitcher`'s cache-only
+    // filter in App.swift)
+
+    private func workspaceItem(_ title: String, sessionID: UUID, workspaceID: String) -> PaletteItem {
+        PaletteItem(
+            id: "workspace:\(sessionID.uuidString):\(workspaceID)",
+            title: title,
+            subtitle: nil,
+            category: .herdrWorkspace,
+            status: .none,
+            kind: .focusHerdrWorkspace(sessionID: sessionID, workspaceID: workspaceID)
+        )
+    }
+
+    func test_replaceWorkspaces_swapsOutStaleRowsForOneSession_leavesOthersUntouched() {
+        let model = SessionSwitcherModel()
+        let staleSessionID = UUID()
+        let otherSessionID = UUID()
+        let generation = model.reset(items: [
+            item("alpha"),
+            workspaceItem("old-workspace", sessionID: staleSessionID, workspaceID: "w1"),
+            workspaceItem("other-session-workspace", sessionID: otherSessionID, workspaceID: "w9")
+        ])
+
+        model.replaceWorkspaces(
+            [
+                workspaceItem("old-workspace", sessionID: staleSessionID, workspaceID: "w1"),
+                workspaceItem("new-workspace", sessionID: staleSessionID, workspaceID: "w2")
+            ],
+            forSessionID: staleSessionID,
+            forGeneration: generation
+        )
+
+        XCTAssertEqual(model.matches.map(\.title), [
+            "alpha", "other-session-workspace", "old-workspace", "new-workspace"
+        ])
+    }
+
+    func test_replaceWorkspaces_staleGeneration_afterAReset_isANoOp() {
+        let model = SessionSwitcherModel()
+        let sessionID = UUID()
+        let staleGeneration = model.reset(items: [
+            workspaceItem("old-workspace", sessionID: sessionID, workspaceID: "w1")
+        ])
+        model.reset(items: [item("beta")]) // palette closed and reopened
+
+        model.replaceWorkspaces(
+            [workspaceItem("new-workspace", sessionID: sessionID, workspaceID: "w2")],
+            forSessionID: sessionID,
+            forGeneration: staleGeneration
+        )
+
+        XCTAssertEqual(model.matches.map(\.title), ["beta"])
+    }
+
+    func test_replaceWorkspaces_preservesTheCurrentQueryAndHighlight() {
+        let model = SessionSwitcherModel()
+        let sessionID = UUID()
+        let generation = model.reset(items: [
+            item("session-one"),
+            item("session-two"),
+            workspaceItem("old-workspace", sessionID: sessionID, workspaceID: "w1")
+        ])
+        model.query = "session" // matches the two session rows, not the workspace rows
+        model.moveDown()
+        XCTAssertEqual(model.highlighted, 1)
+
+        model.replaceWorkspaces(
+            [workspaceItem("new-workspace", sessionID: sessionID, workspaceID: "w2")],
+            forSessionID: sessionID,
+            forGeneration: generation
+        )
+
+        XCTAssertEqual(model.query, "session")
+        XCTAssertEqual(model.highlighted, 1)
+    }
+
+    func test_replaceWorkspaces_sessionHadNoPriorWorkspaceRows_behavesLikeAppend() {
+        let model = SessionSwitcherModel()
+        let sessionID = UUID()
+        let generation = model.reset(items: [item("alpha")])
+
+        model.replaceWorkspaces(
+            [workspaceItem("first-workspace", sessionID: sessionID, workspaceID: "w1")],
+            forSessionID: sessionID,
+            forGeneration: generation
+        )
+
+        XCTAssertEqual(model.matches.map(\.title), ["alpha", "first-workspace"])
+    }
 }
