@@ -1,0 +1,151 @@
+# Terminal multiplexer backends
+
+A durable reference for what each terminal-multiplexer backend Vakta talks to
+can actually do, framed as capabilities. Vakta discovers, attaches to, and
+introspects sessions living inside a multiplexer (herdr today; tmux partially;
+others later). This file records which of those operations each backend
+supports, how it addresses a specific server, and where the equivalents differ
+-- so adding the next tool (rmux, zellij, ...) is a matter of answering the
+same checklist and adding a column, not rediscovering it.
+
+See also: [architecture.md](architecture.md) for the codebase's cross-cutting
+invariants, and [herdr-events-plan.md](herdr-events-plan.md) for the herdr
+event-subscription design specifically.
+
+## How Vakta models a backend
+
+A backend is a **value type, not a subclass.** `MultiplexerTarget`
+(`Sources/Vakta/LaunchTarget.swift`) is resolved from a `Profile` alone (no
+process execution) and carries the backend kind plus everything needed to
+address one specific server: the executable path verbatim, tmux socket
+flags, and the profile's environment. For the operations it models today, it
+vends the argv and returns `nil` where a backend has no equivalent.
+
+This is deliberate. The variation is **per session, not per store**: one
+Vakta window hosts a heterogeneous list -- a herdr session, a tmux session,
+and a plain shell -- managed by a single `SessionStore`. Subclassing the store
+cannot express "this window has one of each." A capability model can: a
+backend opts into a feature by vending argv (or a client) for it, rather than
+by its command name. `SessionDiscovery.names(for:)` consumes a resolved target
+for both herdr and tmux; the argv switch lives on the target (`discoveryArgv`)
+and the output-parse switch lives in `SessionDiscovery`.
+
+**Current state (2026-09-18).** The model is only partly realized in code.
+On the target today: `discoveryArgv`, `statusArgv`, `workspaceListArgv`,
+`workspaceFocusArgv` (the last three `nil` for non-herdr backends,
+`LaunchTarget.swift:75-92`). *Not* on the target: attach is the profile's
+`arguments` template (`Profile.swift`), and the event stream is a
+`HerdrEventStreamClient` constructed directly (`SessionStore.swift:740`). Two
+`SessionStore` sites still gate on the command name rather than a capability --
+`pollAgentStatus` (`:478`) and `startHerdrEventClientIfApplicable` (`:736`),
+both `lastPathComponent == "herdr"` -- and the sidebar/palette gate on
+`target.backend == .herdr` (`SidebarView.swift:364`, `App.swift:721`) rather
+than on `workspaceListArgv != nil`. So "opts in by capability, not by name" is
+the intended end state, not a description of every call site as it stands.
+
+## The capability checklist
+
+Answer these for any backend. Each maps to a `MultiplexerTarget` member or a
+shell integration point; a capability a backend lacks is a legitimate `nil`,
+not a gap to paper over.
+
+1. **List sessions** -- enumerate the servers/sessions this target hosts.
+2. **Attach** -- re-attach a running session into a Vakta terminal.
+3. **Custom server addressing** -- how a profile points at one specific server
+   instance rather than the default.
+4. **Workspace analogue** -- the backend's sub-session grouping (herdr
+   workspaces; tmux windows; zellij tabs), if any: enumerate + focus.
+5. **Agent status** -- a per-pane "what agent/command is running" signal, if the
+   backend exposes one natively.
+6. **Event stream** -- an external, subscribable stream of session/pane changes
+   (drives live sidebar updates instead of polling), if any.
+
+## Capability matrix
+
+Verified against the binaries on a developer machine on 2026-09-18: **tmux
+3.7b**, **zellij 0.45.1**. herdr reflects Vakta's current integration. Probes
+to reproduce: `tmux list-commands`, `man tmux` (§ CONTROL MODE), `zellij
+--help`, `zellij action --help`, and per-subcommand `--help`.
+
+| Capability | herdr | tmux 3.7b | zellij 0.45.1 |
+|---|---|---|---|
+| **List sessions** | `session list` | `list-sessions` | `list-sessions -n -s` (`--no-formatting --short` for parsing) |
+| **Attach** | attach via profile `arguments` | `attach-session -t <name>` (built-in profile uses `new-session -A -s`) | `attach -c <name>` (create-if-absent); also `watch` (read-only) |
+| **Custom server addressing** | `--session <name>` global flag (per-session socket); `HERDR_SOCKET_PATH` honored only by bare invocations like `session list` | `-S <socket-path>` / `-L <socket-name>` | `--session <name>` global flag; `ZELLIJ_SOCKET_DIR` env — no `-S`/`-L` |
+| **Workspace analogue** | native workspaces (`workspace list`) | **windows**: `list-windows -t <session>` | **tabs**: `action list-tabs --json` (also `query-tab-names`) |
+| **Focus workspace** | `workspace focus <id>` | `select-window` / `switch-client` | `action go-to-tab-name` / `go-to-tab-by-id` |
+| **Agent status** | native `agent list` | none native — derivable from `list-panes -F '#{pane_current_command}'` | none native — derivable from `list-panes -c -j` (running command per pane) |
+| **Event stream** | socket subscription (`HerdrEventStreamClient`) | control mode `tmux -C` / `-CC` (`%output`, `%window-add`, `%session-changed`, `%layout-change`, …) | `subscribe --pane-id … --format json` (render/scrollback updates) |
+
+zellij's `--session <name>` global flag reads "Specify name of a new session"
+in `--help`, but it also targets an existing session for `action` and
+`subscribe` (whose usage is `zellij [--session <OTHER SESSION NAME>]
+subscribe …`).
+
+## Per-capability notes
+
+**List sessions is universal** and already backend-agnostic in code:
+`MultiplexerTarget.discoveryArgv` builds the argv, `SessionDiscovery` runs it
+and switches only on output parsing (`parseHerdr` vs `parseLines`). zellij fits
+the same shape.
+
+**The workspace analogue is a shared concept with a different noun per
+backend** -- herdr workspaces, tmux windows, zellij tabs -- but all three
+enumerate directly: herdr `workspace list`, tmux `list-windows -t <session>`,
+zellij `action list-tabs --json`. So it's "argv + a per-backend parser" across
+the board, mirroring the discovery split; there's no zellij-specific
+asymmetry here.
+
+**Agent status is herdr-specific as a native concept.** Neither tmux nor
+zellij has an "agent" idea, but both can synthesize a per-pane running command
+-- tmux `list-panes -F '#{pane_current_command}'`, zellij `list-panes -c -j`.
+Whether that's worth wiring up is a separate question; today, for these
+backends, `statusArgv` returns `nil`.
+
+**Event streams exist in all three but are not the same abstraction.** herdr's
+is a structural session/pane event socket. tmux control mode (`-C`, or `-CC`
+to disable echo) is the canonical structural stream: a client that emits
+`%`-prefixed notifications for output, window/session/layout changes. zellij's
+`subscribe` is **render/scrollback-oriented** (`--format json` available) --
+"what changed on screen," closer to output than to structural events. A
+backend's event capability is therefore "vends a stream of shape X," not one
+shared wire protocol.
+
+**Server addressing: herdr and zellij share a model; tmux is the outlier.**
+Both herdr and zellij address a server by **session name as a global
+`--session` flag** -- every herdr `MultiplexerTarget` argv except
+`discoveryArgv` passes `--session <name>` (`LaunchTarget.swift:77,84,91`), and
+`Profile.herdr` deliberately scrubs `HERDR_SOCKET_PATH` (`Profile.swift:163`)
+so it can't silently redirect. tmux is the one that addresses a distinct
+server by socket, `-S <path>` / `-L <name>` (already modeled on
+`MultiplexerTarget`). A new backend may introduce yet another mode.
+
+## Adding a backend
+
+1. Answer the six checklist questions above from the tool's own CLI (`--help`,
+   `list-commands`, man page) and add a matrix column with the date verified.
+2. Add the backend to `MultiplexerTarget.Backend` and its `discoveryArgv` /
+   `*Argv` members; return `nil` for capabilities the tool lacks.
+3. Add output parsing to `SessionDiscovery` (and any workspace/status parser)
+   for the tool's specific format.
+4. If the tool has an event stream, model it as a capability the target vends,
+   alongside the existing `HerdrEventStreamClient` rather than special-casing
+   the command name.
+
+The remaining command-name checks that a new backend would trip over live at
+`SessionStore.swift:478` and `:736` (both `lastPathComponent == "herdr"`), plus
+the `backend == .herdr` kind checks at `SidebarView.swift:364` and
+`App.swift:721`. No live ticket tracks routing these through capability
+queries; the earlier cleanup epic (`vakta#mkwv`) is closed. See "Current
+state" above.
+
+## Where it lives in the code
+
+- `Sources/Vakta/LaunchTarget.swift` — `MultiplexerTarget`, `Backend`,
+  per-operation argv, `LaunchTargetResolver`.
+- `Sources/Vakta/SessionDiscovery.swift` — session listing + per-backend parse.
+- `Sources/Vakta/HerdrWorkspace.swift`, `AgentStatus.swift` — herdr workspace
+  and agent-status queries (the `nil`-for-other-backends capabilities today).
+- `Sources/Vakta/HerdrEventStreamClient.swift` — the herdr event stream.
+- `Sources/Vakta/SessionStore.swift` — the shell that orchestrates all of the
+  above per session.

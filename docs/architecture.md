@@ -9,7 +9,9 @@ the same change.
 See also: [README.md](../README.md) for build/run/release instructions,
 [docs/testing.md](testing.md) for the test coverage plan and desktop
 regression checklist, and [docs/swift-practices.md](swift-practices.md) for
-Swift-level engineering rules (concurrency, persistence, compatibility).
+Swift-level engineering rules (concurrency, persistence, compatibility), and
+[docs/multiplexer-backends.md](multiplexer-backends.md) for the per-backend
+capability survey (herdr/tmux/zellij and how to add another).
 
 ## Shape of the codebase
 
