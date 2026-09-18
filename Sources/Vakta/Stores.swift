@@ -19,6 +19,7 @@ final class Stores {
     let unreadTrackingSettings: UnreadTrackingSettingsStore
     let terminalSettings: TerminalSettingsStore
     let herdrPreferences: HerdrPreferencesStore
+    let editorPreferences: EditorPreferencesStore
     let sessionStore: SessionStore
     let workspaceRefreshMonitor: WorkspaceRefreshMonitor
     let persistenceFailures = PersistenceFailureCenter()
@@ -37,6 +38,7 @@ final class Stores {
         unreadTrackingSettings = UnreadTrackingSettingsStore(root: root)
         terminalSettings = TerminalSettingsStore(root: root)
         herdrPreferences = HerdrPreferencesStore(root: root)
+        editorPreferences = EditorPreferencesStore(root: root)
         // `sessionStore` needs `terminalSettings`/`unreadTrackingSettings`
         // (already initialized above).
         sessionStore = SessionStore(
@@ -59,6 +61,7 @@ extension View {
             .environmentObject(stores.unreadTrackingSettings)
             .environmentObject(stores.terminalSettings)
             .environmentObject(stores.herdrPreferences)
+            .environmentObject(stores.editorPreferences)
             .environmentObject(stores.sessionStore)
             .environmentObject(stores.sessionStore.notifier)
             .environmentObject(stores.persistenceFailures)

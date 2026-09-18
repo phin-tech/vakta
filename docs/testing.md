@@ -81,6 +81,8 @@ counts calls is an interaction mock, not a state-based substitute.
 | Release/install — `9w8w` | Valid/invalid tag/manual versions; no/partial/full signing field sets with synthetic values | Validate generated bundle/artifact version; workflow branches; staged install failure preserves prior app; use temporary app roots, never production credentials or `/Applications` in tests |
 | Unread-pane navigation and bell — `apdk`, `rcnw` | `UnreadAttentionPolicy.shouldMarkUnread` against an arbitrary `trackedStatuses: Set<AgentStatus>` (deliberately independent of notifyOnAttention/bounceDock; first observation counts as unread -- a session already blocked/waiting on reattach must still surface, confirmed live: a workspace can be `.attention` while a *different* workspace sharing the same herdr session has focus); `UnreadTrackingSettings.trackedStatuses` derivation from its four toggles; `NextUnreadSessionPlanner.next` wraparound; `HerdrAgentStatus.panes` per-pane decode (workspace id, cwd-derived label, herdr's own `focused` flag, missing-field fallbacks) | `SessionStore`'s per-pane wiring (`applyPaneUpdates`: mark/opportunistic-clear composing session selection with herdr's per-pane `focused`, `focusUnreadPane`, `applicationDidBecomeActive`, `paneStatusByWorkspaceID` for the disclosure rows' own status) and the bell popover aren't independently unit-tested -- same constraint as the rest of `SessionStore`/`SidebarView`; `UnreadTrackingSettingsStore` first-launch seed/corrupt-file recovery/immediate persist, matching every other settings store; verify via the desktop regression checklist |
 
+| Open in Editor — ticket pending | `MultiplexerTarget.activePaneWorkingDirectoryArgv` per backend (capability #7, docs/multiplexer-backends.md); `ActivePaneWorkingDirectoryQuery.parse` -- herdr's `pane current` envelope (success, `server_not_running`, other error codes, malformed/empty), tmux's single-line `#{pane_current_path}` output; `WorkingDirectoryResolver.resolve`'s multiplexer→OSC-7→profile-launch-directory precedence, including an empty OSC-7 string treated as unknown; `OpenInEditorPlanner.plan`'s `.auto` resolution order (project marker → `$EDITOR`/`$VISUAL` → first installed in a fixed list, each step falling through when it names an editor that isn't installed) and every failure outcome (`.noWorkingDirectory`/`.directoryMissing` checked before editor resolution, `.noEditorInstalled` for an uninstalled explicit choice); `EditorPreferences`/`EditorChoice` decode-missing-field migration and round trip | `ActivePaneWorkingDirectoryQuery.query` against a fixture executable, including the regression case that a non-zero exit with herdr's error envelope on stdout still yields `.serverNotRunning` rather than `.malformed` (confirmed live: herdr exits 1 with the error JSON on stdout for `server_not_running`) -- this is why the query is built on `BoundedProcessRunner.runRaw` rather than `ProcessRunner`, which discards stdout on any non-zero exit. `SessionStore.resolveOpenInEditor`'s snapshot/dispatch/stale-completion-guard wiring, `EditorLaunchAdapter`'s `NSWorkspace` installed-editor lookup and launch, and the ⌘K action/Session-menu item/Preferences picker are checklist-verified only, matching `SessionStore`'s existing 0%-coverage rationale -- see the desktop regression checklist |
+
 ## Desktop regression checklist
 
 Run this after changes to terminal hosting, lifecycle, keyboard handling, or live
@@ -107,6 +109,13 @@ configuration. Record the macOS/toolchain/app revision and which steps were chec
    repeated requests. Relaunch and verify the intended workspace recovery.
 6. With disposable agent sessions, check mixed working/waiting status, notification
    toggles, permission denial, click activation, and removal while a poll is pending.
+7. Run "Open in Editor" (Session menu and ⌘K) against a herdr session, a tmux
+   session, and a plain shell profile, with the Editor preference set to
+   "Automatic" and to an explicit editor. Confirm it opens the focused pane's
+   actual directory, not the session's launch directory, after `cd`-ing
+   inside the pane. Confirm each failure outcome surfaces visibly: no editor
+   installed, no working directory resolvable, and a directory removed out
+   from under the session.
 
 Where automated desktop integration exists, record its results in place of the
 equivalent manual step. Keep tests isolated from the user's live sessions.

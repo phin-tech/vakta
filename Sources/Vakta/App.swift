@@ -53,6 +53,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var notificationSettings: NotificationSettingsStore { stores.notificationSettings }
     private var terminalSettings: TerminalSettingsStore { stores.terminalSettings }
     private var workspaceRefreshMonitor: WorkspaceRefreshMonitor { stores.workspaceRefreshMonitor }
+    private var editorPreferences: EditorPreferencesStore { stores.editorPreferences }
 
     /// The AppKit sidebar/terminal chrome whose colors follow the terminal
     /// theme; re-applied when it changes (SwiftUI parts update themselves).
@@ -530,6 +531,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         switcherItem.target = self
         sessionMenu.addItem(switcherItem)
 
+        // No keyEquivalent, per this method's doc comment; a rebindable
+        // shortcut would go through `KeybindingMatcher`, not here.
+        sessionMenu.addItem(.separator())
+        let openInEditorItem = NSMenuItem(
+            title: "Open in Editor",
+            action: #selector(openInEditor),
+            keyEquivalent: ""
+        )
+        openInEditorItem.target = self
+        sessionMenu.addItem(openInEditorItem)
+
         sessionMenuItem.submenu = sessionMenu
         mainMenu.addItem(sessionMenuItem)
 
@@ -577,6 +589,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.messageText = title
         alert.informativeText = message
         alert.alertStyle = .critical
+        alert.runModal()
+    }
+
+    /// Non-fatal user-facing errors (e.g. "Open in Editor" failure
+    /// outcomes) -- same mechanism as `presentFatalAlert`, a `.warning`
+    /// style instead of `.critical`.
+    private func presentAlert(_ title: String, _ message: String) {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = message
+        alert.alertStyle = .warning
         alert.runModal()
     }
 
@@ -715,6 +738,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         PaletteAction(id: "newSession", title: "New Session"),
         PaletteAction(id: "toggleSidebar", title: "Toggle Sidebar"),
         PaletteAction(id: "openPreferences", title: "Open Preferences"),
+        PaletteAction(id: "openInEditor", title: "Open in Editor"),
         PaletteAction(id: "increaseFontSize", title: "Increase Font Size"),
         PaletteAction(id: "decreaseFontSize", title: "Decrease Font Size"),
         PaletteAction(id: "resetFontSize", title: "Reset Font Size")
@@ -862,10 +886,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case "newSession": sessionStore.createSession()
         case "toggleSidebar": toggleSidebar()
         case "openPreferences": showPreferences()
+        case "openInEditor": openInEditor()
         case "increaseFontSize": increaseFontSize()
         case "decreaseFontSize": decreaseFontSize()
         case "resetFontSize": resetFontSize()
         default: break
+        }
+    }
+
+    // MARK: Open in Editor
+
+    /// Resolves the selected session's focused-pane working directory
+    /// (herdr/tmux active-pane query, falling back through OSC-7/profile
+    /// launch directory) and launches it in the preferred editor. Every
+    /// failure outcome surfaces to the user rather than a silent no-op.
+    @objc private func openInEditor() {
+        guard let id = sessionStore.selectedID else { return }
+        let installed = EditorLaunchAdapter.installedEditors()
+        sessionStore.resolveOpenInEditor(
+            for: id,
+            editorChoice: editorPreferences.choice,
+            installedEditors: installed
+        ) { [weak self] outcome in
+            self?.handleOpenInEditorOutcome(outcome)
+        }
+    }
+
+    private func handleOpenInEditorOutcome(_ outcome: OpenInEditorOutcome) {
+        switch outcome {
+        case .open(let editor, let directory):
+            EditorLaunchAdapter.open(directory, with: editor)
+        case .noEditorInstalled:
+            presentAlert(
+                "No Editor Available",
+                "Install an editor, or choose one that's installed under Preferences ▸ Editor."
+            )
+        case .noWorkingDirectory:
+            presentAlert(
+                "Couldn't Determine Working Directory",
+                "Vakta couldn't find the focused pane's working directory for this session."
+            )
+        case .directoryMissing:
+            presentAlert(
+                "Directory Not Found",
+                "The focused pane's working directory no longer exists on disk."
+            )
         }
     }
 

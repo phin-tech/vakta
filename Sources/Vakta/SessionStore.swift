@@ -982,6 +982,114 @@ final class SessionStore: ObservableObject {
         select(id)
     }
 
+    /// Resolves "Open in Editor"'s outcome for `id`: queries a multiplexer
+    /// target's active pane (off the main thread) when one applies, falls
+    /// back through OSC-7/profile launch directory via
+    /// `WorkingDirectoryResolver`, then plans which editor to launch via
+    /// `OpenInEditorPlanner`. `installedEditors` is supplied by the caller
+    /// (`EditorLaunchAdapter.installedEditors()`) -- this store has no
+    /// AppKit/`NSWorkspace` dependency. `WorkspaceFetchPlanner.shouldApply`
+    /// (reused, not workspace-specific despite the name) drops the result if
+    /// `id` was closed while the query was in flight.
+    func resolveOpenInEditor(
+        for id: Session.ID,
+        editorChoice: EditorChoice,
+        installedEditors: Set<EditorChoice>,
+        completion: @escaping (OpenInEditorOutcome) -> Void
+    ) {
+        guard let session = sessions.first(where: { $0.id == id }) else { return }
+        let terminalReportedWorkingDirectory = session.viewState.workingDirectory
+        let profileWorkingDirectory = session.profile.workingDirectory
+        let sessionName = session.sessionName
+        let path = resolvedPATH
+        let target: MultiplexerTarget?
+        if case .multiplexer(let resolved) = LaunchTargetResolver.resolve(session.profile),
+           resolved.activePaneWorkingDirectoryArgv(sessionName: sessionName) != nil {
+            target = resolved
+        } else {
+            target = nil
+        }
+
+        // Both branches below dispatch to a nonisolated global-queue closure
+        // (a closure LITERAL, not a local function -- a local function
+        // nested in this `@MainActor` method would silently inherit that
+        // isolation and hop straight back, defeating the point of
+        // dispatching at all) and hand the outcome to `completion` via
+        // `DispatchQueue.main.async`, guarded by the same stale-completion
+        // check `fetchWorkspaces` uses.
+        guard let target else {
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                let outcome = Self.planOpenInEditor(
+                    multiplexerResult: nil,
+                    terminalReportedWorkingDirectory: terminalReportedWorkingDirectory,
+                    profileWorkingDirectory: profileWorkingDirectory,
+                    editorChoice: editorChoice,
+                    installedEditors: installedEditors
+                )
+                DispatchQueue.main.async {
+                    guard let self, WorkspaceFetchPlanner.shouldApply(sessionID: id, liveSessionIDs: Set(self.sessions.map(\.id)))
+                    else { return }
+                    completion(outcome)
+                }
+            }
+            return
+        }
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let result = ActivePaneWorkingDirectoryQuery.query(
+                sessionName: sessionName,
+                target: target,
+                path: path,
+                isCancelled: { self?.isShuttingDown ?? true }
+            )
+            let outcome = Self.planOpenInEditor(
+                multiplexerResult: result,
+                terminalReportedWorkingDirectory: terminalReportedWorkingDirectory,
+                profileWorkingDirectory: profileWorkingDirectory,
+                editorChoice: editorChoice,
+                installedEditors: installedEditors
+            )
+            DispatchQueue.main.async {
+                guard let self, WorkspaceFetchPlanner.shouldApply(sessionID: id, liveSessionIDs: Set(self.sessions.map(\.id)))
+                else { return }
+                completion(outcome)
+            }
+        }
+    }
+
+    /// Off-actor by design (see `resolveOpenInEditor`): the working-directory
+    /// resolution and `OpenInEditorPlanner.plan` call are pure/file-IO-only,
+    /// never touching `SessionStore`'s own state.
+    nonisolated private static func planOpenInEditor(
+        multiplexerResult: ActivePaneWorkingDirectoryResult?,
+        terminalReportedWorkingDirectory: String?,
+        profileWorkingDirectory: String?,
+        editorChoice: EditorChoice,
+        installedEditors: Set<EditorChoice>
+    ) -> OpenInEditorOutcome {
+        let workingDirectory = WorkingDirectoryResolver.resolve(
+            multiplexerResult: multiplexerResult,
+            terminalReportedWorkingDirectory: terminalReportedWorkingDirectory,
+            profileWorkingDirectory: profileWorkingDirectory
+        )
+        let directoryExists = workingDirectory.map { FileManager.default.fileExists(atPath: $0) } ?? false
+        let directoryEntries = workingDirectory
+            .flatMap { try? FileManager.default.contentsOfDirectory(atPath: $0) } ?? []
+        // Vakta's own process environment -- a GUI launch rarely carries the
+        // user's shell `$EDITOR`/`$VISUAL` (the same reason `ShellEnvironment`
+        // exists for PATH), so this is best-effort: absent here just means
+        // the auto-resolution step is skipped.
+        let editorEnvironmentCommand = ProcessInfo.processInfo.environment["VISUAL"]
+            ?? ProcessInfo.processInfo.environment["EDITOR"]
+        return OpenInEditorPlanner.plan(
+            choice: editorChoice,
+            installedEditors: installedEditors,
+            workingDirectory: workingDirectory,
+            directoryExists: directoryExists,
+            directoryEntries: directoryEntries,
+            editorEnvironmentCommand: editorEnvironmentCommand
+        )
+    }
+
     /// Adds a new profile or replaces the existing one with the same id.
     /// Adds a new profile or replaces the existing one with the same id.
     /// Refreshes discovery so a command/arguments/environment edit that

@@ -17,6 +17,7 @@ enum PreferencesSection: String, CaseIterable, Identifiable {
     case notifications
     case keybindings
     case herdr
+    case editor
 
     var id: String { rawValue }
 
@@ -28,6 +29,7 @@ enum PreferencesSection: String, CaseIterable, Identifiable {
         case .notifications: return "Notifications"
         case .keybindings: return "Keybindings"
         case .herdr: return "Herdr"
+        case .editor: return "Editor"
         }
     }
 
@@ -40,6 +42,7 @@ enum PreferencesSection: String, CaseIterable, Identifiable {
         case .notifications: return "bell"
         case .keybindings: return "keyboard"
         case .herdr: return "rectangle.on.rectangle"
+        case .editor: return "chevron.left.forwardslash.chevron.right"
         }
     }
 }
@@ -70,6 +73,8 @@ struct PreferencesView: View {
                 KeybindingsPreferencesView()
             case .herdr:
                 HerdrPreferencesView()
+            case .editor:
+                EditorPreferencesView()
             }
         }
         // Tints controls (toggles, pickers, the section list's own selection

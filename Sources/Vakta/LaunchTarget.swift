@@ -122,6 +122,22 @@ struct MultiplexerTarget: Equatable {
         }
     }
 
+    /// The argv to find the currently focused pane's working directory, for
+    /// "Open in Editor" (`ActivePaneWorkingDirectoryQuery`). herdr's `pane
+    /// current` reports the server's own notion of "current" pane -- exactly
+    /// one `focused: true` pane per session, confirmed live against a
+    /// running session with a scrubbed PATH/HOME-only environment (no
+    /// `--pane`/tty dependence). tmux's `display-message` targets the
+    /// session's current window's active pane, tmux's closest equivalent.
+    func activePaneWorkingDirectoryArgv(sessionName: String) -> [String]? {
+        switch backend {
+        case .herdr:
+            return [executable, "--session", sessionName, "pane", "current"]
+        case .tmux:
+            return tmuxArgv(["display-message", "-p", "-t", sessionName, "#{pane_current_path}"])
+        }
+    }
+
     /// The Unix socket to subscribe an event stream to for `sessionName`, or
     /// `nil` for a backend with no equivalent (only herdr has one; tmux
     /// control mode is out of scope for this epic -- see

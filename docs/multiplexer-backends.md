@@ -97,6 +97,8 @@ not a gap to paper over.
    backend exposes one natively.
 6. **Event stream** -- an external, subscribable stream of session/pane changes
    (drives live sidebar updates instead of polling), if any.
+7. **Active pane working directory** -- the currently focused pane's cwd, for
+   a one-shot action (not a poll) like "Open in Editor."
 
 ## Capability matrix
 
@@ -114,6 +116,7 @@ to reproduce: `tmux list-commands`, `man tmux` (§ CONTROL MODE), `zellij
 | **Focus workspace** | `workspace focus <id>` | `select-window` / `switch-client` | `action go-to-tab-name` / `go-to-tab-by-id` |
 | **Agent status** | native `agent list` | none native — derivable from `list-panes -F '#{pane_current_command}'` | none native — derivable from `list-panes -c -j` (running command per pane) |
 | **Event stream** | socket subscription (`HerdrEventStreamClient`) | control mode `tmux -C` / `-CC` (`%output`, `%window-add`, `%session-changed`, `%layout-change`, …) | `subscribe --pane-id … --format json` (render/scrollback updates) |
+| **Active pane working directory** | `pane current` (`result.pane.cwd`/`foreground_cwd`; exactly one `focused: true` pane per session, confirmed live) | `display-message -p -t <session> '#{pane_current_path}'` | not surveyed — `action list-panes` likely carries a cwd field, unconfirmed |
 
 zellij's `--session <name>` global flag reads "Specify name of a new session"
 in `--help`, but it also targets an existing session for `action` and
@@ -149,6 +152,17 @@ to disable echo) is the canonical structural stream: a client that emits
 backend's event capability is therefore "vends a stream of shape X," not one
 shared wire protocol.
 
+**Active pane working directory is a one-shot query, not a poll -- and
+pane-level, not agent-level.** herdr's `pane current` (not `agent list`,
+which only covers panes hosting a detected agent and would miss a plain
+shell) reports exactly one globally-focused pane per session-wide query,
+confirmed live against a running session with a scrubbed `PATH`/`HOME`-only
+environment (no `--pane`/tty dependence). `ActivePaneWorkingDirectoryQuery`
+(`ActivePaneWorkingDirectory.swift`) is built on `BoundedProcessRunner.runRaw`
+directly rather than `ProcessRunner`: herdr writes its error envelope to
+stdout even on a non-zero exit code (confirmed live for
+`server_not_running`), which `ProcessRunner.run` would silently discard.
+
 **Server addressing: herdr and zellij share a model; tmux is the outlier.**
 Both herdr and zellij address a server by **session name as a global
 `--session` flag** -- every herdr `MultiplexerTarget` argv except
@@ -160,7 +174,7 @@ server by socket, `-S <path>` / `-L <name>` (already modeled on
 
 ## Adding a backend
 
-1. Answer the six checklist questions above from the tool's own CLI (`--help`,
+1. Answer the seven checklist questions above from the tool's own CLI (`--help`,
    `list-commands`, man page) and add a matrix column with the date verified.
 2. Add the backend to `MultiplexerTarget.Backend` and its `discoveryArgv` /
    `*Argv` members; return `nil` for capabilities the tool lacks.
