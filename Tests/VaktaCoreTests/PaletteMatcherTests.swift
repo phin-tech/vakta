@@ -40,7 +40,7 @@ final class PaletteMatcherTests: XCTestCase {
     }
 
     func test_matches_matchesSubtitle_evenWhenTitleDoesNot() {
-        let items = [item("guildhall", subtitle: "vakta-3f9c", category: .herdrWorkspace), item("data-platform", subtitle: "other-session", category: .herdrWorkspace)]
+        let items = [item("guildhall", subtitle: "vakta-3f9c", category: .workspace), item("data-platform", subtitle: "other-session", category: .workspace)]
 
         XCTAssertEqual(PaletteMatcher.matches(query: "3f9c", in: items).map(\.title), ["guildhall"])
     }

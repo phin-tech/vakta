@@ -204,7 +204,7 @@ final class SessionSwitcherModelTests: XCTestCase {
     }
 
     // MARK: Workspace refresh (bug: ⌘K never re-queries a herdr session
-    // whose workspaces were already cached -- see `fetchHerdrWorkspaces`'s
+    // whose workspaces were already cached -- see `fetchWorkspaces`'s
     // "once" fetch-on-expand behavior and `showSessionSwitcher`'s cache-only
     // filter in App.swift)
 
@@ -213,9 +213,9 @@ final class SessionSwitcherModelTests: XCTestCase {
             id: "workspace:\(sessionID.uuidString):\(workspaceID)",
             title: title,
             subtitle: nil,
-            category: .herdrWorkspace,
+            category: .workspace,
             status: .none,
-            kind: .focusHerdrWorkspace(sessionID: sessionID, workspaceID: workspaceID)
+            kind: .focusWorkspace(sessionID: sessionID, workspaceID: workspaceID)
         )
     }
 

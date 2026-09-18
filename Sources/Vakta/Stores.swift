@@ -20,6 +20,7 @@ final class Stores {
     let terminalSettings: TerminalSettingsStore
     let herdrPreferences: HerdrPreferencesStore
     let sessionStore: SessionStore
+    let workspaceRefreshMonitor: WorkspaceRefreshMonitor
     let persistenceFailures = PersistenceFailureCenter()
 
     /// `root` is resolved once by the caller (`AppDelegate`, which can fail
@@ -44,6 +45,7 @@ final class Stores {
             root: root,
             pathResolver: resolvedPATH
         )
+        workspaceRefreshMonitor = WorkspaceRefreshMonitor(sessionStore: sessionStore, herdrPreferences: herdrPreferences)
     }
 }
 

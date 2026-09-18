@@ -237,7 +237,19 @@ aggregation logic, no per-pane status cache.
 ## Follow-ups (not v1)
 
 - Live workspace-disclosure updates via `workspace.*` events, replacing the
-  current fetch-on-expand-only `HerdrWorkspaceQuery`.
+  current fetch-on-expand-only `HerdrWorkspaceQuery`. Partially superseded:
+  `WorkspaceRefreshMonitor` (`Sources/Vakta/WorkspaceRefreshTrigger.swift`)
+  now re-fetches a workspace-capable session (herdr or tmux) shortly after a
+  key/click reaches its terminal, debounced -- since tmux has no event
+  stream at all, this covers both backends without waiting on the herdr
+  spike below. Still open: a real `workspace.*` subscription would (a) catch
+  a switch driven from outside Vakta (another attached client, a script) and
+  (b) drop the passthrough heuristic's per-keystroke subprocess cost for
+  herdr specifically. Next step, unstarted: run `herdr api schema --json`
+  for candidate event types, then a raw-socket `events.subscribe` spike
+  against a live session while switching workspaces by hand (same method as
+  the 2026-09-16 spikes above), including checking whether
+  `pane.agent_status_changed` already fires on focus change.
 - `pane.output_matched` for a "notify when this pane's output matches X"
   primitive, if a future feature wants it (e.g. "notify when the build
   finishes" independent of agent status).

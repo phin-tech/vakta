@@ -142,9 +142,9 @@ final class LaunchTargetShellTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: outputDirectory.appendingPathComponent("argv").path))
     }
 
-    // MARK: HerdrWorkspaceQuery
+    // MARK: WorkspaceQuery
 
-    func test_herdrWorkspaceQuery_usesTargetsExecutableAndEnvironment() {
+    func test_workspaceQuery_usesTargetsExecutableAndEnvironment() {
         let script = """
         #!/bin/sh
         : > "$OUT/argv"
@@ -164,30 +164,92 @@ final class LaunchTargetShellTests: XCTestCase {
             environment: ["MARKER": "workspace-poll", "OUT": outputDirectory.path]
         )
 
-        let workspaces = HerdrWorkspaceQuery.workspaces(sessionName: "my-session", target: target, path: "/usr/bin:/bin")
+        let workspaces = WorkspaceQuery.workspaces(sessionName: "my-session", target: target, path: "/usr/bin:/bin")
 
-        XCTAssertEqual(workspaces, [HerdrWorkspace(id: "w2C", label: "guildhall", focused: true)])
+        XCTAssertEqual(workspaces, [Workspace(id: "w2C", label: "guildhall", focused: true)])
         XCTAssertEqual(readOutput("argv"), "--session\nmy-session\nworkspace\nlist")
         XCTAssertEqual(readOutput("marker"), "workspace-poll")
     }
 
-    func test_herdrWorkspaceQuery_tmuxTarget_returnsNilWithoutRunningAnything() {
+    func test_workspaceQuery_tmuxTarget_listsWindows_usingTargetsExecutableAndEnvironment() {
+        let script = """
+        #!/bin/sh
+        : > "$OUT/argv"
+        for a in "$@"; do
+            printf '%s\\n' "$a" >> "$OUT/argv"
+        done
+        printf '%s\\n' "${MARKER-<absent>}" > "$OUT/marker"
+        printf '@1|guildhall|1\\n@2|vakta|0\\n'
+        """
+        try? script.write(to: captureURL, atomically: true, encoding: .utf8)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: captureURL.path)
+
         let target = MultiplexerTarget(
             backend: .tmux,
             executable: captureURL.path,
             tmuxSocketPath: nil,
-            environment: ["OUT": outputDirectory.path]
+            environment: ["MARKER": "workspace-poll", "OUT": outputDirectory.path]
         )
 
-        let workspaces = HerdrWorkspaceQuery.workspaces(sessionName: "my-session", target: target, path: "/usr/bin:/bin")
+        let workspaces = WorkspaceQuery.workspaces(sessionName: "my-session", target: target, path: "/usr/bin:/bin")
 
-        XCTAssertNil(workspaces)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: outputDirectory.appendingPathComponent("argv").path))
+        XCTAssertEqual(
+            workspaces,
+            [
+                Workspace(id: "@1", label: "guildhall", focused: true),
+                Workspace(id: "@2", label: "vakta", focused: false),
+            ]
+        )
+        XCTAssertEqual(
+            readOutput("argv"),
+            "list-windows\n-t\nmy-session\n-F\n#{window_id}|#{window_name}|#{window_active}"
+        )
+        XCTAssertEqual(readOutput("marker"), "workspace-poll")
     }
 
-    // MARK: HerdrWorkspaceFocus
+    func test_workspaceQuery_realTmuxServer_windowNamesSurviveTheDefaultProcessEnvironment() throws {
+        // Regression test for a real bug: `ProcessRunner.run` deliberately
+        // sets only `PATH`/`HOME` (see its doc comment) -- no `LANG`/
+        // `LC_ALL`. Confirmed live against tmux 3.7b: without a UTF-8 locale
+        // in the environment, tmux's `-F` format engine silently substitutes
+        // "unprintable" bytes (including a tab delimiter) with `_`, which
+        // would corrupt a tab-separated format and previously produced zero
+        // parsed workspaces from a real 3-window session despite the raw
+        // command succeeding when run interactively. `workspaceListArgv`
+        // uses `|`, a plain printable delimiter, specifically to survive
+        // this. The fixture-script test above can't catch this class of bug
+        // (it doesn't invoke real tmux), so this one runs an actual tmux
+        // server on a throwaway socket.
+        guard let tmuxPath = ["/opt/homebrew/bin/tmux", "/usr/local/bin/tmux", "/usr/bin/tmux"]
+            .first(where: { FileManager.default.isExecutableFile(atPath: $0) })
+        else {
+            throw XCTSkip("tmux not found on this machine")
+        }
 
-    func test_herdrWorkspaceFocus_usesTargetsExecutableAndEnvironment_andReportsSuccess() {
+        let socketName = "vakta-test-\(UUID().uuidString.prefix(8))"
+        func tmux(_ args: [String]) {
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: tmuxPath)
+            p.arguments = ["-L", socketName] + args
+            try? p.run()
+            p.waitUntilExit()
+        }
+        tmux(["new-session", "-d", "-s", "probe", "-n", "editor"])
+        tmux(["new-window", "-t", "probe", "-n", "build"])
+        defer { tmux(["kill-server"]) }
+
+        let target = MultiplexerTarget(backend: .tmux, executable: tmuxPath, tmuxSocketName: socketName, environment: [:])
+
+        let workspaces = try XCTUnwrap(WorkspaceQuery.workspaces(sessionName: "probe", target: target, path: "/usr/bin:/bin"))
+
+        XCTAssertEqual(workspaces.map(\.label), ["editor", "build"])
+        XCTAssertEqual(workspaces.map(\.focused), [false, true])
+        XCTAssertTrue(workspaces.allSatisfy { $0.id.hasPrefix("@") })
+    }
+
+    // MARK: WorkspaceFocus
+
+    func test_workspaceFocus_usesTargetsExecutableAndEnvironment_andReportsSuccess() {
         let script = """
         #!/bin/sh
         : > "$OUT/argv"
@@ -207,7 +269,7 @@ final class LaunchTargetShellTests: XCTestCase {
             environment: ["MARKER": "workspace-focus", "OUT": outputDirectory.path]
         )
 
-        let succeeded = HerdrWorkspaceFocus.focus(
+        let succeeded = WorkspaceFocus.focus(
             sessionName: "my-session",
             target: target,
             workspaceID: "ws-1",
@@ -219,7 +281,7 @@ final class LaunchTargetShellTests: XCTestCase {
         XCTAssertEqual(readOutput("marker"), "workspace-focus")
     }
 
-    func test_herdrWorkspaceFocus_nonZeroExit_reportsFailure() {
+    func test_workspaceFocus_nonZeroExit_reportsFailure() {
         let script = """
         #!/bin/sh
         exit 1
@@ -234,7 +296,7 @@ final class LaunchTargetShellTests: XCTestCase {
             environment: ["OUT": outputDirectory.path]
         )
 
-        let succeeded = HerdrWorkspaceFocus.focus(
+        let succeeded = WorkspaceFocus.focus(
             sessionName: "my-session",
             target: target,
             workspaceID: "ws-1",
@@ -244,22 +306,34 @@ final class LaunchTargetShellTests: XCTestCase {
         XCTAssertFalse(succeeded)
     }
 
-    func test_herdrWorkspaceFocus_tmuxTarget_returnsFalseWithoutRunningAnything() {
+    func test_workspaceFocus_tmuxTarget_selectsWindow_usingTargetsExecutableAndEnvironment() {
+        let script = """
+        #!/bin/sh
+        : > "$OUT/argv"
+        for a in "$@"; do
+            printf '%s\\n' "$a" >> "$OUT/argv"
+        done
+        printf '%s\\n' "${MARKER-<absent>}" > "$OUT/marker"
+        """
+        try? script.write(to: captureURL, atomically: true, encoding: .utf8)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: captureURL.path)
+
         let target = MultiplexerTarget(
             backend: .tmux,
             executable: captureURL.path,
             tmuxSocketPath: nil,
-            environment: ["OUT": outputDirectory.path]
+            environment: ["MARKER": "workspace-focus", "OUT": outputDirectory.path]
         )
 
-        let succeeded = HerdrWorkspaceFocus.focus(
+        let succeeded = WorkspaceFocus.focus(
             sessionName: "my-session",
             target: target,
-            workspaceID: "ws-1",
+            workspaceID: "@1",
             path: "/usr/bin:/bin"
         )
 
-        XCTAssertFalse(succeeded)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: outputDirectory.appendingPathComponent("argv").path))
+        XCTAssertTrue(succeeded)
+        XCTAssertEqual(readOutput("argv"), "select-window\n-t\nmy-session:@1")
+        XCTAssertEqual(readOutput("marker"), "workspace-focus")
     }
 }

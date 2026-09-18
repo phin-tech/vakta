@@ -65,10 +65,6 @@ final class SessionStore: ObservableObject {
     /// `.sessions([])` so "can't tell you" never looks like "confirmed empty."
     @Published private(set) var discovered: [Profile.ID: DiscoveryResult] = [:]
 
-    /// Whether the sidebar is collapsed to its icon rail. Driven by the
-    /// sidebar's own button and the View menu; `AppDelegate` animates the width.
-    @Published var sidebarCollapsed = false
-
     /// Saved workspace records whose profile no longer exists, set once at
     /// startup by `WorkspaceStartupPlanner` and never auto-launched under a
     /// substituted profile. Not surfaced in any UI yet (no recovery flow
@@ -85,7 +81,7 @@ final class SessionStore: ObservableObject {
     /// doc comment) with an attention transition the user hasn't seen yet
     /// (see `UnreadAttentionPolicy`). Backs the sidebar bell popover and
     /// `goToNextUnreadSession`. An entry is removed when its exact pane is
-    /// focused via `focusHerdrWorkspace`, when the encompassing session is
+    /// focused via `focusWorkspace`, when the encompassing session is
     /// removed, or -- opportunistically, in `pollAgentStatus` -- the moment
     /// a poll observes it as both selected and herdr-focused with the app
     /// active, i.e. the user is now actually looking at it. Deliberately
@@ -111,15 +107,15 @@ final class SessionStore: ObservableObject {
         didSet { updateDockBadge() }
     }
 
-    /// A herdr session's workspaces (local machine only -- see
-    /// `HerdrWorkspace.swift`), fetched once when its sidebar row is first
-    /// expanded (gated by `HerdrPreferencesStore.showWorkspaces`), not
-    /// continuously polled. `nil` until fetched at least once; `[]` means
-    /// "fetched, none" -- both display the same empty disclosure.
-    @Published private(set) var herdrWorkspaces: [Session.ID: [HerdrWorkspace]] = [:]
+    /// A session's workspaces (local machine only -- see `Workspace.swift`),
+    /// fetched once when its sidebar row is first expanded (gated by
+    /// `HerdrPreferencesStore.showWorkspaces`), not continuously polled.
+    /// `nil` until fetched at least once; `[]` means "fetched, none" -- both
+    /// display the same empty disclosure.
+    @Published private(set) var workspaces: [Session.ID: [Workspace]] = [:]
 
-    /// A herdr workspace's own agent status, keyed by workspace id -- lets
-    /// `HerdrWorkspaceRow` show a workspace's actual status (e.g. a
+    /// A workspace's own agent status, keyed by workspace id -- lets
+    /// `WorkspaceRow` show a workspace's actual status (e.g. a
     /// checkmark for `.done`) instead of only the encompassing session's
     /// aggregate `.busiest` value, which can't distinguish one workspace
     /// from another sharing the same session (see `UnreadPane`'s doc
@@ -477,17 +473,18 @@ final class SessionStore: ObservableObject {
     private func pollAgentStatus() {
         guard agentStatusPollGate.beginIfIdle() else { return }
 
-        var herdrSessions: [(id: Session.ID, name: String, target: MultiplexerTarget)] = []
+        var pollableSessions: [(id: Session.ID, name: String, target: MultiplexerTarget)] = []
         for session in sessions {
-            guard (session.profile.command as NSString).lastPathComponent == "herdr" else { continue }
-            switch LaunchTargetResolver.resolve(session.profile) {
-            case .multiplexer(let target):
-                herdrSessions.append((session.id, session.sessionName, target))
-            case .unsupported:
+            switch LaunchTargetResolver.agentStatusPollOutcome(for: session.profile, sessionName: session.sessionName) {
+            case .poll(let target):
+                pollableSessions.append((session.id, session.sessionName, target))
+            case .unavailable:
                 agentStatus[session.id] = .unavailable
+            case .skip:
+                continue
             }
         }
-        guard !herdrSessions.isEmpty else {
+        guard !pollableSessions.isEmpty else {
             agentStatusPollGate.end()
             return
         }
@@ -496,7 +493,7 @@ final class SessionStore: ObservableObject {
         DispatchQueue.global(qos: .utility).async {
             var updates: [AgentStatusUpdate] = []
             var panesBySession: [Session.ID: [HerdrAgentStatus.PaneAgentStatus]] = [:]
-            for session in herdrSessions {
+            for session in pollableSessions {
                 if let result = HerdrAgentStatus.query(
                     sessionName: session.name,
                     target: session.target,
@@ -608,10 +605,6 @@ final class SessionStore: ObservableObject {
     /// status `.attention`); cleared when none are.
     private func updateDockBadge() {
         NSApp.dockTile.badgeLabel = DockBadgePlanner.label(for: Array(agentStatus.values))
-    }
-
-    func toggleSidebar() {
-        sidebarCollapsed.toggle()
     }
 
     /// Re-queries each multiplexer for its existing sessions (off the main
@@ -741,12 +734,12 @@ final class SessionStore: ObservableObject {
     /// `startStatusPolling`, or the first timer tick) discovers them and
     /// calls `updatePaneIDs`.
     private func startHerdrEventClientIfApplicable(for session: Session) {
-        guard (session.profile.command as NSString).lastPathComponent == "herdr" else { return }
-        guard case .multiplexer(let target) = LaunchTargetResolver.resolve(session.profile), target.backend == .herdr
+        guard case .multiplexer(let target) = LaunchTargetResolver.resolve(session.profile),
+              let socketPath = target.eventStreamSocketPath(sessionName: session.sessionName)
         else { return }
 
         let client = HerdrEventStreamClient(
-            socketPath: HerdrSocketPath.resolve(sessionName: session.sessionName),
+            socketPath: socketPath,
             initialPaneIDs: []
         )
         client.onTrigger = { [weak self] in
@@ -854,10 +847,10 @@ final class SessionStore: ObservableObject {
         sessions.removeAll { $0.id == id }
         hostContainer.removeSession(id)
         agentStatus[id] = nil
-        for workspace in herdrWorkspaces[id] ?? [] {
+        for workspace in workspaces[id] ?? [] {
             paneStatusByWorkspaceID[workspace.id] = nil
         }
-        herdrWorkspaces[id] = nil
+        workspaces[id] = nil
         herdrEventClients[id]?.stop()
         herdrEventClients[id] = nil
         herdrSubscribedPaneIDs[id] = nil
@@ -892,13 +885,13 @@ final class SessionStore: ObservableObject {
         saveWorkspace()
     }
 
-    /// Jumps to the specific herdr workspace behind `pane` (via
-    /// `focusHerdrWorkspace`, or a plain `select` if its workspace id is
-    /// somehow unknown) and clears it from `unreadPanes` -- the bell
-    /// popover's "jump to that pane" action.
+    /// Jumps to the specific workspace behind `pane` (via `focusWorkspace`,
+    /// or a plain `select` if its workspace id is somehow unknown) and
+    /// clears it from `unreadPanes` -- the bell popover's "jump to that
+    /// pane" action.
     func focusUnreadPane(_ pane: UnreadPane) {
         if let workspaceID = pane.workspaceID {
-            focusHerdrWorkspace(workspaceID, in: pane.sessionID)
+            focusWorkspace(workspaceID, in: pane.sessionID)
         } else {
             select(pane.sessionID)
         }
@@ -932,45 +925,53 @@ final class SessionStore: ObservableObject {
     }
 
     /// Queries `id`'s workspaces (off the main thread) and publishes the
-    /// result into `herdrWorkspaces`, once, for the sidebar's disclosure to
-    /// show when it's first expanded. Not a herdr session, or a target that
-    /// can't be reliably queried (e.g. `--remote`): no-op. A failed query
-    /// leaves any previous value alone rather than flicker to empty.
-    /// `HerdrWorkspaceFetchPlanner.shouldApply` drops the result if `id` was
-    /// closed while the query was in flight.
-    func fetchHerdrWorkspaces(for id: Session.ID) {
+    /// result into `workspaces`, once, for the sidebar's disclosure to show
+    /// when it's first expanded. A target with no workspace analogue, or one
+    /// that can't be reliably queried (e.g. herdr `--remote`): no-op. A
+    /// failed query leaves any previous value alone rather than flicker to
+    /// empty. `WorkspaceFetchPlanner.shouldApply` drops the result if `id`
+    /// was closed while the query was in flight.
+    func fetchWorkspaces(for id: Session.ID) {
         guard let session = sessions.first(where: { $0.id == id }) else { return }
         guard case .multiplexer(let target) = LaunchTargetResolver.resolve(session.profile) else { return }
         let sessionName = session.sessionName
         let path = resolvedPATH
 
         DispatchQueue.global(qos: .userInitiated).async {
-            guard let workspaces = HerdrWorkspaceQuery.workspaces(
+            guard let workspaces = WorkspaceQuery.workspaces(
                 sessionName: sessionName,
                 target: target,
                 path: path,
                 isCancelled: { [weak self] in self?.isShuttingDown ?? true }
             ) else { return }
             DispatchQueue.main.async {
-                guard HerdrWorkspaceFetchPlanner.shouldApply(sessionID: id, liveSessionIDs: Set(self.sessions.map(\.id))) else { return }
-                self.herdrWorkspaces[id] = workspaces
+                guard WorkspaceFetchPlanner.shouldApply(sessionID: id, liveSessionIDs: Set(self.sessions.map(\.id))) else { return }
+                self.workspaces[id] = workspaces
             }
         }
     }
 
-    /// Switches `id`'s herdr server to `workspaceID` and brings `id` itself
+    /// Switches `id`'s server to `workspaceID` and brings `id` itself
     /// forward -- the same effect as clicking the session row, scoped to a
     /// specific workspace. The focus command runs off the main thread and is
     /// fire-and-forget: `select` doesn't wait on it, matching how every other
     /// sidebar click behaves.
-    func focusHerdrWorkspace(_ workspaceID: String, in id: Session.ID) {
+    func focusWorkspace(_ workspaceID: String, in id: Session.ID) {
         guard let session = sessions.first(where: { $0.id == id }) else { return }
         guard case .multiplexer(let target) = LaunchTargetResolver.resolve(session.profile) else { return }
         let sessionName = session.sessionName
         let path = resolvedPATH
 
+        // Flip the local `focused` flags immediately -- the CLI switch below
+        // is fire-and-forget and fetch-on-expand won't re-query on its own,
+        // so without this the sidebar/palette highlight wouldn't move until
+        // a manual collapse/re-expand.
+        if let current = workspaces[id] {
+            workspaces[id] = WorkspaceFocusPlanner.applying(focusing: workspaceID, in: current)
+        }
+
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            _ = HerdrWorkspaceFocus.focus(
+            _ = WorkspaceFocus.focus(
                 sessionName: sessionName,
                 target: target,
                 workspaceID: workspaceID,

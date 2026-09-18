@@ -32,16 +32,54 @@ and the output-parse switch lives in `SessionDiscovery`.
 
 **Current state (2026-09-18).** The model is only partly realized in code.
 On the target today: `discoveryArgv`, `statusArgv`, `workspaceListArgv`,
-`workspaceFocusArgv` (the last three `nil` for non-herdr backends,
-`LaunchTarget.swift:75-92`). *Not* on the target: attach is the profile's
-`arguments` template (`Profile.swift`), and the event stream is a
-`HerdrEventStreamClient` constructed directly (`SessionStore.swift:740`). Two
-`SessionStore` sites still gate on the command name rather than a capability --
-`pollAgentStatus` (`:478`) and `startHerdrEventClientIfApplicable` (`:736`),
-both `lastPathComponent == "herdr"` -- and the sidebar/palette gate on
-`target.backend == .herdr` (`SidebarView.swift:364`, `App.swift:721`) rather
-than on `workspaceListArgv != nil`. So "opts in by capability, not by name" is
-the intended end state, not a description of every call site as it stands.
+`workspaceFocusArgv`, `eventStreamSocketPath` (the last four `nil` for
+non-herdr backends, `LaunchTarget.swift`). *Not* on the target: attach is the
+profile's `arguments` template (`Profile.swift`). Two capability checks are
+unified so far: the sidebar/palette workspace disclosure derives from
+`LaunchTargetResolver.supportsWorkspaces` (`LaunchTarget.swift`), which both
+`SidebarView.supportsWorkspaces` (`SidebarView.swift:362`) and
+`AppDelegate.supportsWorkspaces` (`App.swift:719`) delegate to rather than
+each checking `target.backend == .herdr` independently (`vakta#3cwd`); and
+`SessionStore.startHerdrEventClientIfApplicable` (`:735`) now asks
+`target.eventStreamSocketPath(sessionName:)` instead of gating on
+`lastPathComponent == "herdr"` and hardcoding `HerdrSocketPath.resolve` at the
+call site (`vakta#52mr`); and `SessionStore.pollAgentStatus` (`:476`) now
+selects sessions via `LaunchTargetResolver.agentStatusPollOutcome`, derived
+from `statusArgv != nil`, instead of `lastPathComponent == "herdr"`
+(`vakta#2bwd`). No remaining `SessionStore` call site gates on the command
+name. "Opts in by capability, not by name" now holds for every call site this
+epic (`vakta#63w2`) covers.
+
+The palette/sidebar workspace *model* is also neutralized (`vakta#daxg`):
+`SessionStore.workspaces`/`fetchWorkspaces`/`focusWorkspace`,
+`PaletteCategory.workspace`, `PaletteItemKind.focusWorkspace`,
+`PaletteItemAssembler.assemble(workspaces:)`, and
+`SessionSwitcherModel.replaceWorkspaces`'s row filter all carry no
+herdr-specific names -- `Workspace.swift` (formerly `HerdrWorkspace.swift`)
+holds the neutral `Workspace` value and `WorkspaceQuery.parse` dispatches on
+`target.backend`.
+
+tmux now has a workspace analogue too (`vakta#43sg`): `workspaceListArgv`
+vends `list-windows -t <session> -F '#{window_id}|#{window_name}|#{window_active}'`
+(`|`, not a tab -- tmux's `-F` engine substitutes "unprintable" bytes,
+including a tab delimiter, with `_` when it can't detect a UTF-8 locale,
+which `ProcessRunner`'s deliberately minimal environment (`PATH`/`HOME`
+only) never provides; confirmed live and covered by a real-tmux-server
+regression test in `LaunchTargetShellTests`)
+(honoring `-S`/`-L`) and `workspaceFocusArgv` vends `select-window -t
+<session>:<window>` -- deliberately *not* also `switch-client`: probed
+against a throwaway tmux 3.7b server, `switch-client -t <session>` fails
+with "no current client" when run from a detached subprocess (there's no
+invoking client to switch), which would poison the whole chained command.
+Bringing the Vakta session forward is `SessionStore.focusWorkspace`'s own
+`select(id)` call, not this argv's job. `WorkspaceQuery.parse` gained a
+`parseTmux` case alongside `parseHerdr`. Because `supportsWorkspaces` and
+`fetchWorkspaces`/`focusWorkspace` were already capability-driven (`#3cwd`,
+`#daxg`), tmux windows now surface in the sidebar disclosure and the ⌘K
+switcher with no new UI branch -- the epic's stated end state for the
+workspace analogue. Agent status stays herdr-only (`statusArgv` still `nil`
+for `.tmux`, no native concept), and tmux's control-mode event stream is
+still out of scope.
 
 ## The capability checklist
 

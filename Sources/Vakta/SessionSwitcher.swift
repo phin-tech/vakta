@@ -59,17 +59,17 @@ final class SessionSwitcherModel: ObservableObject {
         items += newItems
     }
 
-    /// The always-refresh counterpart to `append`, for a herdr session whose
+    /// The always-refresh counterpart to `append`, for a session whose
     /// workspace rows were already present at open time (from a previous
-    /// fetch): drops `sessionID`'s existing `.focusHerdrWorkspace` rows and
-    /// appends the freshly-queried batch, so a workspace created in herdr
-    /// since the last fetch shows up without a stale duplicate alongside it.
-    /// Same stale-generation guard as `append`; behaves like `append` when
+    /// fetch): drops `sessionID`'s existing `.focusWorkspace` rows and
+    /// appends the freshly-queried batch, so a workspace created since the
+    /// last fetch shows up without a stale duplicate alongside it. Same
+    /// stale-generation guard as `append`; behaves like `append` when
     /// `sessionID` had no prior rows.
     func replaceWorkspaces(_ newItems: [PaletteItem], forSessionID sessionID: UUID, forGeneration: Int) {
         guard PaletteAppendPlanner.shouldApply(fetchGeneration: forGeneration, currentGeneration: generation) else { return }
         items.removeAll {
-            if case .focusHerdrWorkspace(let existingSessionID, _) = $0.kind { return existingSessionID == sessionID }
+            if case .focusWorkspace(let existingSessionID, _) = $0.kind { return existingSessionID == sessionID }
             return false
         }
         items += newItems

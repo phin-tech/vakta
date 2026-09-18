@@ -52,6 +52,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var sidebarSettings: SidebarSettingsStore { stores.sidebarSettings }
     private var notificationSettings: NotificationSettingsStore { stores.notificationSettings }
     private var terminalSettings: TerminalSettingsStore { stores.terminalSettings }
+    private var workspaceRefreshMonitor: WorkspaceRefreshMonitor { stores.workspaceRefreshMonitor }
 
     /// The AppKit sidebar/terminal chrome whose colors follow the terminal
     /// theme; re-applied when it changes (SwiftUI parts update themselves).
@@ -72,15 +73,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var switcherPanel: SessionSwitcherPanel?
     private var switcherHostView: NSHostingView<SessionSwitcherView>?
     private let switcherModel = SessionSwitcherModel()
-    /// Herdr sessions whose workspaces were queried for the currently-open
-    /// palette but haven't reported back yet; drained (and the observer torn
-    /// down) as each arrives -- see `showSessionSwitcher`.
+    /// Sessions whose workspaces were queried for the currently-open palette
+    /// but haven't reported back yet; drained (and the observer torn down)
+    /// as each arrives -- see `showSessionSwitcher`.
     private var pendingPaletteWorkspaceFetches: Set<Session.ID> = []
-    private var herdrWorkspacesObserver: AnyCancellable?
+    private var workspacesObserver: AnyCancellable?
 
-    /// Sidebar widths: a full panel, and a narrow icon rail when collapsed.
-    private let expandedSidebarWidth: CGFloat = 220
+    /// Sidebar widths: a narrow icon rail when collapsed, and the expanded
+    /// panel's draggable bounds. The expanded width itself is persisted in
+    /// `SidebarSettingsStore` (defaulting to `SidebarSettings.defaultExpandedWidth`)
+    /// and clamped to these bounds wherever it's applied or captured.
     private let collapsedSidebarWidth: CGFloat = 56
+    private let minimumExpandedSidebarWidth: CGFloat = 160
+    private let maximumExpandedSidebarWidth: CGFloat = 480
+
+    /// The persisted expanded width, clamped to the draggable bounds so a
+    /// stray saved value (see `SidebarSettings`' "clamp at use" note) can never
+    /// place the divider off-screen or under the rail.
+    private func resolvedExpandedWidth() -> CGFloat {
+        let saved = sidebarSettings.expandedWidth
+        guard saved.isFinite else { return SidebarSettings.defaultExpandedWidth }
+        return min(max(saved, minimumExpandedSidebarWidth), maximumExpandedSidebarWidth)
+    }
 
     /// Titlebar band reserved at the top of both panes (matches
     /// `SidebarView`'s own inset) so the traffic lights never overlap live
@@ -162,7 +176,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self else { return }
             switch action {
             case .selectSession(let index): self.sessionStore.selectSession(at: index)
-            case .toggleSidebar: self.sessionStore.toggleSidebar()
+            case .toggleSidebar: self.sidebarSettings.toggleCollapsed()
             case .openPreferences: self.preferencesController.show()
             case .openSessionSwitcher: self.showSessionSwitcher()
             case .quit: NSApp.terminate(nil)
@@ -185,6 +199,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
+        // Installed after `keybindingMatcher`'s own monitor: both watch
+        // `.keyDown`, and this one must never fire for a key an app
+        // shortcut already consumed.
+        workspaceRefreshMonitor.install()
+
         // Finish wiring the attention notifier now that the app is up: give it
         // the user's preferences, a way to surface a session on click, and
         // (in the packaged app) notification authorization.
@@ -202,8 +221,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .sink { [weak self] color in self?.applyTerminalChromeColor(color) }
 
         // Drive the sidebar width off the store's collapsed flag, which the
-        // sidebar's own button and the View menu both toggle.
-        sidebarObserver = sessionStore.$sidebarCollapsed.sink { [weak self] collapsed in
+        // sidebar's own button and the View menu both toggle. `@Published`
+        // replays its current value on subscribe, so a sidebar restored
+        // collapsed applies the collapsed width on this first emission -- no
+        // expanded-width flash before it snaps shut (see
+        // `SidebarStateRestorationCombineTests`).
+        sidebarObserver = sidebarSettings.$isCollapsed.sink { [weak self] collapsed in
             guard let self else { return }
             self.applySidebarWidth(collapsed: collapsed, style: self.sidebarSettings.collapseStyle)
         }
@@ -216,7 +239,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // `SidebarWidthPlanner`'s doc comment).
         sidebarStyleObserver = sidebarSettings.$collapseStyle.sink { [weak self] style in
             guard let self else { return }
-            self.applySidebarWidth(collapsed: self.sessionStore.sidebarCollapsed, style: style)
+            self.applySidebarWidth(collapsed: self.sidebarSettings.isCollapsed, style: style)
         }
     }
 
@@ -251,7 +274,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             collapsed: collapsed,
             style: style,
             collapsedWidth: collapsedSidebarWidth,
-            expandedWidth: expandedSidebarWidth
+            expandedWidth: resolvedExpandedWidth()
         )
         splitView.setPosition(target, ofDividerAt: 0)
         splitView.layoutSubtreeIfNeeded()
@@ -260,7 +283,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func toggleSidebar() {
-        sessionStore.toggleSidebar()
+        sidebarSettings.toggleCollapsed()
     }
 
     @objc private func increaseFontSize() {
@@ -291,6 +314,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let split = SeamlessSplitView()
         split.isVertical = true
         split.dividerStyle = .thin
+        // Persist a user-dragged width as the new expanded width, but only when
+        // it's a genuine resize: `SidebarWidthCapture` rejects drags taken while
+        // collapsed (a programmatic collapse must never be saved as the expanded
+        // width) and out-of-range/degenerate positions.
+        split.onDividerDragEnded = { [weak self] width in
+            guard let self else { return }
+            // `mouseDown` also fires for a plain divider click (no resize), and
+            // `@Published`'s `didSet` persists even an unchanged assignment, so
+            // only write when the width actually changed.
+            if let captured = SidebarWidthCapture.accepted(
+                position: width,
+                isCollapsed: self.sidebarSettings.isCollapsed,
+                minimum: self.minimumExpandedSidebarWidth,
+                maximum: self.maximumExpandedSidebarWidth
+            ), captured != self.sidebarSettings.expandedWidth {
+                self.sidebarSettings.expandedWidth = captured
+            }
+        }
 
         // The sidebar paints itself the terminal theme's background color, so
         // it and the opaque terminal read as one continuous surface (the hidden
@@ -311,7 +352,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let sidebarContainer = NSView()
         sidebarContainer.wantsLayer = true
         sidebarContainer.layer?.backgroundColor = sessionStore.terminalBackgroundColor.cgColor
-        sidebarContainer.frame = NSRect(x: 0, y: 0, width: expandedSidebarWidth, height: 640)
+        // Start at the persisted expanded width so a restored-expanded sidebar
+        // doesn't flash the default width first; a restored-collapsed sidebar
+        // is snapped shut by `$isCollapsed`'s replay-on-subscribe emission set
+        // up in `applicationDidFinishLaunching`.
+        sidebarContainer.frame = NSRect(x: 0, y: 0, width: resolvedExpandedWidth(), height: 640)
         sidebarContainerView = sidebarContainer
         // Frame + autoresizing, NOT Auto Layout: the split view drives the
         // container's frame imperatively (`setPosition` on collapse), and the
@@ -675,22 +720,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         PaletteAction(id: "resetFontSize", title: "Reset Font Size")
     ]
 
-    /// Mirrors `SidebarView.isHerdrSession` -- whether querying `session`'s
-    /// workspaces makes sense at all.
-    private static func isHerdrSession(_ session: Session) -> Bool {
-        guard case .multiplexer(let target) = LaunchTargetResolver.resolve(session.profile) else { return false }
-        return target.backend == .herdr
+    /// Mirrors `SidebarView.supportsWorkspaces` -- whether querying
+    /// `session`'s workspaces makes sense at all.
+    private static func supportsWorkspaces(_ session: Session) -> Bool {
+        LaunchTargetResolver.supportsWorkspaces(session.profile, sessionName: session.sessionName)
     }
 
-    /// Opens (or refocuses) the command palette: sessions, herdr workspaces,
-    /// and static actions in one flat, searchable list.
+    /// Opens (or refocuses) the command palette: sessions, workspaces, and
+    /// static actions in one flat, searchable list.
     private func showSessionSwitcher() {
         let sessions = sessionStore.sessions.map {
             PaletteItemAssembler.SessionEntry(id: $0.id, title: $0.displayTitle, status: sessionStore.agentStatus[$0.id] ?? .none)
         }
         let items = PaletteItemAssembler.assemble(
             sessions: sessions,
-            herdrWorkspaces: sessionStore.herdrWorkspaces,
+            workspaces: sessionStore.workspaces,
             workspaceStatus: sessionStore.paneStatusByWorkspaceID,
             actions: Self.paletteActions
         )
@@ -698,23 +742,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         switcherModel.onSelect = { [weak self] item in self?.selectFromSwitcher(item) }
         switcherModel.onCancel = { [weak self] in self?.closeSwitcher() }
 
-        // The palette is the point of asking "what herdr workspaces exist"
-        // -- unlike the sidebar disclosure, it queries every herdr session
-        // regardless of `HerdrPreferencesStore.showWorkspaces`, and it
-        // re-queries even a session whose workspaces are already cached
+        // The palette is the point of asking "what workspaces exist" --
+        // unlike the sidebar disclosure, it queries every workspace-capable
+        // session regardless of `HerdrPreferencesStore.showWorkspaces`, and
+        // it re-queries even a session whose workspaces are already cached
         // (fetch-on-expand only re-asks once otherwise -- see
-        // `SessionStore.fetchHerdrWorkspaces` -- so a workspace created in
-        // herdr since that first fetch would otherwise never appear here).
-        // The initial snapshot above already shows any cached answer; this
-        // replaces it once the fresh one lands, via
-        // `SessionSwitcherModel.replaceWorkspaces`.
+        // `SessionStore.fetchWorkspaces` -- so a workspace created since
+        // that first fetch would otherwise never appear here). The initial
+        // snapshot above already shows any cached answer; this replaces it
+        // once the fresh one lands, via `SessionSwitcherModel.replaceWorkspaces`.
         pendingPaletteWorkspaceFetches = Set(sessionStore.sessions
-            .filter(Self.isHerdrSession)
+            .filter(Self.supportsWorkspaces)
             .map(\.id))
         for id in pendingPaletteWorkspaceFetches {
-            sessionStore.fetchHerdrWorkspaces(for: id)
+            sessionStore.fetchWorkspaces(for: id)
         }
-        herdrWorkspacesObserver = pendingPaletteWorkspaceFetches.isEmpty ? nil : sessionStore.$herdrWorkspaces
+        workspacesObserver = pendingPaletteWorkspaceFetches.isEmpty ? nil : sessionStore.$workspaces
             .sink { [weak self] workspacesByID in
                 guard let self else { return }
                 let arrived = self.pendingPaletteWorkspaceFetches.filter { workspacesByID[$0] != nil }
@@ -730,14 +773,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     )
                     let newItems = PaletteItemAssembler.assemble(
                         sessions: [entry],
-                        herdrWorkspaces: [sessionID: workspacesByID[sessionID] ?? []],
+                        workspaces: [sessionID: workspacesByID[sessionID] ?? []],
                         workspaceStatus: self.sessionStore.paneStatusByWorkspaceID,
                         actions: []
-                    ).filter { $0.category == .herdrWorkspace }
+                    ).filter { $0.category == .workspace }
                     self.switcherModel.replaceWorkspaces(newItems, forSessionID: sessionID, forGeneration: generation)
                 }
 
-                if self.pendingPaletteWorkspaceFetches.isEmpty { self.herdrWorkspacesObserver = nil }
+                if self.pendingPaletteWorkspaceFetches.isEmpty { self.workspacesObserver = nil }
             }
 
         if let panel = switcherPanel {
@@ -803,8 +846,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         switch item.kind {
         case .selectSession(let id):
             activateSession(id)
-        case .focusHerdrWorkspace(let sessionID, let workspaceID):
-            sessionStore.focusHerdrWorkspace(workspaceID, in: sessionID)
+        case .focusWorkspace(let sessionID, let workspaceID):
+            sessionStore.focusWorkspace(workspaceID, in: sessionID)
             activateSession(sessionID)
         case .action(let id):
             performPaletteAction(id)
@@ -896,6 +939,22 @@ extension AppDelegate: NSMenuDelegate {
 /// seam. Only the *drawing* is suppressed -- thickness and hit-testing are the
 /// stock `.thin` behavior.
 private final class SeamlessSplitView: NSSplitView {
+    /// Called with the sidebar pane's width after the user finishes dragging
+    /// the divider (never for programmatic `setPosition`, which doesn't route
+    /// through `mouseDown` -- so there's no feedback loop with
+    /// `applySidebarWidth`). `AppDelegate` decides whether to record it.
+    var onDividerDragEnded: ((CGFloat) -> Void)?
+
+    // `NSSplitView.mouseDown` runs its divider drag-tracking loop synchronously,
+    // so by the time `super` returns the drag is complete and the sidebar pane's
+    // frame holds the width the user let go at.
+    override func mouseDown(with event: NSEvent) {
+        super.mouseDown(with: event)
+        if let sidebarWidth = arrangedSubviews.first?.frame.width {
+            onDividerDragEnded?(sidebarWidth)
+        }
+    }
+
     // A faint hairline instead of the stock heavy line: enough to separate the
     // sidebar from the same-colored terminal without a harsh black divider.
     // The top titlebar band is left unpainted so the hairline never crosses the

@@ -108,10 +108,10 @@ final class AppSettingsStoresTests: XCTestCase {
         let store = SidebarSettingsStore(root: tempDirectory)
         XCTAssertEqual(store.collapseStyle, .icons)
 
-        guard case .loaded(let style) = SidebarSettingsPersistence.load(root: tempDirectory) else {
+        guard case .loaded(let settings) = SidebarSettingsPersistence.load(root: tempDirectory) else {
             return XCTFail("first launch must persist the seeded default")
         }
-        XCTAssertEqual(style, .icons)
+        XCTAssertEqual(settings.collapseStyle, .icons)
     }
 
     @MainActor
@@ -128,7 +128,7 @@ final class AppSettingsStoresTests: XCTestCase {
 
     @MainActor
     func test_sidebarSettingsStore_loadedFile_usesSavedValue() {
-        SidebarSettingsPersistence.save(.hidden, root: tempDirectory)
+        SidebarSettingsPersistence.save(SidebarSettings(collapseStyle: .hidden), root: tempDirectory)
 
         let store = SidebarSettingsStore(root: tempDirectory)
 
@@ -141,10 +141,10 @@ final class AppSettingsStoresTests: XCTestCase {
 
         store.collapseStyle = .hidden
 
-        guard case .loaded(let style) = SidebarSettingsPersistence.load(root: tempDirectory) else {
+        guard case .loaded(let settings) = SidebarSettingsPersistence.load(root: tempDirectory) else {
             return XCTFail("setting collapseStyle must persist")
         }
-        XCTAssertEqual(style, .hidden)
+        XCTAssertEqual(settings.collapseStyle, .hidden)
     }
 
     // MARK: TerminalSettingsStore

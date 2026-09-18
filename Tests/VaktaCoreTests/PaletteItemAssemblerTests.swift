@@ -18,7 +18,7 @@ final class PaletteItemAssemblerTests: XCTestCase {
     func test_assemble_emptyInputs_isEmpty() {
         let items = PaletteItemAssembler.assemble(
             sessions: [],
-            herdrWorkspaces: [:],
+            workspaces: [:],
             workspaceStatus: [:],
             actions: []
         )
@@ -32,7 +32,7 @@ final class PaletteItemAssemblerTests: XCTestCase {
 
         let items = PaletteItemAssembler.assemble(
             sessions: [entry1, entry2],
-            herdrWorkspaces: [:],
+            workspaces: [:],
             workspaceStatus: [:],
             actions: []
         )
@@ -48,7 +48,7 @@ final class PaletteItemAssemblerTests: XCTestCase {
 
         let items = PaletteItemAssembler.assemble(
             sessions: [entry],
-            herdrWorkspaces: [:],
+            workspaces: [:],
             workspaceStatus: [:],
             actions: []
         )
@@ -58,29 +58,29 @@ final class PaletteItemAssemblerTests: XCTestCase {
 
     func test_assemble_workspacesAppearAfterTheirOwningSession_withSessionTitleAsSubtitle() {
         let (id, entry) = session("alpha")
-        let workspace = HerdrWorkspace(id: "w1", label: "guildhall", focused: false)
+        let workspace = Workspace(id: "w1", label: "guildhall", focused: false)
 
         let items = PaletteItemAssembler.assemble(
             sessions: [entry],
-            herdrWorkspaces: [id: [workspace]],
+            workspaces: [id: [workspace]],
             workspaceStatus: ["w1": .attention],
             actions: []
         )
 
         XCTAssertEqual(items.map(\.title), ["alpha", "guildhall"])
-        XCTAssertEqual(items[1].category, .herdrWorkspace)
+        XCTAssertEqual(items[1].category, .workspace)
         XCTAssertEqual(items[1].subtitle, "alpha")
         XCTAssertEqual(items[1].status, .attention)
-        XCTAssertEqual(items[1].kind, .focusHerdrWorkspace(sessionID: id, workspaceID: "w1"))
+        XCTAssertEqual(items[1].kind, .focusWorkspace(sessionID: id, workspaceID: "w1"))
     }
 
     func test_assemble_workspaceStatus_missingEntry_fallsBackToNone() {
         let (id, entry) = session("alpha")
-        let workspace = HerdrWorkspace(id: "w1", label: "guildhall", focused: false)
+        let workspace = Workspace(id: "w1", label: "guildhall", focused: false)
 
         let items = PaletteItemAssembler.assemble(
             sessions: [entry],
-            herdrWorkspaces: [id: [workspace]],
+            workspaces: [id: [workspace]],
             workspaceStatus: [:],
             actions: []
         )
@@ -91,12 +91,12 @@ final class PaletteItemAssemblerTests: XCTestCase {
     func test_assemble_multipleSessions_workspacesFollowEachOwningSession_notGroupedGlobally() {
         let (id1, entry1) = session("alpha")
         let (id2, entry2) = session("beta")
-        let w1 = HerdrWorkspace(id: "w1", label: "one", focused: false)
-        let w2 = HerdrWorkspace(id: "w2", label: "two", focused: false)
+        let w1 = Workspace(id: "w1", label: "one", focused: false)
+        let w2 = Workspace(id: "w2", label: "two", focused: false)
 
         let items = PaletteItemAssembler.assemble(
             sessions: [entry1, entry2],
-            herdrWorkspaces: [id1: [w1], id2: [w2]],
+            workspaces: [id1: [w1], id2: [w2]],
             workspaceStatus: [:],
             actions: []
         )
@@ -110,7 +110,7 @@ final class PaletteItemAssemblerTests: XCTestCase {
 
         let items = PaletteItemAssembler.assemble(
             sessions: [entry],
-            herdrWorkspaces: [:],
+            workspaces: [:],
             workspaceStatus: [:],
             actions: [action]
         )
@@ -123,12 +123,12 @@ final class PaletteItemAssemblerTests: XCTestCase {
 
     func test_assemble_itemIDs_areUniqueAcrossCategories() {
         let (id, entry) = session("alpha")
-        let workspace = HerdrWorkspace(id: "w1", label: "guildhall", focused: false)
+        let workspace = Workspace(id: "w1", label: "guildhall", focused: false)
         let action = PaletteAction(id: "toggleSidebar", title: "Toggle Sidebar")
 
         let items = PaletteItemAssembler.assemble(
             sessions: [entry],
-            herdrWorkspaces: [id: [workspace]],
+            workspaces: [id: [workspace]],
             workspaceStatus: [:],
             actions: [action]
         )

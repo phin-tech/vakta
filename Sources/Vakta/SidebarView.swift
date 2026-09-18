@@ -10,7 +10,7 @@
 //  (see `TerminalContainer.swift` and `App.swift`).
 //
 //  It adapts to its width: a full panel with labels, or -- when collapsed to
-//  the icon rail (width driven by `AppDelegate` off `sidebarCollapsed`) -- a
+//  the icon rail (width driven by `AppDelegate` off `SidebarSettingsStore`) -- a
 //  narrow strip of session icons.
 
 import GhosttyTerminal
@@ -22,6 +22,7 @@ struct SidebarView: View {
     @EnvironmentObject private var terminalSettings: TerminalSettingsStore
     @EnvironmentObject private var keybindingMatcher: KeybindingMatcher
     @EnvironmentObject private var herdrPreferences: HerdrPreferencesStore
+    @EnvironmentObject private var sidebarSettings: SidebarSettingsStore
 
     /// The session whose row is currently in rename mode, if any.
     @State private var editingID: Session.ID?
@@ -48,7 +49,7 @@ struct SidebarView: View {
     private let titlebarInset: CGFloat = 28
 
     /// Width of the herdr disclosure's icon column -- shared with
-    /// `HerdrWorkspaceRow` so a workspace's focused-dot lines up under the
+    /// `WorkspaceRow` so a workspace's focused-dot lines up under the
     /// session row's own disclosure/status icon, not at an arbitrary indent.
     fileprivate static let herdrGutterWidth: CGFloat = 10
 
@@ -148,7 +149,7 @@ struct SidebarView: View {
 
     private func collapseToggleButton(collapsed: Bool) -> some View {
         Button {
-            sessionStore.toggleSidebar()
+            sidebarSettings.toggleCollapsed()
         } label: {
             Group {
                 if let rowFont {
@@ -285,7 +286,7 @@ struct SidebarView: View {
                     // that particular row has a disclosure to show.
                     if herdrPreferences.showWorkspaces {
                         Group {
-                            if isHerdrSession(session) {
+                            if supportsWorkspaces(session) {
                                 Button {
                                     toggleHerdrDisclosure(session)
                                 } label: {
@@ -336,16 +337,16 @@ struct SidebarView: View {
                     Button("Close Session") { sessionStore.requestClose(session.id) }
                 }
 
-                if herdrPreferences.showWorkspaces, isHerdrSession(session), expandedHerdrSessionIDs.contains(session.id) {
-                    ForEach(sessionStore.herdrWorkspaces[session.id] ?? [], id: \.id) { workspace in
-                        HerdrWorkspaceRow(
+                if herdrPreferences.showWorkspaces, supportsWorkspaces(session), expandedHerdrSessionIDs.contains(session.id) {
+                    ForEach(sessionStore.workspaces[session.id] ?? [], id: \.id) { workspace in
+                        WorkspaceRow(
                             workspace: workspace,
                             status: sessionStore.paneStatusByWorkspaceID[workspace.id] ?? .none,
                             font: rowFont
                         )
                             .contentShape(Rectangle())
                             .onTapGesture {
-                                sessionStore.focusHerdrWorkspace(workspace.id, in: session.id)
+                                sessionStore.focusWorkspace(workspace.id, in: session.id)
                             }
                     }
                 }
@@ -358,9 +359,8 @@ struct SidebarView: View {
         .tint(Color(nsColor: sessionStore.terminalAccentColor))
     }
 
-    private func isHerdrSession(_ session: Session) -> Bool {
-        guard case .multiplexer(let target) = LaunchTargetResolver.resolve(session.profile) else { return false }
-        return target.backend == .herdr
+    private func supportsWorkspaces(_ session: Session) -> Bool {
+        LaunchTargetResolver.supportsWorkspaces(session.profile, sessionName: session.sessionName)
     }
 
     /// A native SF Symbol chevron reads oddly next to terminal-style rows'
@@ -384,8 +384,8 @@ struct SidebarView: View {
             expandedHerdrSessionIDs.remove(session.id)
         } else {
             expandedHerdrSessionIDs.insert(session.id)
-            if sessionStore.herdrWorkspaces[session.id] == nil {
-                sessionStore.fetchHerdrWorkspaces(for: session.id)
+            if sessionStore.workspaces[session.id] == nil {
+                sessionStore.fetchWorkspaces(for: session.id)
             }
         }
     }
@@ -663,26 +663,25 @@ private struct SessionRow: View {
     }
 }
 
-/// One workspace under an expanded herdr session row (see `SidebarView.fullList`).
-/// Tapping it (handled by the caller) focuses that workspace on the session's
-/// herdr server and brings the session itself forward.
-private struct HerdrWorkspaceRow: View {
-    let workspace: HerdrWorkspace
+/// One workspace under an expanded session row (see `SidebarView.fullList`).
+/// Tapping it (handled by the caller) focuses that workspace on the
+/// session's server and brings the session itself forward.
+private struct WorkspaceRow: View {
+    let workspace: Workspace
     /// This workspace's own status, from `SessionStore.paneStatusByWorkspaceID`
     /// -- distinct from the session row's aggregated `.busiest` value above,
     /// which can't tell this workspace apart from another one sharing the
-    /// same herdr session (see `UnreadPane`'s doc comment).
+    /// same session (see `UnreadPane`'s doc comment).
     let status: AgentStatus
     let font: Font?
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
-            Circle()
-                .fill(workspace.focused ? Color.secondary : Color.clear)
-                .frame(width: 6, height: 6)
-                // Same width as the session row's own disclosure/status icon
-                // column above, so this dot lines up under it rather than
-                // floating at an arbitrary indent.
+            // Reserves the same column the session row's disclosure/status
+            // icon occupies, so the status dot below still lines up under
+            // it -- focus itself is now shown by the row's background
+            // rather than a dot here.
+            Color.clear
                 .frame(width: SidebarView.herdrGutterWidth, alignment: .center)
             if sidebarStatusIsCheckmark(status) {
                 Image(systemName: "checkmark.circle.fill")
@@ -703,6 +702,12 @@ private struct HerdrWorkspaceRow: View {
         // Disclosure column width + the outer row's spacing -- lands this
         // row's icon column directly under the session row's.
         .padding(.leading, SidebarView.herdrGutterWidth + 4)
+        .padding(.vertical, 2)
+        .background(
+            RoundedRectangle(cornerRadius: 4)
+                .fill(workspace.focused ? Color.secondary.opacity(0.18) : Color.clear)
+        )
+        .animation(.easeOut(duration: 0.08), value: workspace.focused)
     }
 }
 

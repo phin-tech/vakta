@@ -59,15 +59,23 @@ struct MultiplexerTarget: Equatable {
         case .herdr:
             return [executable, "session", "list"]
         case .tmux:
-            var argv = [executable]
-            if let tmuxSocketPath {
-                argv += ["-S", tmuxSocketPath]
-            } else if let tmuxSocketName {
-                argv += ["-L", tmuxSocketName]
-            }
-            argv += ["list-sessions", "-F", "#{session_name}"]
-            return argv
+            return tmuxArgv(["list-sessions", "-F", "#{session_name}"])
         }
+    }
+
+    /// `[executable, -S/-L flag if any, ...trailingArgs]` -- the socket
+    /// addressing every tmux subcommand needs, factored out so
+    /// `discoveryArgv`/`workspaceListArgv`/`workspaceFocusArgv` can't drift
+    /// on how they honor a custom socket.
+    private func tmuxArgv(_ trailingArgs: [String]) -> [String] {
+        var argv = [executable]
+        if let tmuxSocketPath {
+            argv += ["-S", tmuxSocketPath]
+        } else if let tmuxSocketName {
+            argv += ["-L", tmuxSocketName]
+        }
+        argv += trailingArgs
+        return argv
     }
 
     /// The argv to query agent status for `sessionName`, or `nil` for a
@@ -77,18 +85,50 @@ struct MultiplexerTarget: Equatable {
         return [executable, "--session", sessionName, "agent", "list"]
     }
 
-    /// The argv to list `sessionName`'s workspaces, or `nil` for a backend
-    /// with no equivalent (only herdr has workspaces).
+    /// The argv to list `sessionName`'s workspaces (herdr workspaces; tmux
+    /// windows, its workspace analogue -- `#{window_id}`, `#{window_name}`,
+    /// `#{window_active}` `|`-separated, one per line, parsed by
+    /// `WorkspaceQuery.parse`), or `nil` for a backend with no equivalent.
+    /// The delimiter is a plain printable character, not a tab: confirmed
+    /// live that tmux's `-F` engine substitutes "unprintable" bytes
+    /// (including tab) with `_` whenever it can't detect a UTF-8 locale --
+    /// which every invocation here can't, since `ProcessRunner` deliberately
+    /// sets only `PATH`/`HOME`, no `LANG`/`LC_ALL` (see `ProcessRunner.run`).
     func workspaceListArgv(sessionName: String) -> [String]? {
-        guard backend == .herdr else { return nil }
-        return [executable, "--session", sessionName, "workspace", "list"]
+        switch backend {
+        case .herdr:
+            return [executable, "--session", sessionName, "workspace", "list"]
+        case .tmux:
+            return tmuxArgv(["list-windows", "-t", sessionName, "-F", "#{window_id}|#{window_name}|#{window_active}"])
+        }
     }
 
     /// The argv to focus `workspaceID` on `sessionName`, or `nil` for a
-    /// backend with no equivalent.
+    /// backend with no equivalent. tmux's own "bring the session forward"
+    /// step is `switch-client`, but that targets the *invoking* client's
+    /// session -- there is none here (this runs as a detached subprocess,
+    /// not from inside a tmux client), so it fails with "no current client"
+    /// and would poison the whole chained command (confirmed against a
+    /// throwaway tmux 3.7b server). `select-window` alone still changes
+    /// which window is active for whichever client later attaches; bringing
+    /// the Vakta session itself forward is `SessionStore.focusWorkspace`'s
+    /// own `select(id)` call, not this argv's job.
     func workspaceFocusArgv(sessionName: String, workspaceID: String) -> [String]? {
+        switch backend {
+        case .herdr:
+            return [executable, "--session", sessionName, "workspace", "focus", workspaceID]
+        case .tmux:
+            return tmuxArgv(["select-window", "-t", "\(sessionName):\(workspaceID)"])
+        }
+    }
+
+    /// The Unix socket to subscribe an event stream to for `sessionName`, or
+    /// `nil` for a backend with no equivalent (only herdr has one; tmux
+    /// control mode is out of scope for this epic -- see
+    /// docs/multiplexer-backends.md).
+    func eventStreamSocketPath(sessionName: String, configDirectory: URL = HerdrSocketPath.defaultConfigDirectory()) -> URL? {
         guard backend == .herdr else { return nil }
-        return [executable, "--session", sessionName, "workspace", "focus", workspaceID]
+        return HerdrSocketPath.resolve(sessionName: sessionName, configDirectory: configDirectory)
     }
 }
 
@@ -98,6 +138,17 @@ struct MultiplexerTarget: Equatable {
 enum DiscoveryResult: Equatable {
     case unsupported
     case sessions([String])
+}
+
+/// The outcome of deciding whether to poll `pollAgentStatus` for a session,
+/// derived purely from its profile -- no process execution. `.skip` covers
+/// both "resolved, but this backend has no status query" (tmux) and "not a
+/// multiplexer at all" (plain shell): neither should poll or mark the
+/// session unavailable.
+enum AgentStatusPollOutcome: Equatable {
+    case poll(MultiplexerTarget)
+    case unavailable
+    case skip
 }
 
 enum LaunchTargetResolver {
@@ -121,6 +172,33 @@ enum LaunchTargetResolver {
     /// `--remote` profile) -- see `SessionStore.DiscoveryResult`.
     static func isKnownMultiplexerCommand(_ profile: Profile) -> Bool {
         backend(of: profile.command) != nil
+    }
+
+    /// Whether `profile`'s resolved target has a workspace analogue to
+    /// disclose (sidebar triangle, ⌘K rows) -- the single capability check
+    /// both `SidebarView` and `AppDelegate` defer to, so they cannot drift
+    /// out of sync on which backends qualify. `sessionName` only ever
+    /// changes what `workspaceListArgv` would send in that session's own
+    /// query, never whether it's `nil`, but threading the real name keeps
+    /// the capability check honest about what it's actually asking.
+    static func supportsWorkspaces(_ profile: Profile, sessionName: String) -> Bool {
+        guard case .multiplexer(let target) = resolve(profile) else { return false }
+        return target.workspaceListArgv(sessionName: sessionName) != nil
+    }
+
+    /// Whether `pollAgentStatus` should poll `profile`'s resolved target for
+    /// agent status, skip it, or mark it `.unavailable` (a known multiplexer
+    /// whose specific target can't be reliably queried, e.g. herdr
+    /// `--remote` -- distinguishing that from "queried, no agents" is the
+    /// whole reason `.unavailable` exists; see `vsn0`).
+    static func agentStatusPollOutcome(for profile: Profile, sessionName: String) -> AgentStatusPollOutcome {
+        switch resolve(profile) {
+        case .multiplexer(let target):
+            guard target.statusArgv(sessionName: sessionName) != nil else { return .skip }
+            return .poll(target)
+        case .unsupported:
+            return isKnownMultiplexerCommand(profile) ? .unavailable : .skip
+        }
     }
 
     private static func backend(of command: String) -> MultiplexerTarget.Backend? {
