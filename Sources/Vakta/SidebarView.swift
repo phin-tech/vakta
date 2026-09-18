@@ -377,6 +377,7 @@ struct SidebarView: View {
                         WorkspaceRow(
                             workspace: workspace,
                             status: sessionStore.paneStatusByWorkspaceID[workspace.id] ?? .none,
+                            isTmux: isTmux(session),
                             font: rowFont,
                             terminalStyle: terminalStyle
                         )
@@ -429,6 +430,11 @@ struct SidebarView: View {
 
     private func supportsWorkspaces(_ session: Session) -> Bool {
         LaunchTargetResolver.supportsWorkspaces(session.profile, sessionName: session.sessionName)
+    }
+
+    private func isTmux(_ session: Session) -> Bool {
+        guard case .multiplexer(let target) = LaunchTargetResolver.resolve(session.profile) else { return false }
+        return target.backend == .tmux
     }
 
     /// A native SF Symbol chevron reads oddly next to terminal-style rows'
@@ -648,6 +654,14 @@ func sidebarStatusIsCheckmark(_ status: AgentStatus) -> Bool {
 
 /// A short human label for `status` -- shared by session rows' tooltips and
 /// the bell popover, so an unread entry says *why* it's there.
+/// tmux command status colors are intentionally binary: zero is success,
+/// every nonzero code is failure, and nil stays muted until the first command
+/// completes.
+func sidebarTmuxCommandStatusColor(_ exitCode: Int?) -> Color {
+    guard let exitCode else { return .secondary.opacity(0.35) }
+    return exitCode == 0 ? .green : .red
+}
+
 func sidebarStatusDescription(_ status: AgentStatus) -> String {
     switch status {
     case .working: return "Working"
@@ -768,6 +782,7 @@ private struct WorkspaceRow: View {
     /// which can't tell this workspace apart from another one sharing the
     /// same session (see `UnreadPane`'s doc comment).
     let status: AgentStatus
+    let isTmux: Bool
     let font: Font?
     let terminalStyle: Bool
 
@@ -785,9 +800,16 @@ private struct WorkspaceRow: View {
     /// by the caller's full-width `listRowBackground`, plus a bold label.
     private var terminalBody: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
-            Text(SidebarTerminalGlyphs.workspaceStatus(status))
-                .font(font)
-                .foregroundStyle(sidebarStatusColor(status, isFocused: false))
+            if isTmux {
+                Text(SidebarTerminalGlyphs.tmuxCommandStatus(workspace.lastCommandExitCode))
+                    .font(font)
+                    .foregroundStyle(sidebarTmuxCommandStatusColor(workspace.lastCommandExitCode))
+                    .help(tmuxStatusHelp)
+            } else {
+                Text(SidebarTerminalGlyphs.workspaceStatus(status))
+                    .font(font)
+                    .foregroundStyle(sidebarStatusColor(status, isFocused: false))
+            }
             Text(workspace.label)
                 .font(workspace.focused ? font?.bold() : font)
                 .lineLimit(1)
@@ -795,6 +817,11 @@ private struct WorkspaceRow: View {
             Spacer()
         }
         .padding(.leading, SidebarView.herdrGutterWidth + 4)
+    }
+
+    private var tmuxStatusHelp: String {
+        guard let exitCode = workspace.lastCommandExitCode else { return "No command status yet" }
+        return "Last command exited with \(exitCode)"
     }
 
     private var systemBody: some View {
@@ -815,7 +842,13 @@ private struct WorkspaceRow: View {
             // A `ZStack`, not a `Group`: a fixed frame on an empty `Group`
             // collapses to nothing, which would un-reserve the column.
             ZStack {
-                if sidebarStatusIsCheckmark(status) {
+                if isTmux {
+                    if workspace.lastCommandExitCode != nil {
+                        Circle()
+                            .fill(sidebarTmuxCommandStatusColor(workspace.lastCommandExitCode))
+                            .frame(width: 6, height: 6)
+                    }
+                } else if sidebarStatusIsCheckmark(status) {
                     Image(systemName: "checkmark.circle.fill")
                         .resizable()
                         .frame(width: 8, height: 8)

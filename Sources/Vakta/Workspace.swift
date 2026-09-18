@@ -19,6 +19,17 @@ struct Workspace: Equatable {
     let id: String
     let label: String
     let focused: Bool
+    /// The most recent command exit code reported by the tmux shell hook.
+    /// `nil` means no command has completed yet, or the shell integration did
+    /// not report a usable value. Herdr workspaces always leave this nil.
+    let lastCommandExitCode: Int?
+
+    init(id: String, label: String, focused: Bool, lastCommandExitCode: Int? = nil) {
+        self.id = id
+        self.label = label
+        self.focused = focused
+        self.lastCommandExitCode = lastCommandExitCode
+    }
 }
 
 enum WorkspaceQuery {
@@ -52,21 +63,45 @@ enum WorkspaceQuery {
     private static func parseHerdr(_ output: String) -> [Workspace]? {
         guard let data = output.data(using: .utf8) else { return nil }
         let decoded = try? JSONDecoder().decode(Response.self, from: data)
-        return decoded?.result?.workspaces.map { Workspace(id: $0.id, label: $0.label, focused: $0.focused) } // nil for an error payload
+        return decoded?.result?.workspaces.map {
+            Workspace(id: $0.id, label: $0.label, focused: $0.focused, lastCommandExitCode: nil)
+        } // nil for an error payload
     }
 
-    /// `list-windows -F '#{window_id}|#{window_name}|#{window_active}'`:
-    /// one `|`-separated window per line. Splits only on the *first* and
-    /// *last* `|` -- a window name containing `|` stays intact in the
-    /// middle field rather than corrupting the split -- and drops a line
-    /// with fewer than 2 delimiters rather than failing the whole batch.
+    /// `list-windows -F '#{window_id}|#{window_name}|#{window_active}|#{@vakta_last_exit}'`:
+    /// one `|`-separated window per line. The first delimiter ends the id;
+    /// the final two delimiters end the active flag and optional exit code, so
+    /// a window name containing `|` stays intact in the middle field. The
+    /// three-field form remains accepted for sessions whose status hook has
+    /// not been installed yet.
     private static func parseTmux(_ output: String) -> [Workspace] {
         output.split(separator: "\n").compactMap { line in
-            guard let first = line.firstIndex(of: "|"), let last = line.lastIndex(of: "|"), first < last else { return nil }
+            guard let first = line.firstIndex(of: "|") else { return nil }
             let id = line[line.startIndex..<first]
-            let label = line[line.index(after: first)..<last]
-            let activeFlag = line[line.index(after: last)...]
-            return Workspace(id: String(id), label: String(label), focused: activeFlag == "1")
+            let afterID = line.index(after: first)
+            guard let last = line.lastIndex(of: "|"), first < last else { return nil }
+
+            if let beforeLast = line[..<last].lastIndex(of: "|"), beforeLast >= afterID {
+                let label = line[afterID..<beforeLast]
+                let activeFlag = line[line.index(after: beforeLast)..<last]
+                let rawExitCode = line[line.index(after: last)...]
+                let exitCode = Int(rawExitCode)
+                return Workspace(
+                    id: String(id),
+                    label: String(label),
+                    focused: activeFlag == "1",
+                    lastCommandExitCode: exitCode
+                )
+            }
+
+            // Compatibility with the original three-field query.
+            let label = line[afterID..<last]
+            return Workspace(
+                id: String(id),
+                label: String(label),
+                focused: line[line.index(after: last)...] == "1",
+                lastCommandExitCode: nil
+            )
         }
     }
 
@@ -97,7 +132,14 @@ enum WorkspaceQuery {
 /// every flag rather than leaving a stale one set.
 enum WorkspaceFocusPlanner {
     static func applying(focusing id: String, in workspaces: [Workspace]) -> [Workspace] {
-        workspaces.map { Workspace(id: $0.id, label: $0.label, focused: $0.id == id) }
+        workspaces.map {
+            Workspace(
+                id: $0.id,
+                label: $0.label,
+                focused: $0.id == id,
+                lastCommandExitCode: $0.lastCommandExitCode
+            )
+        }
     }
 }
 

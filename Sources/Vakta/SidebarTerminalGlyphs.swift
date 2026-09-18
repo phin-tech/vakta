@@ -26,6 +26,13 @@ enum SidebarTerminalGlyphs {
         }
     }
 
+    /// A tmux workspace's command-result mark. It stays a filled circle for
+    /// both success and failure so color carries the result without changing
+    /// row alignment; an unset option gets the muted placeholder.
+    static func tmuxCommandStatus(_ exitCode: Int?) -> String {
+        exitCode == nil ? "·" : "●"
+    }
+
     /// A session row's trailing status mark, or nil when the session has no
     /// agent to report on (a plain shell/tmux session).
     static func sessionStatus(_ status: AgentStatus) -> String? {

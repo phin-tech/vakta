@@ -115,6 +115,7 @@ to reproduce: `tmux list-commands`, `man tmux` (§ CONTROL MODE), `zellij
 | **Workspace analogue** | native workspaces (`workspace list`) | **windows**: `list-windows -t <session>` | **tabs**: `action list-tabs --json` (also `query-tab-names`) |
 | **Focus workspace** | `workspace focus <id>` | `select-window` / `switch-client` | `action go-to-tab-name` / `go-to-tab-by-id` |
 | **Agent status** | native `agent list` | none native — derivable from `list-panes -F '#{pane_current_command}'` | none native — derivable from `list-panes -c -j` (running command per pane) |
+| **Last command status** | shell integration callback | Vakta stores the shell integration exit code in `@vakta_last_exit` per window | not implemented |
 | **Event stream** | socket subscription (`HerdrEventStreamClient`) | control mode `tmux -C` / `-CC` (`%output`, `%window-add`, `%session-changed`, `%layout-change`, …) | `subscribe --pane-id … --format json` (render/scrollback updates) |
 | **Active pane working directory** | `pane current` (`result.pane.cwd`/`foreground_cwd`; exactly one `focused: true` pane per session, confirmed live) | `display-message -p -t <session> '#{pane_current_path}'` | not surveyed — `action list-panes` likely carries a cwd field, unconfirmed |
 
@@ -142,6 +143,15 @@ zellij has an "agent" idea, but both can synthesize a per-pane running command
 -- tmux `list-panes -F '#{pane_current_command}'`, zellij `list-panes -c -j`.
 Whether that's worth wiring up is a separate question; today, for these
 backends, `statusArgv` returns `nil`.
+
+**tmux command status is a separate capability from agent status.** The pinned
+Ghostty shell integration reports OSC 133 command completion to Vakta. For a
+tmux session, Vakta resolves the active window and stores the exit code in the
+namespaced window option `@vakta_last_exit`; workspace enumeration includes that
+option so the sidebar can show a green circle for `0` and a red circle for any
+nonzero result. The value is unknown until the first shell-integrated command
+completes, and the command-status path is deliberately not presented as an
+agent status.
 
 **Event streams exist in all three but are not the same abstraction.** herdr's
 is a structural session/pane event socket. tmux control mode (`-C`, or `-CC`

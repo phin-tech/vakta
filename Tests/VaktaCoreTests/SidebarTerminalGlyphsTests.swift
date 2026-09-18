@@ -38,6 +38,16 @@ final class SidebarTerminalGlyphsTests: XCTestCase {
         XCTAssertEqual(SidebarTerminalGlyphs.workspaceStatus(.unavailable), "·")
     }
 
+    func test_tmuxCommandStatus_isAFilledCircleWhenExitCodeIsKnown() {
+        XCTAssertEqual(SidebarTerminalGlyphs.tmuxCommandStatus(0), "●")
+        XCTAssertEqual(SidebarTerminalGlyphs.tmuxCommandStatus(1), "●")
+        XCTAssertEqual(SidebarTerminalGlyphs.tmuxCommandStatus(127), "●")
+    }
+
+    func test_tmuxCommandStatus_isAMutedMiddleDotBeforeTheFirstCommand() {
+        XCTAssertEqual(SidebarTerminalGlyphs.tmuxCommandStatus(nil), "·")
+    }
+
     func test_sessionStatus_isAFilledCircleForEveryLiveAgentStatus() {
         for status in [AgentStatus.working, .attention, .idle] {
             XCTAssertEqual(SidebarTerminalGlyphs.sessionStatus(status), "●", "\(status)")

@@ -25,9 +25,9 @@ final class WorkspaceQueryTests: XCTestCase {
         XCTAssertEqual(
             WorkspaceQuery.parse(json, backend: .herdr),
             [
-                Workspace(id: "w2C", label: "guildhall", focused: false),
-                Workspace(id: "w2D", label: "vakta", focused: false),
-                Workspace(id: "w2E", label: "data-platform", focused: true),
+                Workspace(id: "w2C", label: "guildhall", focused: false, lastCommandExitCode: nil),
+                Workspace(id: "w2D", label: "vakta", focused: false, lastCommandExitCode: nil),
+                Workspace(id: "w2E", label: "data-platform", focused: true, lastCommandExitCode: nil),
             ]
         )
     }
@@ -66,12 +66,13 @@ final class WorkspaceQueryTests: XCTestCase {
         // which the actual process environment never provides (see
         // `ProcessRunner.run` and `LaunchTargetShellTests`'s real-tmux
         // regression test).
-        let output = "@1|guildhall|1\n@2|vakta|0"
+        let output = "@1|guildhall|1|0\n@2|vakta|0|1\n@3|shell|0|"
         XCTAssertEqual(
             WorkspaceQuery.parse(output, backend: .tmux),
             [
-                Workspace(id: "@1", label: "guildhall", focused: true),
-                Workspace(id: "@2", label: "vakta", focused: false),
+                Workspace(id: "@1", label: "guildhall", focused: true, lastCommandExitCode: 0),
+                Workspace(id: "@2", label: "vakta", focused: false, lastCommandExitCode: 1),
+                Workspace(id: "@3", label: "shell", focused: false, lastCommandExitCode: nil),
             ]
         )
     }
@@ -81,12 +82,12 @@ final class WorkspaceQueryTests: XCTestCase {
     }
 
     func test_parse_tmux_malformedLine_isDropped() {
-        let output = "@1|guildhall|1\nnot-enough-fields\n@2|vakta|0"
+        let output = "@1|guildhall|1|0\nnot-enough-fields\n@2|vakta|0|7"
         XCTAssertEqual(
             WorkspaceQuery.parse(output, backend: .tmux),
             [
-                Workspace(id: "@1", label: "guildhall", focused: true),
-                Workspace(id: "@2", label: "vakta", focused: false),
+                Workspace(id: "@1", label: "guildhall", focused: true, lastCommandExitCode: 0),
+                Workspace(id: "@2", label: "vakta", focused: false, lastCommandExitCode: 7),
             ]
         )
     }
@@ -94,7 +95,15 @@ final class WorkspaceQueryTests: XCTestCase {
     func test_parse_tmux_windowNameContainingDelimiter_staysIntact() {
         // A window name with `|` in it must not corrupt the split -- only
         // the first and last `|` are structural.
-        let output = "@1|left|right|1"
-        XCTAssertEqual(WorkspaceQuery.parse(output, backend: .tmux), [Workspace(id: "@1", label: "left|right", focused: true)])
+        let output = "@1|left|right|1|2"
+        XCTAssertEqual(WorkspaceQuery.parse(output, backend: .tmux), [Workspace(id: "@1", label: "left|right", focused: true, lastCommandExitCode: 2)])
+    }
+
+    func test_parse_tmux_invalidStatus_isUnknownRatherThanDroppingTheWindow() {
+        let output = "@1|build|1|not-a-number"
+        XCTAssertEqual(
+            WorkspaceQuery.parse(output, backend: .tmux),
+            [Workspace(id: "@1", label: "build", focused: true, lastCommandExitCode: nil)]
+        )
     }
 }

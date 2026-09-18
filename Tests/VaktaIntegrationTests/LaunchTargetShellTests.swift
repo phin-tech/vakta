@@ -142,6 +142,42 @@ final class LaunchTargetShellTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: outputDirectory.appendingPathComponent("argv").path))
     }
 
+    // MARK: TmuxCommandStatusRecorder
+
+    func test_tmuxCommandStatusRecorder_queriesCurrentWindowAndPersistsExitCode() {
+        let script = """
+        #!/bin/sh
+        for a in "$@"; do
+            printf '%s\\n' "$a" >> "$OUT/argv"
+        done
+        if [ "$1" = "display-message" ]; then
+            printf '@1\\n'
+        fi
+        """
+        try? script.write(to: captureURL, atomically: true, encoding: .utf8)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: captureURL.path)
+
+        let target = MultiplexerTarget(
+            backend: .tmux,
+            executable: captureURL.path,
+            tmuxSocketPath: nil,
+            environment: ["OUT": outputDirectory.path]
+        )
+
+        XCTAssertTrue(
+            TmuxCommandStatusRecorder.record(
+                exitCode: 7,
+                sessionName: "my-session",
+                target: target,
+                path: "/usr/bin:/bin"
+            )
+        )
+        XCTAssertEqual(
+            readOutput("argv"),
+            "display-message\n-p\n-t\nmy-session\n#{window_id}\nset-window-option\n-t\nmy-session:@1\n@vakta_last_exit\n7"
+        )
+    }
+
     // MARK: WorkspaceQuery
 
     func test_workspaceQuery_usesTargetsExecutableAndEnvironment() {
@@ -179,7 +215,7 @@ final class LaunchTargetShellTests: XCTestCase {
             printf '%s\\n' "$a" >> "$OUT/argv"
         done
         printf '%s\\n' "${MARKER-<absent>}" > "$OUT/marker"
-        printf '@1|guildhall|1\\n@2|vakta|0\\n'
+        printf '@1|guildhall|1|0\\n@2|vakta|0|3\\n'
         """
         try? script.write(to: captureURL, atomically: true, encoding: .utf8)
         try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: captureURL.path)
@@ -196,13 +232,13 @@ final class LaunchTargetShellTests: XCTestCase {
         XCTAssertEqual(
             workspaces,
             [
-                Workspace(id: "@1", label: "guildhall", focused: true),
-                Workspace(id: "@2", label: "vakta", focused: false),
+                Workspace(id: "@1", label: "guildhall", focused: true, lastCommandExitCode: 0),
+                Workspace(id: "@2", label: "vakta", focused: false, lastCommandExitCode: 3),
             ]
         )
         XCTAssertEqual(
             readOutput("argv"),
-            "list-windows\n-t\nmy-session\n-F\n#{window_id}|#{window_name}|#{window_active}"
+            "list-windows\n-t\nmy-session\n-F\n#{window_id}|#{window_name}|#{window_active}|#{@vakta_last_exit}"
         )
         XCTAssertEqual(readOutput("marker"), "workspace-poll")
     }

@@ -99,7 +99,41 @@ struct MultiplexerTarget: Equatable {
         case .herdr:
             return [executable, "--session", sessionName, "workspace", "list"]
         case .tmux:
-            return tmuxArgv(["list-windows", "-t", sessionName, "-F", "#{window_id}|#{window_name}|#{window_active}"])
+            return tmuxArgv([
+                "list-windows", "-t", sessionName, "-F",
+                "#{window_id}|#{window_name}|#{window_active}|#{@vakta_last_exit}"
+            ])
+        }
+    }
+
+    /// The argv to read the currently active workspace id for `sessionName`.
+    /// tmux uses this when the terminal's shell integration reports a command
+    /// completion; the active pane is the pane that emitted the report.
+    func activeWorkspaceIDArgv(sessionName: String) -> [String]? {
+        switch backend {
+        case .herdr:
+            return nil
+        case .tmux:
+            return tmuxArgv(["display-message", "-p", "-t", sessionName, "#{window_id}"])
+        }
+    }
+
+    /// The argv to persist a command exit code on one tmux window. User
+    /// options are intentionally namespaced so Vakta does not alter tmux's
+    /// built-in status fields or the user's window options.
+    func setWorkspaceCommandStatusArgv(
+        sessionName: String,
+        workspaceID: String,
+        exitCode: Int
+    ) -> [String]? {
+        switch backend {
+        case .herdr:
+            return nil
+        case .tmux:
+            return tmuxArgv([
+                "set-window-option", "-t", "\(sessionName):\(workspaceID)",
+                "@vakta_last_exit", "\(exitCode)"
+            ])
         }
     }
 

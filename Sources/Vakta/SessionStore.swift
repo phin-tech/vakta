@@ -173,6 +173,11 @@ final class SessionStore: ObservableObject {
     /// controller live.
     let terminalSettings: TerminalSettingsStore
     private var terminalSettingsObserver: AnyCancellable?
+    /// One shell-integration observer per tmux session. The Ghostty shell
+    /// integration reports OSC 133 command completion through the terminal
+    /// view state; the observer persists that result on the active tmux
+    /// window for the workspace disclosure rows.
+    private var tmuxCommandStatusObservers: [Session.ID: AnyCancellable] = [:]
 
     /// Which statuses populate `unreadPanes` -- see `UnreadTrackingSettings`.
     let unreadTrackingSettings: UnreadTrackingSettingsStore
@@ -721,10 +726,45 @@ final class SessionStore: ObservableObject {
 
         sessions.append(session)
         hostContainer.addSession(session)
+        startTmuxCommandStatusObserver(for: session)
         startHerdrEventClientIfApplicable(for: session)
         select(session.id)
         saveWorkspace()
         return session
+    }
+
+    /// Observes the pinned Ghostty shell integration's command-finished
+    /// callback for tmux sessions. A tmux query runs off the main actor: first
+    /// resolve the active window, then set its namespaced user option.
+    private func startTmuxCommandStatusObserver(for session: Session) {
+        guard case .multiplexer(let target) = LaunchTargetResolver.resolve(session.profile),
+              target.backend == .tmux
+        else { return }
+
+        tmuxCommandStatusObservers[session.id] = session.viewState.$lastCommandExitCode
+            .compactMap { $0 }
+            .removeDuplicates()
+            .sink { [weak self, weak session] exitCode in
+                guard let self, let session else { return }
+                let sessionID = session.id
+                let sessionName = session.sessionName
+                let path = self.resolvedPATH
+                let shouldRefreshVisibleWorkspaces = self.workspaces[sessionID] != nil
+                DispatchQueue.global(qos: .utility).async { [weak self] in
+                    guard let self, !self.isShuttingDown else { return }
+                    let recorded = TmuxCommandStatusRecorder.record(
+                        exitCode: exitCode,
+                        sessionName: sessionName,
+                        target: target,
+                        path: path,
+                        isCancelled: { [weak self] in self?.isShuttingDown ?? true }
+                    )
+                    guard recorded, shouldRefreshVisibleWorkspaces else { return }
+                    DispatchQueue.main.async { [weak self] in
+                        self?.fetchWorkspaces(for: sessionID)
+                    }
+                }
+            }
     }
 
     /// Starts a `HerdrEventStreamClient` for `session` if it's a herdr
@@ -851,6 +891,7 @@ final class SessionStore: ObservableObject {
             paneStatusByWorkspaceID[workspace.id] = nil
         }
         workspaces[id] = nil
+        tmuxCommandStatusObservers[id] = nil
         herdrEventClients[id]?.stop()
         herdrEventClients[id] = nil
         herdrSubscribedPaneIDs[id] = nil
