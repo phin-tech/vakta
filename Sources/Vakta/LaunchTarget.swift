@@ -101,29 +101,18 @@ struct MultiplexerTarget: Equatable {
         case .tmux:
             return tmuxArgv([
                 "list-windows", "-t", sessionName, "-F",
-                "#{window_id}|#{window_name}|#{window_active}|#{@vakta_last_exit}"
+                "#{window_id}|#{window_name}|#{window_active}|#{\(TmuxCommandStatusHook.optionName)}"
             ])
         }
     }
 
-    /// The argv to read the currently active workspace id for `sessionName`.
-    /// tmux uses this when the terminal's shell integration reports a command
-    /// completion; the active pane is the pane that emitted the report.
-    func activeWorkspaceIDArgv(sessionName: String) -> [String]? {
-        switch backend {
-        case .herdr:
-            return nil
-        case .tmux:
-            return tmuxArgv(["display-message", "-p", "-t", sessionName, "#{window_id}"])
-        }
-    }
-
-    /// The argv to persist a command exit code on one tmux window. User
-    /// options are intentionally namespaced so Vakta does not alter tmux's
-    /// built-in status fields or the user's window options.
-    func setWorkspaceCommandStatusArgv(
+    /// The argv to persist a command exit code on the tmux session's current
+    /// window. Keeping the lookup and write in one tmux invocation avoids a
+    /// stale window id when the user changes windows between subprocesses.
+    /// The shell integration callback is delivered for the attached session,
+    /// so its current window is the only identity available at this boundary.
+    func setActiveWorkspaceCommandStatusArgv(
         sessionName: String,
-        workspaceID: String,
         exitCode: Int
     ) -> [String]? {
         switch backend {
@@ -131,8 +120,8 @@ struct MultiplexerTarget: Equatable {
             return nil
         case .tmux:
             return tmuxArgv([
-                "set-window-option", "-t", "\(sessionName):\(workspaceID)",
-                "@vakta_last_exit", "\(exitCode)"
+                "set-window-option", "-t", sessionName,
+                TmuxCommandStatusHook.optionName, "\(exitCode)"
             ])
         }
     }

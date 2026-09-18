@@ -51,6 +51,23 @@ final class TmuxCommandStatusHookTests: XCTestCase {
 
         XCTAssertEqual(try waitForOption("one", tmux: tmux), "1")
         XCTAssertEqual(try waitForOption("two", tmux: tmux), "7")
+
+        let target = MultiplexerTarget(
+            backend: .tmux,
+            executable: tmuxPath,
+            tmuxSocketPath: nil,
+            tmuxSocketName: socketName,
+            environment: [:]
+        )
+        XCTAssertTrue(
+            TmuxCommandStatusRecorder.record(
+                exitCode: 9,
+                sessionName: "probe",
+                target: target,
+                path: "/usr/bin:/bin"
+            )
+        )
+        XCTAssertEqual(try waitForOption("two", tmux: tmux), "9")
     }
 
     private func waitForOption(
@@ -63,6 +80,10 @@ final class TmuxCommandStatusHookTests: XCTestCase {
             if !value.isEmpty { return value }
             Thread.sleep(forTimeInterval: 0.025)
         }
-        return ""
+        throw NSError(
+            domain: "TmuxCommandStatusHookTests",
+            code: 1,
+            userInfo: [NSLocalizedDescriptionKey: "Timed out waiting for @vakta_last_exit in window \(window)"]
+        )
     }
 }

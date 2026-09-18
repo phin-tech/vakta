@@ -652,8 +652,6 @@ func sidebarStatusIsCheckmark(_ status: AgentStatus) -> Bool {
     status == .done
 }
 
-/// A short human label for `status` -- shared by session rows' tooltips and
-/// the bell popover, so an unread entry says *why* it's there.
 /// tmux command status colors are intentionally binary: zero is success,
 /// every nonzero code is failure, and nil stays muted until the first command
 /// completes.
@@ -662,6 +660,8 @@ func sidebarTmuxCommandStatusColor(_ exitCode: Int?) -> Color {
     return exitCode == 0 ? .green : .red
 }
 
+/// A short human label for `status` -- shared by session rows' tooltips and
+/// the bell popover, so an unread entry says *why* it's there.
 func sidebarStatusDescription(_ status: AgentStatus) -> String {
     switch status {
     case .working: return "Working"
@@ -843,7 +843,11 @@ private struct WorkspaceRow: View {
             // collapses to nothing, which would un-reserve the column.
             ZStack {
                 if isTmux {
-                    if workspace.lastCommandExitCode != nil {
+                    if workspace.lastCommandExitCode == nil {
+                        Text(SidebarTerminalGlyphs.tmuxCommandStatus(nil))
+                            .font(.caption)
+                            .foregroundStyle(sidebarTmuxCommandStatusColor(nil))
+                    } else {
                         Circle()
                             .fill(sidebarTmuxCommandStatusColor(workspace.lastCommandExitCode))
                             .frame(width: 6, height: 6)

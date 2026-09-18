@@ -144,18 +144,15 @@ final class LaunchTargetShellTests: XCTestCase {
 
     // MARK: TmuxCommandStatusRecorder
 
-    func test_tmuxCommandStatusRecorder_queriesCurrentWindowAndPersistsExitCode() {
+    func test_tmuxCommandStatusRecorder_persistsExitCodeOnCurrentWindow() throws {
         let script = """
         #!/bin/sh
         for a in "$@"; do
             printf '%s\\n' "$a" >> "$OUT/argv"
         done
-        if [ "$1" = "display-message" ]; then
-            printf '@1\\n'
-        fi
         """
-        try? script.write(to: captureURL, atomically: true, encoding: .utf8)
-        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: captureURL.path)
+        try script.write(to: captureURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: captureURL.path)
 
         let target = MultiplexerTarget(
             backend: .tmux,
@@ -174,7 +171,7 @@ final class LaunchTargetShellTests: XCTestCase {
         )
         XCTAssertEqual(
             readOutput("argv"),
-            "display-message\n-p\n-t\nmy-session\n#{window_id}\nset-window-option\n-t\nmy-session:@1\n@vakta_last_exit\n7"
+            "set-window-option\n-t\nmy-session\n@vakta_last_exit\n7"
         )
     }
 

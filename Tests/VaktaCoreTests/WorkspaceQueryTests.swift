@@ -106,4 +106,12 @@ final class WorkspaceQueryTests: XCTestCase {
             [Workspace(id: "@1", label: "build", focused: true, lastCommandExitCode: nil)]
         )
     }
+
+    func test_parse_tmux_legacyThreeFieldWindowNameContainingDelimiter_staysIntact() {
+        let output = "@1|left|right|1"
+        XCTAssertEqual(
+            WorkspaceQuery.parse(output, backend: .tmux),
+            [Workspace(id: "@1", label: "left|right", focused: true, lastCommandExitCode: nil)]
+        )
+    }
 }

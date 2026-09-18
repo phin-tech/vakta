@@ -41,8 +41,8 @@ enum TmuxCommandStatusHook {
 
 /// Runs the host-side half of the command-status hook. Ghostty's shell
 /// integration emits the command-finished callback for tmux's nested shell;
-/// this resolves the active window and persists the callback's exit code in a
-/// namespaced tmux window option for the next workspace refresh.
+/// this persists the callback's exit code on the session's current window in
+/// one tmux invocation for the next workspace refresh.
 enum TmuxCommandStatusRecorder {
     @discardableResult
     static func record(
@@ -53,20 +53,8 @@ enum TmuxCommandStatusRecorder {
         isCancelled: @escaping () -> Bool = { false }
     ) -> Bool {
         guard target.backend == .tmux,
-              let workspaceArgv = target.activeWorkspaceIDArgv(sessionName: sessionName),
-              let workspaceIDOutput = ProcessRunner.run(
-                  workspaceArgv,
-                  path: path,
-                  environment: target.environment,
-                  isCancelled: isCancelled
-              )
-        else { return false }
-
-        let workspaceID = workspaceIDOutput.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !workspaceID.isEmpty,
-              let setArgv = target.setWorkspaceCommandStatusArgv(
+              let setArgv = target.setActiveWorkspaceCommandStatusArgv(
                   sessionName: sessionName,
-                  workspaceID: workspaceID,
                   exitCode: exitCode
               )
         else { return false }

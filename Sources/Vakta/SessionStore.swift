@@ -178,6 +178,10 @@ final class SessionStore: ObservableObject {
     /// view state; the observer persists that result on the active tmux
     /// window for the workspace disclosure rows.
     private var tmuxCommandStatusObservers: [Session.ID: AnyCancellable] = [:]
+    /// Serializes status writes per tmux session. Process launches are
+    /// otherwise concurrent, so an older command could finish after a newer
+    /// one and overwrite its status.
+    private var tmuxCommandStatusQueues: [Session.ID: DispatchQueue] = [:]
 
     /// Which statuses populate `unreadPanes` -- see `UnreadTrackingSettings`.
     let unreadTrackingSettings: UnreadTrackingSettingsStore
@@ -734,23 +738,26 @@ final class SessionStore: ObservableObject {
     }
 
     /// Observes the pinned Ghostty shell integration's command-finished
-    /// callback for tmux sessions. A tmux query runs off the main actor: first
-    /// resolve the active window, then set its namespaced user option.
+    /// callback for tmux sessions. Each callback is serialized per session and
+    /// writes the namespaced option on the session's current window.
     private func startTmuxCommandStatusObserver(for session: Session) {
         guard case .multiplexer(let target) = LaunchTargetResolver.resolve(session.profile),
               target.backend == .tmux
         else { return }
 
-        tmuxCommandStatusObservers[session.id] = session.viewState.$lastCommandExitCode
+        let sessionID = session.id
+        let statusQueue = DispatchQueue(
+            label: "tech.phin.vakta.tmux-command-status.\(sessionID.uuidString)",
+            qos: .utility
+        )
+        tmuxCommandStatusQueues[sessionID] = statusQueue
+        tmuxCommandStatusObservers[sessionID] = session.viewState.$lastCommandExitCode
             .compactMap { $0 }
-            .removeDuplicates()
             .sink { [weak self, weak session] exitCode in
                 guard let self, let session else { return }
-                let sessionID = session.id
                 let sessionName = session.sessionName
                 let path = self.resolvedPATH
-                let shouldRefreshVisibleWorkspaces = self.workspaces[sessionID] != nil
-                DispatchQueue.global(qos: .utility).async { [weak self] in
+                statusQueue.async { [weak self] in
                     guard let self, !self.isShuttingDown else { return }
                     let recorded = TmuxCommandStatusRecorder.record(
                         exitCode: exitCode,
@@ -759,9 +766,10 @@ final class SessionStore: ObservableObject {
                         path: path,
                         isCancelled: { [weak self] in self?.isShuttingDown ?? true }
                     )
-                    guard recorded, shouldRefreshVisibleWorkspaces else { return }
+                    guard recorded else { return }
                     DispatchQueue.main.async { [weak self] in
-                        self?.fetchWorkspaces(for: sessionID)
+                        guard let self, self.workspaces[sessionID] != nil else { return }
+                        self.fetchWorkspaces(for: sessionID)
                     }
                 }
             }
@@ -892,6 +900,7 @@ final class SessionStore: ObservableObject {
         }
         workspaces[id] = nil
         tmuxCommandStatusObservers[id] = nil
+        tmuxCommandStatusQueues[id] = nil
         herdrEventClients[id]?.stop()
         herdrEventClients[id] = nil
         herdrSubscribedPaneIDs[id] = nil

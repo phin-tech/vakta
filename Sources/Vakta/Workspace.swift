@@ -81,17 +81,22 @@ enum WorkspaceQuery {
             let afterID = line.index(after: first)
             guard let last = line.lastIndex(of: "|"), first < last else { return nil }
 
-            if let beforeLast = line[..<last].lastIndex(of: "|"), beforeLast >= afterID {
-                let label = line[afterID..<beforeLast]
+            if let beforeLast = line[..<last].lastIndex(of: "|"), beforeLast > first {
                 let activeFlag = line[line.index(after: beforeLast)..<last]
-                let rawExitCode = line[line.index(after: last)...]
-                let exitCode = Int(rawExitCode)
-                return Workspace(
-                    id: String(id),
-                    label: String(label),
-                    focused: activeFlag == "1",
-                    lastCommandExitCode: exitCode
-                )
+                // A four-field record has an explicit 0/1 active flag before
+                // the final status field. A legacy three-field record may
+                // contain arbitrary `|` characters in its label, so only that
+                // shape is unambiguous enough to decode as the new format.
+                if activeFlag == "0" || activeFlag == "1" {
+                    let label = line[afterID..<beforeLast]
+                    let rawExitCode = line[line.index(after: last)...]
+                    return Workspace(
+                        id: String(id),
+                        label: String(label),
+                        focused: activeFlag == "1",
+                        lastCommandExitCode: TmuxCommandStatusHook.exitCode(from: rawExitCode)
+                    )
+                }
             }
 
             // Compatibility with the original three-field query.

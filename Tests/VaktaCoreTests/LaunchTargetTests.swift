@@ -214,19 +214,11 @@ final class LaunchTargetTests: XCTestCase {
         )
     }
 
-    func test_activeWorkspaceIDArgv_tmux_queriesTheCurrentWindow() {
-        let target = MultiplexerTarget(backend: .tmux, executable: "tmux", tmuxSocketPath: nil, environment: [:])
-        XCTAssertEqual(
-            target.activeWorkspaceIDArgv(sessionName: "foo"),
-            ["tmux", "display-message", "-p", "-t", "foo", "#{window_id}"]
-        )
-    }
-
-    func test_setWorkspaceCommandStatusArgv_tmux_setsTheNamespacedWindowOption() {
+    func test_setActiveWorkspaceCommandStatusArgv_tmux_setsTheCurrentWindowOption() {
         let target = MultiplexerTarget(backend: .tmux, executable: "tmux", tmuxSocketPath: "/tmp/custom", environment: [:])
         XCTAssertEqual(
-            target.setWorkspaceCommandStatusArgv(sessionName: "foo", workspaceID: "@1", exitCode: 7),
-            ["tmux", "-S", "/tmp/custom", "set-window-option", "-t", "foo:@1", "@vakta_last_exit", "7"]
+            target.setActiveWorkspaceCommandStatusArgv(sessionName: "foo", exitCode: 7),
+            ["tmux", "-S", "/tmp/custom", "set-window-option", "-t", "foo", "@vakta_last_exit", "7"]
         )
     }
 
