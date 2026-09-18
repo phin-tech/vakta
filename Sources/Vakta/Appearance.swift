@@ -57,4 +57,26 @@ enum SidebarFontMode: String, Codable, CaseIterable, Identifiable {
 struct AppearanceSettings: Codable, Equatable {
     var appearance: AppAppearance = .system
     var sidebarFont: SidebarFontMode = .system
+    /// Terminal style's row font size in points. `0` means "follow the
+    /// terminal's own size" (the same sentinel `TerminalSettings.fontSize`
+    /// uses for "no explicit size"). Stored as decoded, even out of range:
+    /// `SidebarRowFontResolver` validates at use, so one bad number never
+    /// costs the user the rest of the file.
+    var sidebarFontSize: Double = 0
+
+    init(appearance: AppAppearance = .system, sidebarFont: SidebarFontMode = .system, sidebarFontSize: Double = 0) {
+        self.appearance = appearance
+        self.sidebarFont = sidebarFont
+        self.sidebarFontSize = sidebarFontSize
+    }
+
+    /// Explicit so a file written before `sidebarFontSize` existed still
+    /// decodes: a synthesized decoder treats the missing key as an error,
+    /// which would read the whole file as corrupt.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        appearance = try container.decode(AppAppearance.self, forKey: .appearance)
+        sidebarFont = try container.decode(SidebarFontMode.self, forKey: .sidebarFont)
+        sidebarFontSize = try container.decodeIfPresent(Double.self, forKey: .sidebarFontSize) ?? 0
+    }
 }

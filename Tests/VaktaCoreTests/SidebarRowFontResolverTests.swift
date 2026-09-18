@@ -11,6 +11,38 @@ import XCTest
 @testable import Vakta
 
 final class SidebarRowFontResolverTests: XCTestCase {
+    // MARK: Explicit sidebar size (the Appearance preference)
+
+    func test_explicitSidebarSize_winsOverTheTerminalSize() {
+        XCTAssertEqual(SidebarRowFontResolver.fontSize(sidebarOverride: 11, matchingTerminal: 18), 11)
+    }
+
+    func test_explicitSidebarSize_winsEvenWhenTheTerminalIsAtItsDefault() {
+        XCTAssertEqual(SidebarRowFontResolver.fontSize(sidebarOverride: 16, matchingTerminal: 0), 16)
+    }
+
+    func test_sidebarSizeSentinelZero_followsTheTerminalSize() {
+        XCTAssertEqual(SidebarRowFontResolver.fontSize(sidebarOverride: 0, matchingTerminal: 18), 18)
+        XCTAssertEqual(SidebarRowFontResolver.fontSize(sidebarOverride: 0, matchingTerminal: 0), 13)
+    }
+
+    func test_invalidSidebarSize_fromAHandEditedFile_followsTheTerminalSizeInstead() {
+        for bad in [Double.nan, .infinity, -4, 1e300] {
+            XCTAssertEqual(
+                SidebarRowFontResolver.fontSize(sidebarOverride: bad, matchingTerminal: 18), 18, "\(bad)"
+            )
+        }
+    }
+
+    func test_hasExplicitSize_isTrueOnlyForAValidNonZeroSize() {
+        // Drives whether the family-less terminal style drops Dynamic Type
+        // for a fixed size: only when the user actually asked for one.
+        XCTAssertTrue(SidebarRowFontResolver.hasExplicitSize(14))
+        XCTAssertFalse(SidebarRowFontResolver.hasExplicitSize(0))
+        XCTAssertFalse(SidebarRowFontResolver.hasExplicitSize(.nan))
+        XCTAssertFalse(SidebarRowFontResolver.hasExplicitSize(1e300))
+    }
+
     func test_normalTerminalFontSize_isUsedDirectly() {
         XCTAssertEqual(SidebarRowFontResolver.fontSize(matchingTerminal: 18), 18)
     }

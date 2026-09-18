@@ -21,4 +21,17 @@ enum SidebarRowFontResolver {
         let effective = TerminalFontSizeValidator.effective(terminalFontSize)
         return effective > 0 ? effective : fallback
     }
+
+    /// The size with the Appearance preference applied: an explicit sidebar
+    /// size wins; `0` or an invalid value (validated like the terminal's,
+    /// since a hand-edited file can hold anything) follows the terminal.
+    static func fontSize(sidebarOverride: Double, matchingTerminal terminalFontSize: Double, fallback: Double = 13) -> Double {
+        let explicit = TerminalFontSizeValidator.effective(sidebarOverride)
+        return explicit > 0 ? explicit : fontSize(matchingTerminal: terminalFontSize, fallback: fallback)
+    }
+
+    /// Whether the user actually chose a sidebar size (valid and non-zero).
+    static func hasExplicitSize(_ sidebarOverride: Double) -> Bool {
+        TerminalFontSizeValidator.effective(sidebarOverride) > 0
+    }
 }

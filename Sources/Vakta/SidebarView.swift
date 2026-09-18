@@ -53,25 +53,42 @@ struct SidebarView: View {
     /// session row's own disclosure/status icon, not at an arbitrary indent.
     fileprivate static let herdrGutterWidth: CGFloat = 10
 
-    /// Whether the sidebar is in terminal style (font + prompt caret + squared
-    /// full-width selection).
+    /// Terminal-style row insets: no vertical padding, so consecutive rows
+    /// stack at the font's own line height like lines of terminal output
+    /// instead of at the sidebar list style's airier pitch.
+    fileprivate static let terminalRowInsets = EdgeInsets(top: 0, leading: 10, bottom: 0, trailing: 10)
+
+    /// Whether the sidebar is in terminal style: terminal font, rows at the
+    /// font's line height, text glyphs (see `SidebarTerminalGlyphs`) instead
+    /// of symbols/shapes, and squared full-width highlights.
     private var terminalStyle: Bool { appearanceStore.sidebarFont == .matchTerminal }
 
     /// The font for session-name rows: the terminal font family and size when
     /// terminal style is chosen and a custom family is set; the system
     /// monospaced text style (Dynamic Type, no fixed size) when terminal
     /// style is chosen but the family is ghostty's own default; otherwise
-    /// `nil` to keep the default sidebar font. The family-less branch
-    /// deliberately does not also apply `terminalSettings.fontSize`:
-    /// `Font.system(size:design:)` has no `relativeTo:` counterpart, so
-    /// doing that would drop Dynamic Type scaling for that case.
+    /// `nil` to keep the default sidebar font. The size is the Appearance
+    /// preference's explicit sidebar size when set, else the terminal's (see
+    /// `SidebarRowFontResolver`). The family-less branch deliberately does
+    /// not apply `terminalSettings.fontSize`: `Font.system(size:design:)`
+    /// has no `relativeTo:` counterpart, so that would drop Dynamic Type
+    /// scaling -- a trade made only for an explicit sidebar size.
     private var rowFont: Font? {
         guard terminalStyle else { return nil }
         let family = terminalSettings.fontFamily.trimmingCharacters(in: .whitespaces)
+        let override = appearanceStore.sidebarFontSize
         if family.isEmpty {
-            return .system(.body, design: .monospaced)
+            // An explicit sidebar size is the one case worth trading Dynamic
+            // Type for: the user asked for that exact size.
+            guard SidebarRowFontResolver.hasExplicitSize(override) else {
+                return .system(.body, design: .monospaced)
+            }
+            let size = SidebarRowFontResolver.fontSize(sidebarOverride: override, matchingTerminal: 0)
+            return .system(size: size, design: .monospaced)
         }
-        let size = SidebarRowFontResolver.fontSize(matchingTerminal: terminalSettings.fontSize)
+        let size = SidebarRowFontResolver.fontSize(
+            sidebarOverride: override, matchingTerminal: terminalSettings.fontSize
+        )
         return .custom(family, size: size, relativeTo: .body)
     }
 
@@ -83,6 +100,7 @@ struct SidebarView: View {
                 if collapsed {
                     rail
                 } else {
+                    if terminalStyle { sectionLabel }
                     fullList
                 }
                 footer(collapsed: collapsed)
@@ -145,6 +163,18 @@ struct SidebarView: View {
             .padding(.horizontal, 10)
             .padding(.bottom, 4)
         }
+    }
+
+    /// Terminal style only: a muted lowercase heading over the list, echoing
+    /// herdr's own `machines` section label. Its own row rather than part of
+    /// `header`, whose left side must stay clear for the traffic lights.
+    private var sectionLabel: some View {
+        Text("sessions")
+            .font(rowFont)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, Self.terminalRowInsets.leading)
+            .padding(.bottom, 4)
     }
 
     private func collapseToggleButton(collapsed: Bool) -> some View {
@@ -295,7 +325,10 @@ struct SidebarView: View {
                                 }
                                 .buttonStyle(.plain)
                             } else {
-                                Color.clear
+                                // Fixed height: an unbounded `Color.clear`
+                                // is vertically greedy and would drag the
+                                // row's first-text baseline to its bottom.
+                                Color.clear.frame(height: 1)
                             }
                         }
                         .frame(width: Self.herdrGutterWidth, alignment: .center)
@@ -327,6 +360,8 @@ struct SidebarView: View {
                             .padding(.horizontal, terminalStyle ? 0 : 6)
                         : nil
                 )
+                .listRowInsets(terminalStyle ? Self.terminalRowInsets : nil)
+                .listRowSeparator(terminalStyle ? .hidden : .automatic)
                 .contentShape(Rectangle())
                 .onTapGesture {
                     guard editingID != session.id else { return }
@@ -342,8 +377,25 @@ struct SidebarView: View {
                         WorkspaceRow(
                             workspace: workspace,
                             status: sessionStore.paneStatusByWorkspaceID[workspace.id] ?? .none,
-                            font: rowFont
+                            font: rowFont,
+                            terminalStyle: terminalStyle
                         )
+                            // Focus is a row background in both styles, shaped
+                            // like the session selection above (square and
+                            // full-width in terminal style, an inset rounded
+                            // pill otherwise) so text stays centered in it.
+                            // Only the selected session's focused workspace
+                            // is prominent -- see `SidebarRowPresentation`.
+                            .listRowBackground(
+                                workspaceHighlightBackground(
+                                    SidebarRowPresentation.workspaceHighlight(
+                                        workspaceFocused: workspace.focused,
+                                        sessionSelected: session.id == sessionStore.selectedID
+                                    )
+                                )
+                            )
+                            .listRowInsets(terminalStyle ? Self.terminalRowInsets : nil)
+                            .listRowSeparator(terminalStyle ? .hidden : .automatic)
                             .contentShape(Rectangle())
                             .onTapGesture {
                                 sessionStore.focusWorkspace(workspace.id, in: session.id)
@@ -353,10 +405,26 @@ struct SidebarView: View {
             }
         }
         .listStyle(.sidebar)
+        .modifier(TerminalRowDensity(enabled: terminalStyle))
         // Hide the List's own opaque background so the sidebar's color shows
         // through, and tint controls with the terminal theme's accent.
         .scrollContentBackground(.hidden)
         .tint(Color(nsColor: sessionStore.terminalAccentColor))
+    }
+
+    @ViewBuilder
+    private func workspaceHighlightBackground(_ highlight: SidebarRowPresentation.WorkspaceHighlight) -> some View {
+        let opacity: Double = {
+            switch highlight {
+            case .none: return 0
+            case .subtle: return 0.07
+            case .prominent: return 0.18
+            }
+        }()
+        RoundedRectangle(cornerRadius: terminalStyle ? 0 : 6)
+            .fill(Color.secondary.opacity(opacity))
+            .padding(.horizontal, terminalStyle ? 0 : 6)
+            .animation(.easeOut(duration: 0.08), value: highlight)
     }
 
     private func supportsWorkspaces(_ session: Session) -> Bool {
@@ -364,14 +432,13 @@ struct SidebarView: View {
     }
 
     /// A native SF Symbol chevron reads oddly next to terminal-style rows'
-    /// monospace "❯" prompt caret and plain-text look, so terminal style
-    /// gets a classic terminal-tree +/- glyph instead -- matching herdr's own
-    /// "distinct symbols" convention rather than mixing icon fonts with
-    /// terminal text.
+    /// plain-text look, so terminal style gets herdr's own ▾/▸ tree
+    /// triangles in the terminal font instead (see `SidebarTerminalGlyphs`)
+    /// rather than mixing icon fonts with terminal text.
     @ViewBuilder
     private func herdrDisclosureGlyph(expanded: Bool) -> some View {
         if terminalStyle {
-            Text(expanded ? "-" : "+")
+            Text(SidebarTerminalGlyphs.disclosure(expanded: expanded))
                 .font(rowFont)
         } else {
             Image(systemName: expanded ? "chevron.down" : "chevron.right")
@@ -547,6 +614,21 @@ private struct DottedRule: Shape {
     }
 }
 
+/// Terminal style only: lets list rows shrink to the font's own line height.
+/// A conditional modifier (rather than always writing the environment value)
+/// so system style keeps the list style's untouched default minimum.
+private struct TerminalRowDensity: ViewModifier {
+    let enabled: Bool
+
+    func body(content: Content) -> some View {
+        if enabled {
+            content.environment(\.defaultMinListRowHeight, 1)
+        } else {
+            content
+        }
+    }
+}
+
 /// Sidebar status-dot color: agent status when known, else a focus dot.
 func sidebarStatusColor(_ status: AgentStatus, isFocused: Bool) -> Color {
     switch status {
@@ -617,24 +699,23 @@ private struct SessionRow: View {
     var body: some View {
         HStack(spacing: 6) {
             if terminalStyle {
-                // A prompt-style caret colored by status, so rows read like
-                // terminal prompt lines. `.done` swaps the glyph itself to a
-                // checkmark -- a real completion reads differently from
-                // merely being idle, even though both are green.
-                Text(sidebarStatusIsCheckmark(status) ? "✓" : "❯")
-                    .font(font)
-                    .foregroundStyle(sidebarStatusColor(status, isFocused: viewState.isFocused))
-                    .help(statusHelp)
+                // No leading mark: the row reads as a bold group heading
+                // like herdr's machine names, with status trailing instead.
             } else if sidebarStatusIsCheckmark(status) {
                 Image(systemName: "checkmark.circle.fill")
                     .resizable()
                     .frame(width: 7, height: 7)
                     .foregroundStyle(.green)
                     .help(statusHelp)
-            } else {
+            } else if SidebarRowPresentation.showsStatusMark(status) {
                 Circle()
                     .fill(sidebarStatusColor(status, isFocused: viewState.isFocused))
                     .frame(width: 7, height: 7)
+                    .help(statusHelp)
+            } else {
+                // No agent to report on: no dot, but its column stays
+                // reserved so session names line up.
+                Color.clear.frame(width: 7, height: 7)
                     .help(statusHelp)
             }
 
@@ -653,11 +734,25 @@ private struct SessionRow: View {
                     }
             } else {
                 Text(session.displayTitle)
-                    .font(font)
+                    .font(terminalStyle ? font?.bold() : font)
+                    // System style: semibold, so a session reads as the
+                    // heading of the workspaces beneath it.
+                    .fontWeight(terminalStyle ? nil : .semibold)
                     .lineLimit(1)
+                    .help(session.displayTitle)
             }
 
             Spacer()
+
+            // Terminal style: a right-aligned status mark colored by agent
+            // status (herdr's ● beside a machine name); nothing at all for a
+            // session with no agent to report on.
+            if terminalStyle, let glyph = SidebarTerminalGlyphs.sessionStatus(status) {
+                Text(glyph)
+                    .font(font)
+                    .foregroundStyle(sidebarStatusColor(status, isFocused: false))
+                    .help(statusHelp)
+            }
         }
         .contentShape(Rectangle())
     }
@@ -674,40 +769,79 @@ private struct WorkspaceRow: View {
     /// same session (see `UnreadPane`'s doc comment).
     let status: AgentStatus
     let font: Font?
+    let terminalStyle: Bool
 
     var body: some View {
+        if terminalStyle {
+            terminalBody
+        } else {
+            systemBody
+        }
+    }
+
+    /// Text glyphs in the terminal font, so the status mark shares the
+    /// label's baseline and cell grid. The mark sits directly under the
+    /// session name's first character (herdr's tree indent); focus is drawn
+    /// by the caller's full-width `listRowBackground`, plus a bold label.
+    private var terminalBody: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text(SidebarTerminalGlyphs.workspaceStatus(status))
+                .font(font)
+                .foregroundStyle(sidebarStatusColor(status, isFocused: false))
+            Text(workspace.label)
+                .font(workspace.focused ? font?.bold() : font)
+                .lineLimit(1)
+                .help(workspace.label)
+            Spacer()
+        }
+        .padding(.leading, SidebarView.herdrGutterWidth + 4)
+    }
+
+    private var systemBody: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             // Reserves the same column the session row's disclosure/status
             // icon occupies, so the status dot below still lines up under
             // it -- focus itself is now shown by the row's background
             // rather than a dot here.
+            // A fixed height matters: an unbounded `Color.clear` is
+            // vertically greedy, and under `.firstTextBaseline` its bottom
+            // edge becomes the baseline the label aligns to -- which pushed
+            // the text to the bottom of the row.
             Color.clear
-                .frame(width: SidebarView.herdrGutterWidth, alignment: .center)
-            if sidebarStatusIsCheckmark(status) {
-                Image(systemName: "checkmark.circle.fill")
-                    .resizable()
-                    .frame(width: 8, height: 8)
-                    .foregroundStyle(.green)
-            } else if status != .none {
-                Circle()
-                    .fill(sidebarStatusColor(status, isFocused: false))
-                    .frame(width: 6, height: 6)
+                .frame(width: SidebarView.herdrGutterWidth, height: 1)
+            // The mark's column is reserved even when there is no mark, so
+            // every workspace label starts at the same x whether or not its
+            // backend reports agent status.
+            // A `ZStack`, not a `Group`: a fixed frame on an empty `Group`
+            // collapses to nothing, which would un-reserve the column.
+            ZStack {
+                if sidebarStatusIsCheckmark(status) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .resizable()
+                        .frame(width: 8, height: 8)
+                        .foregroundStyle(.green)
+                } else if SidebarRowPresentation.showsStatusMark(status) {
+                    Circle()
+                        .fill(sidebarStatusColor(status, isFocused: false))
+                        .frame(width: 6, height: 6)
+                }
             }
+            .frame(width: 8, height: 8)
+            // One step smaller than the session name, so sessions read as
+            // headings and workspaces as their children.
             Text(workspace.label)
-                .font(font)
-                .foregroundStyle(.secondary)
+                .font(.callout)
+                .foregroundStyle(workspace.focused ? .primary : .secondary)
                 .lineLimit(1)
+                // Workspace names are often long repo names that differ at
+                // the end; middle truncation keeps both ends visible.
+                .truncationMode(.middle)
+                .help(workspace.label)
             Spacer()
         }
         // Disclosure column width + the outer row's spacing -- lands this
         // row's icon column directly under the session row's.
         .padding(.leading, SidebarView.herdrGutterWidth + 4)
-        .padding(.vertical, 2)
-        .background(
-            RoundedRectangle(cornerRadius: 4)
-                .fill(workspace.focused ? Color.secondary.opacity(0.18) : Color.clear)
-        )
-        .animation(.easeOut(duration: 0.08), value: workspace.focused)
     }
 }
 

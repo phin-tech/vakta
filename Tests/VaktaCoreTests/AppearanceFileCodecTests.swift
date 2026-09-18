@@ -22,6 +22,31 @@ final class AppearanceFileCodecTests: XCTestCase {
         XCTAssertEqual(codec.decode(data), AppearanceSettings(appearance: .dark, sidebarFont: .system))
     }
 
+    func test_decode_fileWithoutSidebarFontSize_keepsItsValuesAndDefaultsTheSizeToMatchTerminal() {
+        // A file written before `sidebarFontSize` existed. It must still
+        // decode -- not read as corrupt and lose the user's theme/style --
+        // with the size at `0`, the "follow the terminal's size" sentinel.
+        let data = Data(#"{"appearance":"dark","sidebarFont":"matchTerminal"}"#.utf8)
+        XCTAssertEqual(
+            codec.decode(data),
+            AppearanceSettings(appearance: .dark, sidebarFont: .matchTerminal, sidebarFontSize: 0)
+        )
+    }
+
+    func test_encode_thenDecode_roundTripsAnExplicitSidebarFontSize() throws {
+        let settings = AppearanceSettings(appearance: .light, sidebarFont: .matchTerminal, sidebarFontSize: 15)
+        let data = try XCTUnwrap(codec.encode(settings))
+        XCTAssertEqual(codec.decode(data)?.sidebarFontSize, 15)
+    }
+
+    func test_decode_outOfRangeSidebarFontSize_isKeptRatherThanRejectingTheFile() {
+        // Clamped at use (`SidebarRowFontResolver`), like the sidebar width:
+        // one bad number must not cost the user the rest of the file.
+        let data = Data(#"{"appearance":"dark","sidebarFont":"matchTerminal","sidebarFontSize":100000}"#.utf8)
+        XCTAssertEqual(codec.decode(data)?.appearance, .dark)
+        XCTAssertEqual(codec.decode(data)?.sidebarFontSize, 100000)
+    }
+
     func test_decode_malformedJSON_returnsNil() {
         XCTAssertNil(codec.decode(Data("not json {".utf8)))
     }

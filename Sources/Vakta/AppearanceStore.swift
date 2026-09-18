@@ -23,6 +23,12 @@ final class AppearanceStore: ObservableObject {
         didSet { persist() }
     }
 
+    /// Terminal style's row font size; `0` follows the terminal's size (see
+    /// `AppearanceSettings.sidebarFontSize`). Read by `SidebarView`.
+    @Published var sidebarFontSize: Double {
+        didSet { persist() }
+    }
+
     private let root: URL
 
     init(root: URL) {
@@ -41,6 +47,7 @@ final class AppearanceStore: ObservableObject {
         }
         appearance = loaded.appearance
         sidebarFont = loaded.sidebarFont
+        sidebarFontSize = loaded.sidebarFontSize
 
         if case .missing = outcome {
             AppearancePersistence.save(loaded, root: root)
@@ -49,7 +56,7 @@ final class AppearanceStore: ObservableObject {
 
     private func persist() {
         AppearancePersistence.save(
-            AppearanceSettings(appearance: appearance, sidebarFont: sidebarFont),
+            AppearanceSettings(appearance: appearance, sidebarFont: sidebarFont, sidebarFontSize: sidebarFontSize),
             root: root
         )
     }

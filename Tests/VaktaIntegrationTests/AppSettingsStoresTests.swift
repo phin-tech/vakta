@@ -101,6 +101,40 @@ final class AppSettingsStoresTests: XCTestCase {
         XCTAssertEqual(settings.sidebarFont, .matchTerminal)
     }
 
+    @MainActor
+    func test_appearanceStore_settingSidebarFontSize_persistsAndSurvivesARestart() {
+        let store = AppearanceStore(root: tempDirectory)
+        store.sidebarFont = .matchTerminal
+
+        store.sidebarFontSize = 15
+
+        let relaunched = AppearanceStore(root: tempDirectory)
+        XCTAssertEqual(relaunched.sidebarFontSize, 15)
+        XCTAssertEqual(relaunched.sidebarFont, .matchTerminal, "changing the size must not disturb the style")
+    }
+
+    @MainActor
+    func test_appearanceStore_firstLaunch_seedsSidebarFontSizeToFollowTheTerminal() {
+        XCTAssertEqual(AppearanceStore(root: tempDirectory).sidebarFontSize, 0)
+    }
+
+    @MainActor
+    func test_appearanceStore_fileFromBeforeSidebarFontSize_loadsAndKeepsItsOtherValuesOnTheNextSave() throws {
+        let fileURL = tempDirectory.appendingPathComponent("appearance.json")
+        try Data(#"{"appearance":"dark","sidebarFont":"matchTerminal"}"#.utf8).write(to: fileURL)
+
+        let store = AppearanceStore(root: tempDirectory)
+        XCTAssertEqual(store.appearance, .dark)
+        XCTAssertEqual(store.sidebarFontSize, 0)
+
+        store.sidebarFontSize = 12
+
+        guard case .loaded(let settings) = AppearancePersistence.load(root: tempDirectory) else {
+            return XCTFail("setting sidebarFontSize must persist")
+        }
+        XCTAssertEqual(settings, AppearanceSettings(appearance: .dark, sidebarFont: .matchTerminal, sidebarFontSize: 12))
+    }
+
     // MARK: SidebarSettingsStore
 
     @MainActor
