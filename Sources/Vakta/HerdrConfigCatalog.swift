@@ -14,7 +14,8 @@ import Foundation
 
 enum HerdrConfigGroup: CaseIterable {
     case terminal, layout, panes, tabs, input, notifications, sound
-    case session, updates, appearance, server, worktrees, advanced, experimental
+    case session, updates, appearance, themeColors, themeLight, themeDark
+    case server, worktrees, advanced, experimental
 
     var title: String {
         switch self {
@@ -28,6 +29,9 @@ enum HerdrConfigGroup: CaseIterable {
         case .session: return "Session"
         case .updates: return "Updates"
         case .appearance: return "Theme & Accent"
+        case .themeColors: return "Custom theme colors"
+        case .themeLight: return "Custom colors — light appearance"
+        case .themeDark: return "Custom colors — dark appearance"
         case .server: return "Server"
         case .worktrees: return "Worktrees & Remote"
         case .advanced: return "Advanced"
@@ -118,6 +122,8 @@ enum HerdrConfigCatalog {
                "Terminal width at or below which the single-column layout is used."),
         choice("ui.agent_panel_sort", "Agent panel sort", "spaces", ["spaces", "priority", "workspaces"], .layout,
                "Group agents by space, or by attention priority."),
+        number("ui.sidebar.agents.row_gap", "Agent row gap", 0, 0...10, .layout, "Blank rows between agent entries."),
+        number("ui.sidebar.spaces.row_gap", "Space row gap", 0, 0...10, .layout, "Blank rows between space entries."),
         choice("ui.status_indicators", "Status indicators", "dots", ["dots", "symbols"], .layout,
                "Compact color dots, or distinct glyphs per state."),
 
@@ -211,7 +217,25 @@ enum HerdrConfigCatalog {
              "macOS/Windows: switch to an ASCII input source while in prefix mode."),
         flag("experimental.reveal_hidden_cursor_for_cjk_ime", "Reveal cursor for CJK IME", false, .experimental,
              "Expose the cursor anchor so input methods keep tracking the candidate window.")
+    ] + themeColorEntries
+
+    private static let themeTokens = [
+        "accent", "panel_bg", "sidebar_bg", "active_row_bg", "selection_bg", "surface0", "surface1", "surface_dim",
+        "overlay0", "overlay1", "text", "subtext0", "mauve", "green", "yellow", "red", "blue", "teal", "peach"
     ]
+
+    /// `theme.custom.*` overrides (and the light/dark layers applied after
+    /// them). All optional: unset by default, empty input means "remove".
+    private static var themeColorEntries: [Entry] {
+        [("theme.custom", HerdrConfigGroup.themeColors),
+         ("theme.custom.light", .themeLight),
+         ("theme.custom.dark", .themeDark)].flatMap { prefix, group in
+            themeTokens.map { token in
+                color("\(prefix).\(token)", token.replacingOccurrences(of: "_", with: " ").capitalized, "", group,
+                      "Hex, color name, rgb(r,g,b), or reset. Empty removes the override.")
+            }
+        }
+    }
 }
 
 // MARK: - Validation
@@ -229,6 +253,8 @@ enum HerdrConfigFieldValidator {
         case (.text, .string):
             return nil
         case (.color, .string(let text)):
+            // Optional colors (default "") treat empty as "no override".
+            if text.isEmpty, entry.defaultValue == .string("") { return nil }
             return isColor(text) ? nil : "Use #RGB, #RRGGBB, rgb(r,g,b), or a color name."
         default:
             return "Expected \(expectation(for: entry.kind))."

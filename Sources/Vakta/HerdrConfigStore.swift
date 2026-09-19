@@ -69,6 +69,14 @@ final class HerdrConfigStore: ObservableObject {
         isDirty = true
     }
 
+    /// Applies a pure document transform (array-table edits and the like).
+    func apply(_ transform: (HerdrConfigDocument) -> HerdrConfigDocument) {
+        let updated = transform(document)
+        guard updated.text != document.text else { return }
+        document = updated
+        isDirty = true
+    }
+
     func set(_ path: String, to value: HerdrConfigValue) {
         document = document.setting(path, to: value)
         isDirty = true

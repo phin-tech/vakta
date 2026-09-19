@@ -353,4 +353,18 @@ final class HerdrConfigStoreShellTests: XCTestCase {
         store.replaceText("a = 1\n")
         XCTAssertFalse(store.isDirty)
     }
+
+    func test_store_apply_marksDirtyOnlyWhenTheTransformChangesText_andSavesTheEdit() async throws {
+        try writeConfig("[keys]\nnew_tab = \"cmd+t\"\n")
+        let store = makeStore()
+        store.load()
+        store.apply { $0 }
+        XCTAssertFalse(store.isDirty)
+
+        store.apply { $0.appendingArrayTable("keys.command", fields: [("key", .string("prefix+g")), ("type", .string("shell")), ("command", .string("true"))]) }
+        XCTAssertTrue(store.isDirty)
+        let result = await store.save()
+        XCTAssertEqual(result, .saved(reload: .reloaded))
+        XCTAssertEqual(HerdrConfigDocument(text: liveConfig() ?? "").arrayTableEntries("keys.command").count, 1)
+    }
 }

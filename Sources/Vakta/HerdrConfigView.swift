@@ -21,6 +21,8 @@ struct HerdrConfigView: View {
     private enum Tab: String, CaseIterable, Identifiable {
         case settings = "Settings"
         case keys = "Keys"
+        case commands = "Commands"
+        case sidebar = "Sidebar rows"
         case raw = "Raw"
         var id: String { rawValue }
     }
@@ -32,6 +34,8 @@ struct HerdrConfigView: View {
             switch tab {
             case .settings: settingsForm
             case .keys: keysForm
+            case .commands: commandsForm
+            case .sidebar: sidebarForm
             case .raw: rawEditor
             }
             Divider()
@@ -47,7 +51,7 @@ struct HerdrConfigView: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            .frame(width: 240)
+            .frame(width: 420)
             Spacer()
             Text(store.filePath)
                 .font(.caption)
@@ -103,6 +107,42 @@ struct HerdrConfigView: View {
                     }
                 }
             }
+        }
+        .formStyle(.grouped)
+    }
+
+    private var commandsForm: some View {
+        let commands = store.document.arrayTableEntries(HerdrCustomCommand.tablePath)
+            .map(HerdrCustomCommand.init(entry:))
+        return Form {
+            Section {
+                ForEach(commands.indices, id: \.self) { index in
+                    HerdrCommandRow(index: index, command: commands[index])
+                }
+                Button {
+                    store.apply {
+                        $0.appendingArrayTable(HerdrCustomCommand.tablePath, fields: [
+                            ("key", .string("prefix+alt+x")), ("type", .string("popup")), ("command", .string("")),
+                        ])
+                    }
+                } label: {
+                    Label("Add command", systemImage: "plus")
+                }
+            } header: {
+                Text("Custom commands")
+            } footer: {
+                Text("Bind a key to run a command in a popup, a temporary pane, or the background (shell). "
+                    + "A new command needs a real key and command before herdr will accept the file.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    private var sidebarForm: some View {
+        Form {
+            HerdrSidebarRowsSection(kind: .agents, title: "Agent rows")
+            HerdrSidebarRowsSection(kind: .spaces, title: "Space rows")
         }
         .formStyle(.grouped)
     }
@@ -234,7 +274,13 @@ private struct HerdrConfigFieldRow: View {
         switch HerdrConfigInput.value(from: draft, for: entry) {
         case .success(let value):
             inputError = nil
-            store.set(entry.path, to: value)
+            // An empty optional color means "no override": remove the key
+            // rather than writing `key = ""`.
+            if entry.kind == .color, value == .string(""), entry.defaultValue == .string("") {
+                store.unset(entry.path)
+            } else {
+                store.set(entry.path, to: value)
+            }
         case .failure(let error):
             inputError = error.message
         }
@@ -319,5 +365,167 @@ private struct HerdrKeyBindingRow: View {
         case .failure(let error):
             inputError = error.message
         }
+    }
+}
+
+
+/// One `[[keys.command]]` block. Fields commit on Return / picker change; each
+/// commit is a pure document edit, so nothing reaches disk until Save.
+private struct HerdrCommandRow: View {
+    let index: Int
+    let command: HerdrCustomCommand
+    @EnvironmentObject private var store: HerdrConfigStore
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Command \(index + 1)").font(.headline)
+                Spacer()
+                Button(role: .destructive) {
+                    store.apply { $0.removingArrayTable(HerdrCustomCommand.tablePath, at: index) }
+                } label: {
+                    Image(systemName: "trash")
+                }
+                .buttonStyle(.borderless)
+                .help("Remove this command")
+            }
+            if command.isFormEditable {
+                field("Key", "key", command.key, mono: true)
+                Picker("Type", selection: Binding(
+                    get: { command.type },
+                    set: { newType in
+                        store.apply { doc in
+                            doc.settingInArrayTable(HerdrCustomCommand.tablePath, at: index, key: "type", to: .string(newType))
+                        }
+                    }
+                )) {
+                    ForEach(HerdrCustomCommand.types.filter { $0 != "plugin_action" }, id: \.self) { Text($0).tag($0) }
+                }
+                field("Command", "command", command.command, mono: true)
+                field("Description", "description", command.description, optional: true)
+                if command.type == "popup" {
+                    field("Width", "width", command.width, optional: true, placeholder: "80%")
+                    field("Height", "height", command.height, optional: true, placeholder: "80%")
+                }
+                ForEach(command.problems, id: \.self) { Text($0).font(.caption).foregroundStyle(.red) }
+            } else {
+                Text("plugin_action command — edit it in the Raw tab.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func field(_ title: String, _ name: String, _ value: String, mono: Bool = false,
+                       optional: Bool = false, placeholder: String = "") -> some View {
+        HerdrCommandField(title: title, value: value, mono: mono, placeholder: placeholder) { text in
+            store.apply { doc in
+                if optional, text.isEmpty {
+                    return doc.unsettingInArrayTable(HerdrCustomCommand.tablePath, at: index, key: name)
+                }
+                return doc.settingInArrayTable(HerdrCustomCommand.tablePath, at: index, key: name, to: .string(text))
+            }
+        }
+    }
+}
+
+private struct HerdrCommandField: View {
+    let title: String
+    let value: String
+    let mono: Bool
+    let placeholder: String
+    let commit: (String) -> Void
+    @State private var draft = ""
+
+    var body: some View {
+        TextField(title, text: $draft, prompt: Text(placeholder))
+            .font(mono ? .system(.body, design: .monospaced) : .body)
+            .onAppear { draft = value }
+            .onChange(of: value) { draft = $0 }
+            .onSubmit { commit(draft) }
+    }
+}
+
+
+/// Editor for one sidebar `rows` list: one comma-separated text field per row.
+/// Styled tokens can't be represented here, so such a value is shown read-only.
+private struct HerdrSidebarRowsSection: View {
+    let kind: HerdrSidebarRows.Kind
+    let title: String
+    @EnvironmentObject private var store: HerdrConfigStore
+
+    var body: some View {
+        let fileValue = store.document.value(at: kind.path)
+        let isSet = fileValue != nil
+        let rows: [[String]]? = {
+            guard let fileValue else { return HerdrSidebarRows.defaultRows(for: kind) }
+            if case .raw(let source) = fileValue { return HerdrSidebarRows.parse(source: source) }
+            return nil
+        }()
+        Section {
+            if let rows {
+                ForEach(rows.indices, id: \.self) { index in
+                    HStack {
+                        HerdrRowTextField(value: rows[index].joined(separator: ", ")) { text in
+                            var updated = rows
+                            updated[index] = HerdrSidebarRows.tokens(fromRowText: text)
+                            write(updated)
+                        }
+                        Button {
+                            var updated = rows
+                            updated.remove(at: index)
+                            write(updated)
+                        } label: {
+                            Image(systemName: "minus.circle")
+                        }
+                        .buttonStyle(.borderless)
+                    }
+                }
+                Button {
+                    write(rows + [["agent"]])
+                } label: {
+                    Label("Add row", systemImage: "plus")
+                }
+                ForEach(HerdrSidebarRows.problems(in: rows, for: kind), id: \.self) {
+                    Text($0).font(.caption).foregroundStyle(.red)
+                }
+            } else {
+                Text(fileValue?.sourceText ?? "")
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                Text("Contains styled tokens or a shape this editor doesn't handle — edit it in the Raw tab.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        } header: {
+            HStack {
+                Text(title)
+                Spacer()
+                if isSet {
+                    Button("Use default") { store.unset(kind.path) }.buttonStyle(.borderless)
+                }
+            }
+        } footer: {
+            Text("Tokens: \(kind.builtinTokens.joined(separator: ", ")), or $name for reported metadata. "
+                + "Comma-separated within a row.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    private func write(_ rows: [[String]]) {
+        store.set(kind.path, to: .raw(HerdrSidebarRows.format(rows)))
+    }
+}
+
+private struct HerdrRowTextField: View {
+    let value: String
+    let commit: (String) -> Void
+    @State private var draft = ""
+
+    var body: some View {
+        TextField("tokens", text: $draft)
+            .font(.system(.body, design: .monospaced))
+            .onAppear { draft = value }
+            .onChange(of: value) { draft = $0 }
+            .onSubmit { commit(draft) }
     }
 }

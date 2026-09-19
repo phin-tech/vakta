@@ -147,6 +147,35 @@ final class HerdrConfigCatalogTests: XCTestCase {
         XCTAssertNotNil(state.problem)
     }
 
+    // MARK: theme color layers
+
+    func test_catalog_themeColorTokens_existForBaseLightAndDarkLayers() throws {
+        for prefix in ["theme.custom", "theme.custom.light", "theme.custom.dark"] {
+            for token in ["accent", "panel_bg", "sidebar_bg", "active_row_bg", "selection_bg", "surface0", "surface1",
+                          "surface_dim", "overlay0", "overlay1", "text", "subtext0", "mauve", "green", "yellow",
+                          "red", "blue", "teal", "peach"] {
+                let entry = try entry("\(prefix).\(token)")
+                XCTAssertEqual(entry.kind, .color)
+            }
+        }
+    }
+
+    func test_validate_optionalColor_acceptsEmptyMeaningUnset_butDefaultedColorDoesNot() throws {
+        XCTAssertNil(HerdrConfigFieldValidator.validate(.string(""), for: try entry("theme.custom.sidebar_bg")))
+        XCTAssertNotNil(HerdrConfigFieldValidator.validate(.string(""), for: try entry("ui.accent")))
+    }
+
+    func test_input_emptyOptionalColor_isSuccessEmptyString_sotheRowCanUnset() throws {
+        XCTAssertEqual(HerdrConfigInput.value(from: "  ", for: try entry("theme.custom.text")), .success(.string("")))
+    }
+
+    func test_fieldState_themeColorInLightLayer_readsDottedTablePath() throws {
+        let doc = HerdrConfigDocument(text: "[theme.custom.light]\npanel_bg = \"#eff1f5\"\n")
+        let state = HerdrConfigFieldState.resolve(try entry("theme.custom.light.panel_bg"), in: doc)
+        XCTAssertEqual(state.value, .string("#eff1f5"))
+        XCTAssertTrue(state.isSetInFile)
+    }
+
     // MARK: save messaging
 
     func test_saveMessage_coversEveryResult() {

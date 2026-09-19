@@ -42,6 +42,12 @@ enum HerdrConfigValue: Equatable {
     }
 }
 
+/// One `[[path]]` block's fields (single-line/scalar values as understood by
+/// the editor; anything else surfaces as `.raw`).
+struct HerdrConfigArrayEntry: Equatable {
+    let fields: [String: HerdrConfigValue]
+}
+
 struct HerdrConfigDocument: Equatable {
     let text: String
 
@@ -49,6 +55,7 @@ struct HerdrConfigDocument: Equatable {
     private let eol: String
     private let entries: [Entry]
     private let tables: [Table]
+    private let blocks: [ArrayBlock]
 
     init(text: String) {
         self.text = text
@@ -58,6 +65,7 @@ struct HerdrConfigDocument: Equatable {
         let parsed = Self.parse(lines)
         entries = parsed.entries
         tables = parsed.tables
+        blocks = parsed.blocks
     }
 
     static func == (lhs: HerdrConfigDocument, rhs: HerdrConfigDocument) -> Bool {
@@ -68,6 +76,10 @@ struct HerdrConfigDocument: Equatable {
 
     func value(at path: String) -> HerdrConfigValue? {
         guard let entry = entries.first(where: { $0.path == path }) else { return nil }
+        return value(of: entry)
+    }
+
+    private func value(of entry: Entry) -> HerdrConfigValue {
         let source = spanText(of: entry)
         if entry.startLine != entry.endLine { return .raw(source) }
         if source.hasPrefix("\"\"\"") || source.hasPrefix("'''") { return .raw(source) }
@@ -93,13 +105,7 @@ struct HerdrConfigDocument: Equatable {
     func setting(_ path: String, to value: HerdrConfigValue) -> HerdrConfigDocument {
         var lines = self.lines
         if let entry = entries.first(where: { $0.path == path }) {
-            let startChars = Array(lines[entry.startLine].content)
-            let endChars = Array(lines[entry.endLine].content)
-            let content = String(startChars[0..<entry.startCol]) + value.sourceText
-                + String(endChars[entry.endCol...])
-            let terminator = lines[entry.endLine].terminator
-            lines.replaceSubrange(entry.startLine...entry.endLine, with: [Line(content: content, terminator: terminator)])
-            return HerdrConfigDocument(text: Self.join(lines))
+            return replacing(entry, with: value)
         }
 
         let components = path.split(separator: ".").map(String.init)
@@ -108,11 +114,7 @@ struct HerdrConfigDocument: Equatable {
         let newLine = "\(key) = \(value.sourceText)"
 
         if let table = tables.first(where: { $0.path == tablePath && !$0.isArray }) {
-            let index = table.lastLine + 1
-            if index >= lines.count, let last = lines.indices.last, lines[last].terminator.isEmpty {
-                lines[last].terminator = eol
-            }
-            lines.insert(Line(content: newLine, terminator: eol), at: min(index, lines.count))
+            return inserting(newLine, after: table.lastLine)
         } else {
             if let last = lines.indices.last {
                 if lines[last].terminator.isEmpty { lines[last].terminator = eol }
@@ -128,6 +130,89 @@ struct HerdrConfigDocument: Equatable {
 
     func unsetting(_ path: String) -> HerdrConfigDocument {
         guard let entry = entries.first(where: { $0.path == path }) else { return self }
+        return removing(entry)
+    }
+
+    // MARK: - Array tables (`[[path]]`)
+
+    func arrayTableEntries(_ path: String) -> [HerdrConfigArrayEntry] {
+        blocks.filter { $0.path == path }.map { block in
+            var fields: [String: HerdrConfigValue] = [:]
+            for entry in block.entries where fields[entry.path] == nil { fields[entry.path] = value(of: entry) }
+            return HerdrConfigArrayEntry(fields: fields)
+        }
+    }
+
+    func appendingArrayTable(_ path: String, fields: [(String, HerdrConfigValue)]) -> HerdrConfigDocument {
+        var lines = self.lines
+        if let last = lines.indices.last {
+            if lines[last].terminator.isEmpty { lines[last].terminator = eol }
+            if !lines[last].content.trimmingCharacters(in: .whitespaces).isEmpty {
+                lines.append(Line(content: "", terminator: eol))
+            }
+        }
+        lines.append(Line(content: "[[\(path)]]", terminator: eol))
+        for (key, value) in fields {
+            lines.append(Line(content: "\(key) = \(value.sourceText)", terminator: eol))
+        }
+        return HerdrConfigDocument(text: Self.join(lines))
+    }
+
+    func removingArrayTable(_ path: String, at index: Int) -> HerdrConfigDocument {
+        guard let block = block(path, index) else { return self }
+        var lines = self.lines
+        let removedLastTerminator = lines[block.lastLine].terminator
+        lines.removeSubrange(block.headerLine...block.lastLine)
+        let at = block.headerLine
+        // Drop the separator blank that only existed to set this block apart.
+        if at > 0, lines[at - 1].content.trimmingCharacters(in: .whitespaces).isEmpty,
+           at == lines.count || lines[at].content.trimmingCharacters(in: .whitespaces).isEmpty {
+            lines.remove(at: at - 1)
+        } else if removedLastTerminator.isEmpty, at > 0, at == lines.count {
+            lines[at - 1].terminator = ""
+        }
+        return HerdrConfigDocument(text: Self.join(lines))
+    }
+
+    func settingInArrayTable(_ path: String, at index: Int, key: String, to value: HerdrConfigValue) -> HerdrConfigDocument {
+        guard let block = block(path, index) else { return self }
+        if let entry = block.entries.first(where: { $0.path == key }) {
+            return replacing(entry, with: value)
+        }
+        return inserting("\(key) = \(value.sourceText)", after: block.lastLine)
+    }
+
+    func unsettingInArrayTable(_ path: String, at index: Int, key: String) -> HerdrConfigDocument {
+        guard let entry = block(path, index)?.entries.first(where: { $0.path == key }) else { return self }
+        return removing(entry)
+    }
+
+    private func block(_ path: String, _ index: Int) -> ArrayBlock? {
+        let matching = blocks.filter { $0.path == path }
+        return matching.indices.contains(index) ? matching[index] : nil
+    }
+
+    private func replacing(_ entry: Entry, with value: HerdrConfigValue) -> HerdrConfigDocument {
+        var lines = self.lines
+        let startChars = Array(lines[entry.startLine].content)
+        let endChars = Array(lines[entry.endLine].content)
+        let content = String(startChars[0..<entry.startCol]) + value.sourceText + String(endChars[entry.endCol...])
+        let terminator = lines[entry.endLine].terminator
+        lines.replaceSubrange(entry.startLine...entry.endLine, with: [Line(content: content, terminator: terminator)])
+        return HerdrConfigDocument(text: Self.join(lines))
+    }
+
+    private func inserting(_ newLine: String, after lastLine: Int) -> HerdrConfigDocument {
+        var lines = self.lines
+        let index = lastLine + 1
+        if index >= lines.count, let last = lines.indices.last, lines[last].terminator.isEmpty {
+            lines[last].terminator = eol
+        }
+        lines.insert(Line(content: newLine, terminator: eol), at: min(index, lines.count))
+        return HerdrConfigDocument(text: Self.join(lines))
+    }
+
+    private func removing(_ entry: Entry) -> HerdrConfigDocument {
         var lines = self.lines
         let removedLastTerminator = lines[entry.endLine].terminator
         lines.removeSubrange(entry.startLine...entry.endLine)
@@ -152,6 +237,13 @@ struct HerdrConfigDocument: Equatable {
         let startCol: Int
         let endLine: Int
         let endCol: Int
+    }
+
+    fileprivate struct ArrayBlock {
+        let path: String
+        let headerLine: Int
+        var lastLine: Int
+        var entries: [Entry]
     }
 
     fileprivate struct Table {
@@ -228,10 +320,11 @@ struct HerdrConfigDocument: Equatable {
 
     // MARK: - Scanning
 
-    private static func parse(_ lines: [Line]) -> (entries: [Entry], tables: [Table]) {
+    private static func parse(_ lines: [Line]) -> (entries: [Entry], tables: [Table], blocks: [ArrayBlock]) {
         let contents = lines.map { Array($0.content) }
         var tables = [Table(path: "", isArray: false, headerLine: nil, lastLine: -1)]
         var entries: [Entry] = []
+        var blocks: [ArrayBlock] = []
         var current = 0
         var firstHeaderLine: Int?
         var index = 0
@@ -255,6 +348,9 @@ struct HerdrConfigDocument: Equatable {
                     lastLine: index
                 ))
                 current = tables.count - 1
+                if isArray {
+                    blocks.append(ArrayBlock(path: tables[current].path, headerLine: index, lastLine: index, entries: []))
+                }
                 if firstHeaderLine == nil { firstHeaderLine = index }
                 index += 1
                 continue
@@ -274,8 +370,14 @@ struct HerdrConfigDocument: Equatable {
                 continue
             }
 
-            if !tables[current].isArray {
-                let key = splitDotted(Array(chars[first..<equals]))
+            let key = splitDotted(Array(chars[first..<equals]))
+            if tables[current].isArray {
+                blocks[blocks.count - 1].entries.append(Entry(
+                    path: key.joined(separator: "."),
+                    startLine: index, startCol: valueStart, endLine: end.line, endCol: end.column
+                ))
+                blocks[blocks.count - 1].lastLine = end.line
+            } else {
                 let path = ([tables[current].path].filter { !$0.isEmpty } + key).joined(separator: ".")
                 entries.append(Entry(
                     path: path,
@@ -292,7 +394,7 @@ struct HerdrConfigDocument: Equatable {
         if tables[0].lastLine == -1 {
             tables[0].lastLine = (firstHeaderLine ?? contents.count) - 1
         }
-        return (entries, tables)
+        return (entries, tables, blocks)
     }
 
     /// Index of the first `=` outside quotes at or after `from`.
