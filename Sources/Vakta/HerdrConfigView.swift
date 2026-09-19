@@ -14,6 +14,7 @@ import SwiftUI
 struct HerdrConfigView: View {
     @EnvironmentObject private var store: HerdrConfigStore
     @State private var tab: Tab = .settings
+    @State private var query = ""
     @State private var message: HerdrConfigSaveMessage?
     @State private var canSaveUnverified = false
     @State private var isSaving = false
@@ -31,12 +32,10 @@ struct HerdrConfigView: View {
         VStack(spacing: 0) {
             header
             Divider()
-            switch tab {
-            case .settings: settingsForm
-            case .keys: keysForm
-            case .commands: commandsForm
-            case .sidebar: sidebarForm
-            case .raw: rawEditor
+            if HerdrConfigSearch.isActive(query) {
+                searchResults
+            } else {
+                tabContent
             }
             Divider()
             footer
@@ -44,23 +43,72 @@ struct HerdrConfigView: View {
         .onAppear { if !store.isDirty { store.load() } }
     }
 
+    @ViewBuilder
+    private var tabContent: some View {
+        VStack(spacing: 0) {
+            switch tab {
+            case .settings: settingsForm
+            case .keys: keysForm
+            case .commands: commandsForm
+            case .sidebar: sidebarForm
+            case .raw: rawEditor
+            }
+        }
+    }
+
     private var header: some View {
-        HStack {
+        VStack(spacing: 8) {
             Picker("", selection: $tab) {
                 ForEach(Tab.allCases) { Text($0.rawValue).tag($0) }
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            .frame(width: 420)
-            Spacer()
-            Text(store.filePath)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .truncationMode(.head)
-            Button("Reveal") { NSWorkspace.shared.activateFileViewerSelecting([store.fileURL]) }
+            .disabled(HerdrConfigSearch.isActive(query))
+            HStack(spacing: 8) {
+                HStack(spacing: 4) {
+                    Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                    TextField("Search settings and keys", text: $query)
+                        .textFieldStyle(.plain)
+                    if !query.isEmpty {
+                        Button { query = "" } label: { Image(systemName: "xmark.circle.fill") }
+                            .buttonStyle(.borderless)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.horizontal, 6).padding(.vertical, 3)
+                .background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
+                Text(store.filePath)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.head)
+                    .frame(maxWidth: 200)
+                Button("Reveal") { NSWorkspace.shared.activateFileViewerSelecting([store.fileURL]) }
+            }
         }
         .padding(10)
+    }
+
+    private var searchResults: some View {
+        let settings = HerdrConfigSearch.settings(matching: query)
+        let actions = HerdrConfigSearch.keyActions(matching: query, in: store.document)
+        let conflicts = HerdrKeyConflicts.find(in: store.document)
+        return Form {
+            if settings.isEmpty, actions.isEmpty {
+                Text("No settings or key bindings match “\(query)”.").foregroundStyle(.secondary)
+            }
+            if !settings.isEmpty {
+                Section("Settings") {
+                    ForEach(settings, id: \.path) { HerdrConfigFieldRow(entry: $0) }
+                }
+            }
+            if !actions.isEmpty {
+                Section("Keys") {
+                    ForEach(actions, id: \.name) { HerdrKeyBindingRow(action: $0, conflicts: conflicts) }
+                }
+            }
+        }
+        .formStyle(.grouped)
     }
 
     private var settingsForm: some View {
