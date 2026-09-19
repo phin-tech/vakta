@@ -68,33 +68,35 @@ struct HerdrConfigView: View {
 
     private var header: some View {
         VStack(spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: "doc.text").foregroundStyle(.secondary)
+                Text(store.filePath)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.head)
+                    .help(store.filePath)
+                Spacer(minLength: 8)
+                Button("Reveal") { NSWorkspace.shared.activateFileViewerSelecting([store.fileURL]) }
+            }
+            HStack(spacing: 4) {
+                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                TextField("Search settings and keys", text: $query)
+                    .textFieldStyle(.plain)
+                if !query.isEmpty {
+                    Button { query = "" } label: { Image(systemName: "xmark.circle.fill") }
+                        .buttonStyle(.borderless)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.horizontal, 8).padding(.vertical, 5)
+            .background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
             Picker("", selection: $tab) {
                 ForEach(Tab.allCases) { Text($0.rawValue).tag($0) }
             }
             .pickerStyle(.segmented)
             .labelsHidden()
             .disabled(HerdrConfigSearch.isActive(appliedQuery))
-            HStack(spacing: 8) {
-                HStack(spacing: 4) {
-                    Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                    TextField("Search settings and keys", text: $query)
-                        .textFieldStyle(.plain)
-                    if !query.isEmpty {
-                        Button { query = "" } label: { Image(systemName: "xmark.circle.fill") }
-                            .buttonStyle(.borderless)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .padding(.horizontal, 6).padding(.vertical, 3)
-                .background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
-                Text(store.filePath)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.head)
-                    .frame(maxWidth: 200)
-                Button("Reveal") { NSWorkspace.shared.activateFileViewerSelecting([store.fileURL]) }
-            }
         }
         .padding(10)
     }
