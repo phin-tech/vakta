@@ -15,6 +15,11 @@ struct HerdrConfigView: View {
     @EnvironmentObject private var store: HerdrConfigStore
     @State private var tab: Tab = .settings
     @State private var query = ""
+    /// `query` after a short pause -- searching rebuilds many Form rows, so it
+    /// shouldn't run on every keystroke.
+    @State private var appliedQuery = ""
+    @State private var settingsGroup: HerdrConfigGroup = .terminal
+    @State private var keyGroup: HerdrKeyGroup = .general
     @State private var message: HerdrConfigSaveMessage?
     @State private var canSaveUnverified = false
     @State private var isSaving = false
@@ -32,7 +37,7 @@ struct HerdrConfigView: View {
         VStack(spacing: 0) {
             header
             Divider()
-            if HerdrConfigSearch.isActive(query) {
+            if HerdrConfigSearch.isActive(appliedQuery) {
                 searchResults.id(store.loadGeneration)
             } else {
                 tabContent.id(store.loadGeneration)
@@ -40,7 +45,12 @@ struct HerdrConfigView: View {
             Divider()
             footer
         }
-        .onAppear { if !store.isDirty { store.load() } }
+        .onAppear { store.reloadIfChangedOnDisk() }
+        .task(id: query) {
+            if query.isEmpty { appliedQuery = ""; return }
+            try? await Task.sleep(nanoseconds: 200_000_000)
+            if !Task.isCancelled { appliedQuery = query }
+        }
     }
 
     @ViewBuilder
@@ -63,7 +73,7 @@ struct HerdrConfigView: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            .disabled(HerdrConfigSearch.isActive(query))
+            .disabled(HerdrConfigSearch.isActive(appliedQuery))
             HStack(spacing: 8) {
                 HStack(spacing: 4) {
                     Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
@@ -90,12 +100,17 @@ struct HerdrConfigView: View {
     }
 
     private var searchResults: some View {
-        let settings = HerdrConfigSearch.settings(matching: query)
-        let actions = HerdrConfigSearch.keyActions(matching: query, in: store.document)
+        let allSettings = HerdrConfigSearch.settings(matching: appliedQuery)
+        let allActions = HerdrConfigSearch.keyActions(matching: appliedQuery, in: store.document)
+        // Each row is a live AppKit-backed control set; cap what is built.
+        let cap = 30
+        let settings = Array(allSettings.prefix(cap))
+        let actions = Array(allActions.prefix(max(0, cap - settings.count)))
+        let hidden = allSettings.count + allActions.count - settings.count - actions.count
         let conflicts = HerdrKeyConflicts.find(in: store.document)
         return Form {
             if settings.isEmpty, actions.isEmpty {
-                Text("No settings or key bindings match “\(query)”.").foregroundStyle(.secondary)
+                Text("No settings or key bindings match “\(appliedQuery)”.").foregroundStyle(.secondary)
             }
             if !settings.isEmpty {
                 Section("Settings") {
@@ -107,6 +122,9 @@ struct HerdrConfigView: View {
                     ForEach(actions, id: \.name) { HerdrKeyBindingRow(action: $0, conflicts: conflicts) }
                 }
             }
+            if hidden > 0 {
+                Text("\(hidden) more — refine your search to see them.").font(.caption).foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
     }
@@ -116,21 +134,24 @@ struct HerdrConfigView: View {
             if let error = store.loadError {
                 Text("Couldn't read config.toml: \(error)").foregroundStyle(.red)
             }
-            ForEach(HerdrConfigCatalog.groups, id: \.self) { group in
-                Section {
-                    ForEach(HerdrConfigCatalog.entries(in: group), id: \.path) { entry in
-                        HerdrConfigFieldRow(entry: entry)
+            Section {
+                Picker("Section", selection: $settingsGroup) {
+                    ForEach(HerdrConfigCatalog.groups, id: \.self) { Text($0.title).tag($0) }
+                }
+            }
+            Section {
+                ForEach(HerdrConfigCatalog.entries(in: settingsGroup), id: \.path) { entry in
+                    HerdrConfigFieldRow(entry: entry)
+                }
+            } header: {
+                HStack {
+                    Text(settingsGroup.title)
+                    Spacer()
+                    Button("Reset Section") {
+                        store.apply { HerdrConfigReset.settings(in: $0, group: settingsGroup) }
                     }
-                } header: {
-                    HStack {
-                        Text(group.title)
-                        Spacer()
-                        Button("Reset Section") {
-                            store.apply { HerdrConfigReset.settings(in: $0, group: group) }
-                        }
-                        .buttonStyle(.borderless)
-                        .disabled(HerdrConfigReset.setSettingPaths(in: store.document, group: group).isEmpty)
-                    }
+                    .buttonStyle(.borderless)
+                    .disabled(HerdrConfigReset.setSettingPaths(in: store.document, group: settingsGroup).isEmpty)
                 }
             }
             let unmanaged = store.document.keyPaths(excluding: Set(HerdrConfigCatalog.entries.map(\.path)))
@@ -158,21 +179,24 @@ struct HerdrConfigView: View {
                     + "“prefix+” means after the prefix key. Clear a field and press Return to reset it to herdr's default.")
                     .font(.caption).foregroundStyle(.secondary)
             }
-            ForEach(HerdrKeyGroup.allCases, id: \.self) { group in
-                Section {
-                    ForEach(HerdrKeyActionCatalog.actions(in: group), id: \.name) { action in
-                        HerdrKeyBindingRow(action: action, conflicts: conflicts)
+            Section {
+                Picker("Section", selection: $keyGroup) {
+                    ForEach(HerdrKeyGroup.allCases, id: \.self) { Text($0.title).tag($0) }
+                }
+            }
+            Section {
+                ForEach(HerdrKeyActionCatalog.actions(in: keyGroup), id: \.name) { action in
+                    HerdrKeyBindingRow(action: action, conflicts: conflicts)
+                }
+            } header: {
+                HStack {
+                    Text(keyGroup.title)
+                    Spacer()
+                    Button("Reset Section") {
+                        store.apply { HerdrConfigReset.keys(in: $0, group: keyGroup) }
                     }
-                } header: {
-                    HStack {
-                        Text(group.title)
-                        Spacer()
-                        Button("Reset Section") {
-                            store.apply { HerdrConfigReset.keys(in: $0, group: group) }
-                        }
-                        .buttonStyle(.borderless)
-                        .disabled(HerdrConfigReset.setKeyPaths(in: store.document, group: group).isEmpty)
-                    }
+                    .buttonStyle(.borderless)
+                    .disabled(HerdrConfigReset.setKeyPaths(in: store.document, group: keyGroup).isEmpty)
                 }
             }
         }

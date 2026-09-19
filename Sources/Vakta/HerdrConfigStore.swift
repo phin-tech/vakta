@@ -48,6 +48,20 @@ final class HerdrConfigStore: ObservableObject {
         return await offMain { reloader.reload() }
     }
 
+    /// Re-reads the file only if it changed on disk and there are no pending
+    /// edits. Opening the pane calls this instead of `load()` so an unchanged
+    /// file doesn't bump `loadGeneration` and rebuild every row.
+    func reloadIfChangedOnDisk() {
+        guard !isDirty else { return }
+        let current: String
+        switch file.load() {
+        case .missing: current = HerdrConfigFingerprint.missing
+        case .loaded(_, let fingerprint): current = fingerprint
+        case .unreadable: return
+        }
+        if current != baseFingerprint { load() }
+    }
+
     /// Adopts whatever is on disk, discarding pending edits.
     func load() {
         defer { loadGeneration += 1 }

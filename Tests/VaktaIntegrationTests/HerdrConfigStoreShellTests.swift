@@ -389,4 +389,29 @@ final class HerdrConfigStoreShellTests: XCTestCase {
         XCTAssertEqual(second, .saved(reload: .reloaded))
         XCTAssertEqual(HerdrConfigDocument(text: liveConfig() ?? "").value(at: "ui.mouse_scroll_lines"), .integer(5))
     }
+
+    func test_store_reloadIfChangedOnDisk_isANoOpWhenUnchanged_andAdoptsExternalEditsWhenClean() throws {
+        try writeConfig("a = 1\n")
+        let store = makeStore()
+        store.load()
+        let generation = store.loadGeneration
+        store.reloadIfChangedOnDisk()
+        XCTAssertEqual(store.loadGeneration, generation, "unchanged file must not rebuild the UI")
+
+        try writeConfig("a = 2\n")
+        store.reloadIfChangedOnDisk()
+        XCTAssertEqual(store.document.text, "a = 2\n")
+        XCTAssertEqual(store.loadGeneration, generation + 1)
+    }
+
+    func test_store_reloadIfChangedOnDisk_neverDiscardsPendingEdits() throws {
+        try writeConfig("a = 1\n")
+        let store = makeStore()
+        store.load()
+        store.set("a", to: .integer(5))
+        try writeConfig("a = 2\n")
+        store.reloadIfChangedOnDisk()
+        XCTAssertEqual(store.document.value(at: "a"), .integer(5))
+        XCTAssertTrue(store.isDirty)
+    }
 }
