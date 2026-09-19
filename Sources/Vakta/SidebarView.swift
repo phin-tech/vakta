@@ -369,7 +369,7 @@ struct SidebarView: View {
                 }
                 .contextMenu {
                     Button("Rename…") { editingID = session.id }
-                    Button("Close Session") { sessionStore.requestClose(session.id) }
+                    Button("Detach Session") { sessionStore.requestClose(session.id) }
                 }
 
                 if herdrPreferences.showWorkspaces, supportsWorkspaces(session), expandedHerdrSessionIDs.contains(session.id) {
@@ -476,7 +476,7 @@ struct SidebarView: View {
                         onSelect: { sessionStore.select(session.id) }
                     )
                     .contextMenu {
-                        Button("Close Session") { sessionStore.requestClose(session.id) }
+                        Button("Detach Session") { sessionStore.requestClose(session.id) }
                     }
                 }
             }

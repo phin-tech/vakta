@@ -257,6 +257,15 @@ final class HerdrConfigDocumentTests: XCTestCase {
         )
     }
 
+    func test_diagnostics_semanticProblemsWithoutPosition_becomeOneUnpositionedDiagnosticPerLine() {
+        // Real output for a config where two actions share a binding.
+        let output = "config: issues found\nshift+cmd+t: kept keys.new_tab, disabled keys.rename_tab\n"
+        XCTAssertEqual(
+            HerdrConfigDiagnostic.parse(checkOutput: output),
+            [HerdrConfigDiagnostic(line: 0, column: 0, message: "shift+cmd+t: kept keys.new_tab, disabled keys.rename_tab")]
+        )
+    }
+
     func test_diagnostics_okOutputYieldsNone() {
         XCTAssertEqual(HerdrConfigDiagnostic.parse(checkOutput: "config: ok\n"), [])
     }

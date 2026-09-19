@@ -33,7 +33,14 @@ struct HerdrConfigDiagnostic: Equatable {
               case let numbers = lines[headerIndex][match].split(whereSeparator: { !$0.isNumber }),
               numbers.count == 2,
               let line = Int(numbers[0]), let column = Int(numbers[1])
-        else { return [] }
+        else {
+            // Not a TOML syntax error: herdr also reports semantic problems
+            // (e.g. `shift+cmd+t: kept keys.new_tab, disabled keys.rename_tab`)
+            // one per line, without a position.
+            return lines.map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty && !$0.hasPrefix("config:") && !$0.hasPrefix(";") }
+                .map { HerdrConfigDiagnostic(line: 0, column: 0, message: $0) }
+        }
 
         var message: [String] = []
         var seenCaret = false
