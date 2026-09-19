@@ -249,3 +249,19 @@ final class HerdrConfigSuggestedValueTests: XCTestCase {
         XCTAssertFalse(HerdrConfigFieldState.resolve(try entry("theme.name"), in: doc).isEditable)
     }
 }
+
+final class HerdrConfigManagedPathsTests: XCTestCase {
+    func test_managedPaths_coverSettingsKeyBindingsAndSidebarRows() {
+        let managed = HerdrConfigCatalog.editorManagedPaths
+        XCTAssertTrue(managed.contains("ui.tab_bar_position"))
+        XCTAssertTrue(managed.contains("keys.new_tab"), "edited on the Keys tab")
+        XCTAssertTrue(managed.contains("ui.sidebar.agents.rows"), "edited on the Sidebar rows tab")
+        XCTAssertFalse(managed.contains("ui.tab_bar_right"))
+        XCTAssertFalse(managed.contains("ui.sidebar.agents.rows_by_agent"))
+    }
+
+    func test_unmanagedList_showsOnlyKeysNoTabEdits() {
+        let doc = HerdrConfigDocument(text: "[keys]\nnew_tab = \"cmd+t\"\n[ui]\ntab_bar_right = [\"zoom\"]\nfuture_key = 1\n")
+        XCTAssertEqual(doc.keyPaths(excluding: HerdrConfigCatalog.editorManagedPaths), ["ui.tab_bar_right", "ui.future_key"])
+    }
+}

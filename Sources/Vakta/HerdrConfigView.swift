@@ -156,14 +156,14 @@ struct HerdrConfigView: View {
                     .disabled(HerdrConfigReset.setSettingPaths(in: store.document, group: settingsGroup).isEmpty)
                 }
             }
-            let unmanaged = store.document.keyPaths(excluding: Set(HerdrConfigCatalog.entries.map(\.path)))
+            let unmanaged = store.document.keyPaths(excluding: HerdrConfigCatalog.editorManagedPaths)
             if !unmanaged.isEmpty {
                 Section {
                     ForEach(unmanaged, id: \.self) { Text($0).font(.system(.caption, design: .monospaced)) }
                 } header: {
-                    Text("Not managed by this editor")
+                    Text("Other keys in your file")
                 } footer: {
-                    Text("Present in your file and preserved as-is. Edit them in the Raw tab.")
+                    Text("Keys in your file that have no control here (newer herdr options, lists like tab_bar_right). They are kept exactly as written; edit them in the Raw tab.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }

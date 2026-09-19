@@ -62,6 +62,13 @@ enum HerdrConfigCatalog {
         var requiresRestart = false
     }
 
+    /// Every key some tab of the editor can change: catalog settings, key
+    /// bindings, and the sidebar row lists. Anything else in the file is
+    /// preserved but only editable in the Raw tab.
+    static let editorManagedPaths: Set<String> = Set(entries.map(\.path))
+        .union(HerdrKeyActionCatalog.actions.map(\.path))
+        .union([HerdrSidebarRows.Kind.agents.path, HerdrSidebarRows.Kind.spaces.path])
+
     static func entry(for path: String) -> Entry? { byPath[path] }
 
     static var groups: [HerdrConfigGroup] {
