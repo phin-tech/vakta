@@ -18,6 +18,8 @@ struct HerdrConfigView: View {
     /// `query` after a short pause -- searching rebuilds many Form rows, so it
     /// shouldn't run on every keystroke.
     @State private var appliedQuery = ""
+    @StateObject private var recorder = HerdrKeyRecorder()
+    @EnvironmentObject private var matcher: KeybindingMatcher
     @State private var settingsGroup: HerdrConfigGroup = .terminal
     @State private var keyGroup: HerdrKeyGroup = .general
     @State private var message: HerdrConfigSaveMessage?
@@ -46,6 +48,8 @@ struct HerdrConfigView: View {
             footer
         }
         .onAppear { store.reloadIfChangedOnDisk() }
+        .onDisappear { recorder.cancel(matcher: matcher) }
+        .environmentObject(recorder)
         .task(id: query) {
             if query.isEmpty { appliedQuery = ""; return }
             try? await Task.sleep(nanoseconds: 200_000_000)
@@ -452,6 +456,9 @@ private struct HerdrKeyBindingRow: View {
     let action: HerdrKeyAction
     let conflicts: [String: [String]]
     @EnvironmentObject private var store: HerdrConfigStore
+    @EnvironmentObject private var recorder: HerdrKeyRecorder
+    @EnvironmentObject private var matcher: KeybindingMatcher
+    @State private var withPrefix = true
     @State private var draft = ""
     @State private var inputError: String?
     @FocusState private var focused: Bool
@@ -460,22 +467,49 @@ private struct HerdrKeyBindingRow: View {
         let state = HerdrKeyBindingState.resolve(action, in: store.document)
         LabeledContent {
             HStack(spacing: 6) {
-                if state.isEditable {
+                if state.isEditable, recorder.recordingName == action.name {
+                    Text("Press keys… (⎋ cancels)")
+                        .font(.callout).foregroundStyle(.secondary)
+                        .frame(minWidth: 140, alignment: .leading)
+                } else if state.isEditable {
                     TextField("", text: $draft, prompt: Text(action.defaultBinding ?? "unbound"))
                         .labelsHidden()
                         .textFieldStyle(.roundedBorder)
                         .font(.system(.body, design: .monospaced))
-                        .frame(minWidth: 170, maxWidth: 240)
+                        .frame(minWidth: 140, maxWidth: 220)
                         .focused($focused)
-                        .onAppear { draft = state.binding }
+                        .onAppear {
+                            draft = state.binding
+                            if case .success(let chord) = HerdrKeyChord.parse(state.binding) {
+                                withPrefix = chord.usesPrefix
+                            } else if let fallback = action.defaultBinding, case .success(let chord) = HerdrKeyChord.parse(fallback) {
+                                withPrefix = chord.usesPrefix
+                            }
+                        }
                         .onChange(of: state.binding) { newValue in
                             if draft.trimmingCharacters(in: .whitespaces) != newValue { draft = newValue }
+                            if case .success(let chord) = HerdrKeyChord.parse(newValue) { withPrefix = chord.usesPrefix }
                         }
                         .onChange(of: draft) { _ in commit(state, final: false) }
                         .onChange(of: focused) { isFocused in if !isFocused { commit(state, final: true) } }
                         .onSubmit { commit(state, final: true) }
                 } else {
                     Text(state.rawText ?? "").font(.system(.caption, design: .monospaced)).foregroundStyle(.secondary)
+                }
+                if state.isEditable {
+                    if canUsePrefix {
+                        Toggle("prefix", isOn: $withPrefix)
+                            .toggleStyle(.button)
+                            .controlSize(.small)
+                            .help("Record the shortcut as prefix+… (pressed after the prefix key)")
+                    }
+                    Button {
+                        toggleRecording()
+                    } label: {
+                        Image(systemName: recorder.recordingName == action.name ? "stop.circle" : "keyboard")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Record a shortcut by pressing it")
                 }
                 Button {
                     store.unset(action.path)
@@ -495,6 +529,30 @@ private struct HerdrKeyBindingRow: View {
                         .foregroundStyle(message == readOnlyNote(state) ? Color.secondary : Color.red)
                         .lineLimit(2)
                 }
+            }
+        }
+    }
+
+    /// `prefix` itself and navigate-mode keys can't be `prefix+…`.
+    private var canUsePrefix: Bool { action.name != "prefix" && action.group != .navigate }
+
+    private func toggleRecording() {
+        if recorder.recordingName == action.name {
+            recorder.cancel(matcher: matcher)
+            return
+        }
+        inputError = nil
+        recorder.start(name: action.name, matcher: matcher, usesPrefix: canUsePrefix && withPrefix) { chord in
+            guard let chord else { return }
+            // Applied directly rather than via `draft`: the text field is
+            // rebuilt as recording ends and would reset its draft from the
+            // (not yet updated) document.
+            switch HerdrKeyBindingInput.value(from: chord.formatted, for: action) {
+            case .success(let value):
+                inputError = nil
+                store.set(action.path, to: value)
+            case .failure(let error):
+                inputError = error.message
             }
         }
     }
@@ -607,8 +665,11 @@ private struct HerdrCommandField: View {
         TextField(title, text: $draft, prompt: Text(placeholder))
             .font(mono ? .system(.body, design: .monospaced) : .body)
             .onAppear { draft = value }
-            .onChange(of: value) { draft = $0 }
-            .onSubmit { commit(draft) }
+            .onChange(of: value) { newValue in if draft != newValue { draft = newValue } }
+            // Commit as you type: a value only committed on Return left Save
+            // rejecting the (still empty) document text.
+            .onChange(of: draft) { newDraft in if newDraft != value { commit(newDraft) } }
+            .onSubmit { if draft != value { commit(draft) } }
     }
 }
 
@@ -691,7 +752,8 @@ private struct HerdrRowTextField: View {
         TextField("tokens", text: $draft)
             .font(.system(.body, design: .monospaced))
             .onAppear { draft = value }
-            .onChange(of: value) { draft = $0 }
-            .onSubmit { commit(draft) }
+            .onChange(of: value) { newValue in if draft != newValue { draft = newValue } }
+            .onChange(of: draft) { newDraft in if newDraft != value { commit(newDraft) } }
+            .onSubmit { if draft != value { commit(draft) } }
     }
 }

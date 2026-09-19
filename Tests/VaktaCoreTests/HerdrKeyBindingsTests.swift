@@ -163,3 +163,70 @@ final class HerdrKeyBindingsTests: XCTestCase {
         XCTAssertEqual(HerdrKeyBindingInput.value(from: "", for: try action("last_pane")), .success(.string("")))
     }
 }
+
+final class HerdrKeyChordEventTests: XCTestCase {
+    private func chord(
+        keyCode: UInt16, chars: String, ctrl: Bool = false, alt: Bool = false, shift: Bool = false, cmd: Bool = false,
+        prefix: Bool = false
+    ) -> String? {
+        HerdrKeyChord.fromKeyEvent(
+            keyCode: keyCode, characters: chars,
+            modifiers: Set([ctrl ? HerdrKeyChord.Modifier.ctrl : nil, alt ? .alt : nil, shift ? .shift : nil, cmd ? .cmd : nil].compactMap { $0 }),
+            usesPrefix: prefix
+        )?.formatted
+    }
+
+    func test_letters_andModifiers_areCanonical() {
+        XCTAssertEqual(chord(keyCode: 45, chars: "n", prefix: true), "prefix+n")
+        XCTAssertEqual(chord(keyCode: 45, chars: "N", shift: true, prefix: true), "prefix+shift+n")
+        XCTAssertEqual(chord(keyCode: 17, chars: "t", cmd: true), "cmd+t")
+        XCTAssertEqual(chord(keyCode: 5, chars: "g", ctrl: true, alt: true), "ctrl+alt+g")
+    }
+
+    func test_shiftedPunctuation_usesTheProducedCharacterAndDropsShift() {
+        XCTAssertEqual(chord(keyCode: 44, chars: "?", shift: true, prefix: true), "prefix+?")
+    }
+
+    func test_punctuation_usesNamedFormsWhereTheGrammarNeedsThem() {
+        XCTAssertEqual(chord(keyCode: 27, chars: "-", prefix: true), "prefix+minus")
+        XCTAssertEqual(chord(keyCode: 43, chars: ",", prefix: true), "prefix+comma")
+        XCTAssertEqual(chord(keyCode: 24, chars: "+", shift: true, prefix: true), "prefix+plus")
+        XCTAssertEqual(chord(keyCode: 50, chars: "`", cmd: true), "cmd+`")
+        XCTAssertEqual(chord(keyCode: 30, chars: "]", cmd: true), "cmd+]")
+    }
+
+    func test_specialKeys_useKeyCodesRegardlessOfCharacters() {
+        XCTAssertEqual(chord(keyCode: 36, chars: "\r", cmd: true), "cmd+enter")
+        XCTAssertEqual(chord(keyCode: 48, chars: "\t", prefix: true), "prefix+tab")
+        XCTAssertEqual(chord(keyCode: 49, chars: " ", ctrl: true), "ctrl+space")
+        XCTAssertEqual(chord(keyCode: 53, chars: "\u{1b}"), "esc")
+        XCTAssertEqual(chord(keyCode: 51, chars: "\u{7f}", alt: true), "alt+backspace")
+        XCTAssertEqual(chord(keyCode: 123, chars: "\u{f702}", cmd: true), "cmd+left")
+        XCTAssertEqual(chord(keyCode: 126, chars: "\u{f700}", ctrl: true, alt: true, shift: true), "ctrl+alt+shift+up")
+        XCTAssertEqual(chord(keyCode: 96, chars: "\u{f708}"), "f5")
+        XCTAssertEqual(chord(keyCode: 111, chars: "\u{f70f}", shift: true), "shift+f12")
+    }
+
+    func test_digits_keepShiftAsAModifier() {
+        XCTAssertEqual(chord(keyCode: 18, chars: "1", cmd: true), "cmd+1")
+        XCTAssertEqual(chord(keyCode: 18, chars: "1", shift: true, prefix: true), "prefix+shift+1")
+    }
+
+    func test_unrecognizedKey_isNil() {
+        XCTAssertNil(chord(keyCode: 200, chars: ""))
+        XCTAssertNil(chord(keyCode: 200, chars: "ab"))
+    }
+
+    func test_everyProducedChord_parsesBackAndRoundTrips() {
+        let cases: [(UInt16, String, Bool)] = [
+            (45, "n", false), (44, "?", true), (27, "-", false), (36, "\r", false), (123, "\u{f702}", false),
+            (96, "\u{f708}", false), (50, "`", false), (30, "]", false), (33, "[", false), (43, ",", false),
+        ]
+        for (code, chars, shift) in cases {
+            let produced = HerdrKeyChord.fromKeyEvent(
+                keyCode: code, characters: chars, modifiers: shift ? [.shift] : [], usesPrefix: true)
+            let text = produced?.formatted ?? ""
+            XCTAssertEqual(try? HerdrKeyChord.parse(text).get(), produced, "\(chars) -> \(text)")
+        }
+    }
+}

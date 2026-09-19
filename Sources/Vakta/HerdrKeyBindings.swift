@@ -63,6 +63,39 @@ struct HerdrKeyChord: Equatable {
         return .success(HerdrKeyChord(usesPrefix: usesPrefix, modifiers: modifiers, key: key))
     }
 
+    /// Physical special keys (`NSEvent.keyCode`), which have no useful character.
+    private static let namedKeyCodes: [UInt16: String] = [
+        36: "enter", 76: "enter", 48: "tab", 49: "space", 51: "backspace", 53: "esc", 117: "delete", 114: "insert",
+        123: "left", 124: "right", 125: "down", 126: "up", 115: "home", 119: "end", 116: "pageup", 121: "pagedown",
+        122: "f1", 120: "f2", 99: "f3", 118: "f4", 96: "f5", 97: "f6", 98: "f7", 100: "f8", 101: "f9", 109: "f10",
+        103: "f11", 111: "f12", 105: "f13", 107: "f14", 113: "f15", 106: "f16", 64: "f17", 79: "f18", 80: "f19", 90: "f20"
+    ]
+
+    /// The chord a key press represents, spelled the way herdr expects. Pure:
+    /// the caller passes the event's key code, the characters it produced, and
+    /// which modifiers were held. Shift is kept for letters, digits and named
+    /// keys, but dropped for punctuation, where the produced character
+    /// (`?`, not `/`) already carries it. Nil if the key can't be expressed.
+    static func fromKeyEvent(
+        keyCode: UInt16, characters: String, modifiers: Set<Modifier>, usesPrefix: Bool
+    ) -> HerdrKeyChord? {
+        var modifiers = modifiers
+        let key: String
+        if let named = namedKeyCodes[keyCode] {
+            key = named
+        } else {
+            guard characters.count == 1, let character = characters.first, !character.isWhitespace else { return nil }
+            switch character {
+            case "-": key = "minus"
+            case ",": key = "comma"
+            case "+": key = "plus"
+            default: key = String(character).lowercased()
+            }
+            if !(character.isLetter || character.isNumber) { modifiers.remove(.shift) }
+        }
+        return HerdrKeyChord(usesPrefix: usesPrefix, modifiers: modifiers, key: key)
+    }
+
     private static func isValidKey(_ key: String) -> Bool {
         if Modifier(rawValue: key) != nil || key == "prefix" { return false }
         if namedKeys.contains(key) { return true }
