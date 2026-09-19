@@ -987,7 +987,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case "toggleSidebar": toggleSidebar()
         case "openPreferences": showPreferences()
         case "openInEditor": openInEditor()
-        case "editHerdrConfig": preferencesController.show(section: .herdrConfig)
+        case "editHerdrConfig": preferencesController.show(section: .herdr)
         case "reloadHerdrConfig": reloadHerdrConfig()
         case "increaseFontSize": increaseFontSize()
         case "decreaseFontSize": decreaseFontSize()

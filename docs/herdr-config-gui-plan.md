@@ -132,9 +132,8 @@ invalid intermediate value must never hit disk.
 
 ### UI
 
-- Preferences: new **"Herdr Config"** section (keep the existing **Herdr**
-  section for Vakta-side options like `showWorkspaces`, to keep the
-  "herdr's settings" vs "Vakta's settings" boundary visible). Sub-navigation by
+- Preferences: **"Herdr"** section (as built: the old Vakta-side "Show workspaces"
+  toggle moved to Appearance, since workspaces now cover tmux too). Sub-navigation by
   catalog `group`: General, Terminal, UI & Layout, Notifications & Sound,
   Session, Worktrees & Remote, Advanced, Experimental, Keys, Theme, Sidebar rows,
   Custom commands, Raw. Form rows generated from the catalog (Toggle, Stepper,

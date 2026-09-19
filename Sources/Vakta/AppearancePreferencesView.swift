@@ -10,6 +10,7 @@ import SwiftUI
 struct AppearancePreferencesView: View {
     @EnvironmentObject private var store: AppearanceStore
     @EnvironmentObject private var sidebarSettings: SidebarSettingsStore
+    @EnvironmentObject private var herdrPreferences: HerdrPreferencesStore
 
     var body: some View {
         Form {
@@ -72,6 +73,17 @@ struct AppearancePreferencesView: View {
                 Text("“Hidden” removes the sidebar entirely — bring it back with "
                     + "View ▸ Toggle Sidebar (or a shortcut bound to it under "
                     + "Keybindings).")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section {
+                Toggle("Show workspaces", isOn: $herdrPreferences.showWorkspaces)
+            } header: {
+                Text("Sidebar")
+            } footer: {
+                Text("Lets a session's sidebar row expand to show its workspaces (herdr) or "
+                    + "windows (tmux) — on this machine only — and click one to switch to it.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

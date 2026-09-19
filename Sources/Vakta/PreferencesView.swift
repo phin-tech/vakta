@@ -17,7 +17,6 @@ enum PreferencesSection: String, CaseIterable, Identifiable {
     case notifications
     case keybindings
     case herdr
-    case herdrConfig
     case editor
 
     var id: String { rawValue }
@@ -30,7 +29,6 @@ enum PreferencesSection: String, CaseIterable, Identifiable {
         case .notifications: return "Notifications"
         case .keybindings: return "Keybindings"
         case .herdr: return "Herdr"
-        case .herdrConfig: return "Herdr Config"
         case .editor: return "Editor"
         }
     }
@@ -43,8 +41,7 @@ enum PreferencesSection: String, CaseIterable, Identifiable {
         case .sessions: return "macwindow"
         case .notifications: return "bell"
         case .keybindings: return "keyboard"
-        case .herdr: return "rectangle.on.rectangle"
-        case .herdrConfig: return "slider.horizontal.3"
+        case .herdr: return "slider.horizontal.3"
         case .editor: return "chevron.left.forwardslash.chevron.right"
         }
     }
@@ -76,8 +73,6 @@ struct PreferencesView: View {
             case .keybindings:
                 KeybindingsPreferencesView()
             case .herdr:
-                HerdrPreferencesView()
-            case .herdrConfig:
                 HerdrConfigView()
             case .editor:
                 EditorPreferencesView()

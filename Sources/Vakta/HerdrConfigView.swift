@@ -2,7 +2,7 @@
 //  HerdrConfigView.swift
 //  Vakta
 //
-//  The "Herdr Config" preferences pane: a GUI over herdr's own config.toml
+//  The "Herdr" preferences pane: a GUI over herdr's own config.toml
 //  (the file is the source of truth -- see `HerdrConfigStore`). Two tabs:
 //  structured Settings generated from `HerdrConfigCatalog`, and a Raw editor
 //  for everything the catalog doesn't cover. Edits stay in memory until Save,

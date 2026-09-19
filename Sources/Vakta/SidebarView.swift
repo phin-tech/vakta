@@ -28,7 +28,7 @@ struct SidebarView: View {
     @State private var editingID: Session.ID?
 
     /// Herdr session rows currently expanded to show their workspaces (see
-    /// `HerdrPreferencesView`'s "Show workspaces" toggle). Transient UI
+    /// the Appearance pane's "Show workspaces" toggle). Transient UI
     /// state, not persisted -- collapses again on relaunch.
     @State private var expandedHerdrSessionIDs: Set<Session.ID> = []
 
