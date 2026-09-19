@@ -156,15 +156,15 @@ struct HerdrConfigView: View {
                     .disabled(HerdrConfigReset.setSettingPaths(in: store.document, group: settingsGroup).isEmpty)
                 }
             }
-            let unmanaged = store.document.keyPaths(excluding: HerdrConfigCatalog.editorManagedPaths)
-            if !unmanaged.isEmpty {
+            let others = store.document.keyPaths(excluding: HerdrConfigCatalog.editorManagedPaths).count
+            if others > 0 {
                 Section {
-                    ForEach(unmanaged, id: \.self) { Text($0).font(.system(.caption, design: .monospaced)) }
-                } header: {
-                    Text("Other keys in your file")
-                } footer: {
-                    Text("Keys in your file that have no control here (newer herdr options, lists like tab_bar_right). They are kept exactly as written; edit them in the Raw tab.")
-                        .font(.caption).foregroundStyle(.secondary)
+                    HStack {
+                        Text("\(others) other \(others == 1 ? "key" : "keys") in your file aren't shown here. They're kept as written.")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Open Raw") { tab = .raw }.buttonStyle(.borderless)
+                    }
                 }
             }
         }
