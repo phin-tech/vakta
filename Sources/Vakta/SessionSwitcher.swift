@@ -157,11 +157,20 @@ final class SessionSwitcherModel: ObservableObject {
     /// `sessionID` had no prior rows.
     func replaceWorkspaces(_ newItems: [PaletteItem], forSessionID sessionID: UUID, forGeneration: Int) {
         guard PaletteAppendPlanner.shouldApply(fetchGeneration: forGeneration, currentGeneration: generation) else { return }
-        items.removeAll {
-            if case .focusWorkspace(let existingSessionID, _) = $0.kind { return existingSessionID == sessionID }
-            return false
+
+        func replacingRows(in rows: [PaletteItem]) -> [PaletteItem] {
+            rows.filter {
+                if case .focusWorkspace(let existingSessionID, _) = $0.kind { return existingSessionID != sessionID }
+                return true
+            } + newItems
         }
-        items += newItems
+
+        if scope == .root {
+            rootItems = replacingRows(in: rootItems)
+            items = rootItems + globalPaneItems
+        } else {
+            items = replacingRows(in: items)
+        }
     }
 
     /// Replaces the cached global pane rows for the current palette open.

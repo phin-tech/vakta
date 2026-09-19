@@ -778,6 +778,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         workspacesObserver = nil
         panesObserver = nil
+        requestRootWorkspaceRows(generation: generation)
 
         if let panel = switcherPanel {
             // Refresh theme colors on every reopen (cheap, and covers a
@@ -819,6 +820,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.center()
         panel.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private func requestRootWorkspaceRows(generation: Int) {
+        let sessionIDs = PaletteRootWorkspacePlanner.fetchSessionIDs(
+            sessionStore.sessions.map {
+                PaletteWorkspaceSession(id: $0.id, supportsWorkspaces: Self.supportsWorkspaces($0))
+            }
+        )
+        pendingPaletteWorkspaceFetches = Set(sessionIDs)
+        guard !pendingPaletteWorkspaceFetches.isEmpty else { return }
+
+        workspacesObserver = sessionStore.$workspaces.sink { [weak self] workspacesByID in
+            guard let self,
+                  self.switcherModel.generation == generation,
+                  self.switcherModel.scope == .root
+            else { return }
+
+            let pendingSessionIDs = self.pendingPaletteWorkspaceFetches
+            for sessionID in pendingSessionIDs {
+                guard let workspaces = workspacesByID[sessionID] else { continue }
+                self.switcherModel.replaceWorkspaces(
+                    self.paletteWorkspaceItems(for: sessionID, workspaces: workspaces),
+                    forSessionID: sessionID,
+                    forGeneration: generation
+                )
+                self.pendingPaletteWorkspaceFetches.remove(sessionID)
+            }
+            if self.pendingPaletteWorkspaceFetches.isEmpty {
+                self.workspacesObserver = nil
+            }
+        }
+
+        for sessionID in sessionIDs {
+            sessionStore.fetchWorkspaces(for: sessionID)
+        }
     }
 
     private func requestGlobalPaneSearch(_ rawQuery: String, generation: Int) {
