@@ -1,6 +1,6 @@
 # Plan: GUI editor for the herdr config
 
-Status: phases 1-3 implemented (patcher, save planner, file/checker/reloader/store, catalog, scalar UI, Raw tab, ⌘K actions); phases 4-6 (chord editor, theme layers, sidebar rows/custom commands) not started; GUI behavior unverified on a desktop. Implementation follows the RED/GREEN/REFACTOR
+Status: phases 1-4 implemented (patcher, save planner, file/checker/reloader/store, catalog, scalar UI, Raw tab, ⌘K actions, [keys] editor as validated text entry with conflict detection -- no key-recorder yet); phases 5-6 (theme layers, sidebar rows/custom commands) not started; GUI behavior unverified on a desktop. Implementation follows the RED/GREEN/REFACTOR
 gates in [AGENTS.md](../AGENTS.md); this document authorizes none of them.
 
 ## Goal
