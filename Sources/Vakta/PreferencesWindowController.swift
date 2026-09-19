@@ -33,7 +33,7 @@ final class PreferencesWindowController {
         let host = NSHostingView(
             rootView: PreferencesView().environmentStores(stores).environmentObject(stores.herdrConfig)
         )
-        let window = NSWindow(
+        let window = PreferencesWindow(
             contentRect: NSRect(x: 0, y: 0, width: 640, height: 420),
             styleMask: [.titled, .closable, .resizable],
             backing: .buffered,
@@ -53,5 +53,16 @@ final class PreferencesWindowController {
 
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+}
+
+/// Escape closes Preferences, like a standard macOS preferences/dialog window.
+/// `cancelOperation(_:)` only reaches the window when nothing in the responder
+/// chain handled Escape first: a text field being edited keeps its own Escape,
+/// and a shortcut being recorded is consumed by the keybinding matcher's
+/// monitor before any responder sees it.
+private final class PreferencesWindow: NSWindow {
+    override func cancelOperation(_ sender: Any?) {
+        performClose(sender)
     }
 }
