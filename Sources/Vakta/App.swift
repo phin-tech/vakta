@@ -741,6 +741,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         PaletteAction(id: "toggleSidebar", title: "Toggle Sidebar"),
         PaletteAction(id: "openPreferences", title: "Open Preferences"),
         PaletteAction(id: "openInEditor", title: "Open in Editor"),
+        PaletteAction(id: "editHerdrConfig", title: "Edit Herdr Config…"),
+        PaletteAction(id: "reloadHerdrConfig", title: "Reload Herdr Config"),
         PaletteAction(id: "increaseFontSize", title: "Increase Font Size"),
         PaletteAction(id: "decreaseFontSize", title: "Decrease Font Size"),
         PaletteAction(id: "resetFontSize", title: "Reset Font Size")
@@ -985,10 +987,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case "toggleSidebar": toggleSidebar()
         case "openPreferences": showPreferences()
         case "openInEditor": openInEditor()
+        case "editHerdrConfig": preferencesController.show(section: .herdrConfig)
+        case "reloadHerdrConfig": reloadHerdrConfig()
         case "increaseFontSize": increaseFontSize()
         case "decreaseFontSize": decreaseFontSize()
         case "resetFontSize": resetFontSize()
         default: break
+        }
+    }
+
+    /// ⌘K "Reload Herdr Config": asks the running herdr server to re-read its
+    /// config. Silent on success; a failure is worth an alert since nothing
+    /// else on screen would say the reload didn't happen.
+    private func reloadHerdrConfig() {
+        Task { @MainActor in
+            guard case .failed(let reason) = await stores.herdrConfig.reloadServer() else { return }
+            let alert = NSAlert()
+            alert.messageText = "herdr did not reload its config"
+            alert.informativeText = reason
+            alert.runModal()
         }
     }
 

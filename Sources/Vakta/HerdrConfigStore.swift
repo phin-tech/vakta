@@ -36,6 +36,15 @@ final class HerdrConfigStore: ObservableObject {
         self.reloader = reloader
     }
 
+    var fileURL: URL { file.url }
+    var filePath: String { file.url.path }
+
+    /// Asks the running herdr server to reload its config (no file change).
+    func reloadServer() async -> HerdrConfigReloadOutcome {
+        let reloader = self.reloader
+        return await offMain { reloader.reload() }
+    }
+
     /// Adopts whatever is on disk, discarding pending edits.
     func load() {
         switch file.load() {
@@ -51,6 +60,13 @@ final class HerdrConfigStore: ObservableObject {
             loadError = message
         }
         isDirty = false
+    }
+
+    /// Replaces the whole document text (the Raw editor).
+    func replaceText(_ text: String) {
+        guard text != document.text else { return }
+        document = HerdrConfigDocument(text: text)
+        isDirty = true
     }
 
     func set(_ path: String, to value: HerdrConfigValue) {

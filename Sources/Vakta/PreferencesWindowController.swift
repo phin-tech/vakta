@@ -22,7 +22,8 @@ final class PreferencesWindowController {
 
     /// Opens the Preferences window, creating it on first use and reusing it
     /// afterward.
-    func show() {
+    func show(section: PreferencesSection? = nil) {
+        stores.preferencesRouter.requested = section
         if let window {
             window.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
@@ -30,7 +31,7 @@ final class PreferencesWindowController {
         }
 
         let host = NSHostingView(
-            rootView: PreferencesView().environmentStores(stores)
+            rootView: PreferencesView().environmentStores(stores).environmentObject(stores.herdrConfig)
         )
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 640, height: 420),

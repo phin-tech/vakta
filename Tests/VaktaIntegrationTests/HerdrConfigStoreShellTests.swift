@@ -331,4 +331,26 @@ final class HerdrConfigStoreShellTests: XCTestCase {
         XCTAssertTrue(store.isDirty)
         XCTAssertFalse(outputExists("reloaded"))
     }
+
+    func test_store_replaceText_adoptsRawEditsAsDirty_andSavesThemVerbatim() async throws {
+        try writeConfig("a = 1\n")
+        let store = makeStore()
+        store.load()
+        store.replaceText("# raw edit\na = 5\n")
+        XCTAssertTrue(store.isDirty)
+        XCTAssertEqual(store.document.value(at: "a"), .integer(5))
+
+        let result = await store.save()
+
+        XCTAssertEqual(result, .saved(reload: .reloaded))
+        XCTAssertEqual(liveConfig(), "# raw edit\na = 5\n")
+    }
+
+    func test_store_replaceText_withIdenticalText_staysClean() throws {
+        try writeConfig("a = 1\n")
+        let store = makeStore()
+        store.load()
+        store.replaceText("a = 1\n")
+        XCTAssertFalse(store.isDirty)
+    }
 }

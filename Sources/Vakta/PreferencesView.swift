@@ -17,6 +17,7 @@ enum PreferencesSection: String, CaseIterable, Identifiable {
     case notifications
     case keybindings
     case herdr
+    case herdrConfig
     case editor
 
     var id: String { rawValue }
@@ -29,6 +30,7 @@ enum PreferencesSection: String, CaseIterable, Identifiable {
         case .notifications: return "Notifications"
         case .keybindings: return "Keybindings"
         case .herdr: return "Herdr"
+        case .herdrConfig: return "Herdr Config"
         case .editor: return "Editor"
         }
     }
@@ -42,6 +44,7 @@ enum PreferencesSection: String, CaseIterable, Identifiable {
         case .notifications: return "bell"
         case .keybindings: return "keyboard"
         case .herdr: return "rectangle.on.rectangle"
+        case .herdrConfig: return "slider.horizontal.3"
         case .editor: return "chevron.left.forwardslash.chevron.right"
         }
     }
@@ -51,6 +54,7 @@ struct PreferencesView: View {
     @State private var selection: PreferencesSection = .appearance
     @EnvironmentObject private var persistenceFailures: PersistenceFailureCenter
     @EnvironmentObject private var sessionStore: SessionStore
+    @EnvironmentObject private var router: PreferencesRouter
 
     var body: some View {
         NavigationSplitView {
@@ -73,6 +77,8 @@ struct PreferencesView: View {
                 KeybindingsPreferencesView()
             case .herdr:
                 HerdrPreferencesView()
+            case .herdrConfig:
+                HerdrConfigView()
             case .editor:
                 EditorPreferencesView()
             }
@@ -84,6 +90,10 @@ struct PreferencesView: View {
         // standard Form controls macOS didn't design to sit on an arbitrary
         // background, so it keeps the system material.
         .tint(Color(nsColor: sessionStore.terminalAccentColor))
+        .onReceive(router.$requested.compactMap { $0 }) { section in
+            selection = section
+            router.requested = nil
+        }
         .safeAreaInset(edge: .bottom) {
             if let message = persistenceFailures.latestMessage {
                 saveFailureBanner(message)
@@ -112,4 +122,12 @@ struct PreferencesView: View {
         .padding(10)
         .background(.regularMaterial)
     }
+}
+
+
+/// Lets code outside the Preferences window (a ⌘K action) ask it to show a
+/// particular section. `PreferencesView` consumes and clears the request.
+@MainActor
+final class PreferencesRouter: ObservableObject {
+    @Published var requested: PreferencesSection?
 }

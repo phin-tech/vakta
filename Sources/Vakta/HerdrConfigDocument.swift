@@ -20,7 +20,7 @@ enum HerdrConfigValue: Equatable {
     case integer(Int)
     case raw(String)
 
-    fileprivate var rendered: String {
+    var sourceText: String {
         switch self {
         case .string(let value):
             var escaped = ""
@@ -95,7 +95,7 @@ struct HerdrConfigDocument: Equatable {
         if let entry = entries.first(where: { $0.path == path }) {
             let startChars = Array(lines[entry.startLine].content)
             let endChars = Array(lines[entry.endLine].content)
-            let content = String(startChars[0..<entry.startCol]) + value.rendered
+            let content = String(startChars[0..<entry.startCol]) + value.sourceText
                 + String(endChars[entry.endCol...])
             let terminator = lines[entry.endLine].terminator
             lines.replaceSubrange(entry.startLine...entry.endLine, with: [Line(content: content, terminator: terminator)])
@@ -105,7 +105,7 @@ struct HerdrConfigDocument: Equatable {
         let components = path.split(separator: ".").map(String.init)
         guard let key = components.last else { return self }
         let tablePath = components.dropLast().joined(separator: ".")
-        let newLine = "\(key) = \(value.rendered)"
+        let newLine = "\(key) = \(value.sourceText)"
 
         if let table = tables.first(where: { $0.path == tablePath && !$0.isArray }) {
             let index = table.lastLine + 1

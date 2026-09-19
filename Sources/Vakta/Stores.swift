@@ -23,6 +23,25 @@ final class Stores {
     let sessionStore: SessionStore
     let workspaceRefreshMonitor: WorkspaceRefreshMonitor
     let persistenceFailures = PersistenceFailureCenter()
+    let preferencesRouter = PreferencesRouter()
+
+    /// Built on first use (opening the Herdr Config pane or a ⌘K action), so
+    /// launch does no herdr-config work. PATH is the process PATH plus the
+    /// usual user bin dirs -- `herdr` typically lives in ~/.local/bin.
+    lazy var herdrConfig: HerdrConfigStore = {
+        let environment = ProcessInfo.processInfo.environment
+        let home = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+        let path = [environment["PATH"], ShellEnvironment.fallbackPATH()].compactMap { $0 }.joined(separator: ":")
+        let store = HerdrConfigStore(
+            file: HerdrConfigFile(
+                url: HerdrConfigLocator.resolve(environment: environment, home: home),
+                backupsToKeep: 5, now: Date.init),
+            checker: HerdrConfigChecker(herdrCommand: ["herdr"], path: path),
+            reloader: HerdrConfigReloader(herdrCommand: ["herdr"], path: path)
+        )
+        store.load()
+        return store
+    }()
 
     /// `root` is resolved once by the caller (`AppDelegate`, which can fail
     /// launch cleanly if it throws) and threaded through every store here,
@@ -65,5 +84,6 @@ extension View {
             .environmentObject(stores.sessionStore)
             .environmentObject(stores.sessionStore.notifier)
             .environmentObject(stores.persistenceFailures)
+            .environmentObject(stores.preferencesRouter)
     }
 }
