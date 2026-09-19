@@ -58,6 +58,17 @@ final class SessionSwitcherModelTests: XCTestCase {
         XCTAssertTrue(model.matches.isEmpty)
     }
 
+    func test_queryChange_notifiesTheShellForGlobalSearchFetching() {
+        let model = SessionSwitcherModel()
+        model.reset(items: [item("alpha")])
+        var changedQuery: String?
+        model.onQueryChanged = { changedQuery = $0 }
+
+        model.query = "@test-123"
+
+        XCTAssertEqual(changedQuery, "@test-123")
+    }
+
     func test_queryChange_resetsHighlightToZero() {
         let model = SessionSwitcherModel()
         model.reset(items: [item("alpha"), item("beta"), item("gamma")])

@@ -35,10 +35,15 @@ final class FixtureHerdrSocketServer {
         params.requiredLocalEndpoint = endpoint
         params.allowLocalEndpointReuse = true
         listener = try NWListener(using: params)
+        let ready = DispatchSemaphore(value: 0)
+        listener.stateUpdateHandler = { state in
+            if case .ready = state { ready.signal() }
+        }
         listener.newConnectionHandler = { [weak self] connection in
             self?.accept(connection)
         }
         listener.start(queue: queue)
+        _ = ready.wait(timeout: .now() + 2)
     }
 
     func stop() {

@@ -59,6 +59,23 @@ final class SessionSwitcherKeyRouterTests: XCTestCase {
         XCTAssertEqual(SessionSwitcherKeyRouter.intent(keyCode: 53, modifiers: [], hasMarkedText: false), .cancel)
     }
 
+    func test_tab_noMarkedText_noModifiers_isDrillDown() {
+        XCTAssertEqual(SessionSwitcherKeyRouter.intent(keyCode: 48, modifiers: [], hasMarkedText: false), .drillDown)
+    }
+
+    func test_shiftTab_noMarkedText_isBack() {
+        XCTAssertEqual(SessionSwitcherKeyRouter.intent(keyCode: 48, modifiers: .shift, hasMarkedText: false), .back)
+    }
+
+    func test_tab_withMarkedText_isPassthroughToTheIMECandidateWindow() {
+        XCTAssertEqual(SessionSwitcherKeyRouter.intent(keyCode: 48, modifiers: [], hasMarkedText: true), .passthrough)
+    }
+
+    func test_tab_withCommandOrOption_isPassthroughToTheFieldEditor() {
+        XCTAssertEqual(SessionSwitcherKeyRouter.intent(keyCode: 48, modifiers: .command, hasMarkedText: false), .passthrough)
+        XCTAssertEqual(SessionSwitcherKeyRouter.intent(keyCode: 48, modifiers: .option, hasMarkedText: false), .passthrough)
+    }
+
     func test_typingKey_isPassthrough() {
         // 'a' -- not one of the four navigation keys, always falls through
         // to the search field regardless of marked text.

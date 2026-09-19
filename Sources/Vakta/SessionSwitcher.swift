@@ -25,10 +25,19 @@ import SwiftUI
 /// the palette can jump to or run any of them from one flat list.
 @MainActor
 final class SessionSwitcherModel: ObservableObject {
-    @Published var query: String = "" { didSet { highlighted = 0 } }
+    @Published var query: String = "" {
+        didSet {
+            highlighted = 0
+            onQueryChanged?(query)
+        }
+    }
     @Published var highlighted: Int = 0
+    @Published private(set) var scope: PaletteNavigationScope = .root
 
-    private(set) var items: [PaletteItem] = []
+    @Published private(set) var items: [PaletteItem] = []
+    private var rootItems: [PaletteItem] = []
+    private var globalPaneItems: [PaletteItem] = []
+    private var parentScopes: [(scope: PaletteNavigationScope, items: [PaletteItem])] = []
     /// Bumped on every `reset`; tags an in-flight async fetch (e.g. a herdr
     /// session's workspaces) so a result that lands after the palette was
     /// closed and reopened doesn't get appended to the wrong list -- see
@@ -37,7 +46,16 @@ final class SessionSwitcherModel: ObservableObject {
 
     /// Called with the chosen item (Enter or click).
     var onSelect: ((PaletteItem) -> Void)?
-    /// Called on ⎋ or when the palette should dismiss without a choice.
+    /// Called when the panel receives a raw navigation intent. Kept as a
+    /// small seam for panel tests and alternate hosts.
+    var onNavigation: ((PaletteNavigationIntent) -> Void)?
+    /// Called when the shell should refresh data for the current query mode.
+    var onQueryChanged: ((String) -> Void)?
+    /// Called when Tab identifies a child scope whose rows must be fetched by
+    /// the shell. The model never performs process I/O itself.
+    var onScopeRequested: ((PaletteNavigationScope) -> Void)?
+    /// Called on ⎋ at the root, or when a nested navigation request dismisses
+    /// the palette.
     var onCancel: (() -> Void)?
 
     /// Re-seeds the palette for a fresh open. Returns the new generation, to
@@ -45,10 +63,81 @@ final class SessionSwitcherModel: ObservableObject {
     @discardableResult
     func reset(items: [PaletteItem]) -> Int {
         generation += 1
+        parentScopes.removeAll()
+        scope = .root
+        rootItems = items
+        globalPaneItems.removeAll()
         self.items = items
         query = ""
         highlighted = 0
         return generation
+    }
+
+    /// Replaces the visible rows with a child scope while retaining the
+    /// current scope and rows for Shift-Tab/Escape backtracking.
+    func showScope(_ newScope: PaletteNavigationScope, items: [PaletteItem]) {
+        guard newScope != scope else {
+            self.items = items
+            query = ""
+            highlighted = 0
+            return
+        }
+        parentScopes.append((scope: scope, items: self.items))
+        scope = newScope
+        self.items = items
+        query = ""
+        highlighted = 0
+    }
+
+    /// Restores the previous scope and rows. Returns false at the root.
+    @discardableResult
+    func goBack() -> Bool {
+        guard let previous = parentScopes.popLast() else { return false }
+        scope = previous.scope
+        items = previous.items
+        query = ""
+        highlighted = 0
+        return true
+    }
+
+    /// Resolves a navigation intent against the current highlighted row. The
+    /// shell supplies asynchronously fetched rows for a requested child
+    /// scope; backtracking is handled locally because parent rows are cached.
+    func navigate(_ intent: PaletteNavigationIntent) {
+        onNavigation?(intent)
+        let currentMatches = matches
+        guard currentMatches.indices.contains(highlighted) else {
+            if intent == .escape || intent == .shiftTab {
+                if scope == .root { onCancel?() } else { _ = goBack() }
+            }
+            return
+        }
+        let outcome = PaletteNavigationPlanner.decide(
+            intent: intent,
+            highlighted: currentMatches[highlighted],
+            scope: scope
+        )
+        switch outcome {
+        case .drillInto(let childScope):
+            onScopeRequested?(childScope)
+        case .back:
+            _ = goBack()
+        case .dismiss:
+            onCancel?()
+        case .commit(let kind):
+            if let item = currentMatches.first(where: { $0.kind == kind }) {
+                onSelect?(item)
+            }
+        case .noOp:
+            break
+        }
+    }
+
+    /// Replaces rows for the currently visible scope without resetting the
+    /// user's query or highlight. Used when an asynchronous fetch completes.
+    func replaceScopeItems(_ newItems: [PaletteItem], for scope: PaletteNavigationScope) {
+        guard self.scope == scope else { return }
+        items = newItems
     }
 
     /// Merges asynchronously-fetched items (e.g. a herdr session's
@@ -75,8 +164,27 @@ final class SessionSwitcherModel: ObservableObject {
         items += newItems
     }
 
+    /// Replaces the cached global pane rows for the current palette open.
+    /// They remain hidden while the query is in normal mode and are projected
+    /// when the user enters the `@` search mode.
+    func replaceGlobalPaneItems(_ newItems: [PaletteItem], forGeneration: Int) {
+        guard PaletteAppendPlanner.shouldApply(fetchGeneration: forGeneration, currentGeneration: generation) else { return }
+        globalPaneItems = newItems
+        guard scope == .root else { return }
+        items = rootItems + globalPaneItems
+    }
+
     /// Case-insensitive substring match on title/subtitle; empty query shows all.
-    var matches: [PaletteItem] { PaletteMatcher.matches(query: query, in: items) }
+    var matches: [PaletteItem] {
+        let visibleItems: [PaletteItem]
+        if scope == .root, PaletteQuery.parse(query).mode == .normal {
+            let globalIDs = Set(globalPaneItems.map(\.id))
+            visibleItems = items.filter { !globalIDs.contains($0.id) }
+        } else {
+            visibleItems = items
+        }
+        return PaletteMatcher.matches(query: query, in: visibleItems)
+    }
 
     func moveDown() {
         let count = matches.count
@@ -130,7 +238,9 @@ final class SessionSwitcherPanel: NSPanel {
                 case .moveDown: model.moveDown(); return true
                 case .moveUp: model.moveUp(); return true
                 case .commit: model.commit(); return true
-                case .cancel: model.cancel(); return true
+                case .cancel: model.navigate(.escape); return true
+                case .drillDown: model.navigate(.tab); return true
+                case .back: model.navigate(.shiftTab); return true
                 case .passthrough: return false
                 }
             }

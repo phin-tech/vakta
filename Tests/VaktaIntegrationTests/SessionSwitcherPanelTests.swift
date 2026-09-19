@@ -106,4 +106,30 @@ final class SessionSwitcherPanelTests: XCTestCase {
 
         XCTAssertEqual(selected, model.matches[0])
     }
+
+    func test_tab_noMarkedText_requestsDrillDown() {
+        let panel = SessionSwitcherPanel()
+        let model = makeModel()
+        panel.model = model
+        panel.hasMarkedTextProvider = { false }
+        var intent: PaletteNavigationIntent?
+        model.onNavigation = { intent = $0 }
+
+        panel.sendEvent(keyDownEvent(keyCode: 48))
+
+        XCTAssertEqual(intent, .tab)
+    }
+
+    func test_shiftTab_noMarkedText_requestsBack() {
+        let panel = SessionSwitcherPanel()
+        let model = makeModel()
+        panel.model = model
+        panel.hasMarkedTextProvider = { false }
+        var intent: PaletteNavigationIntent?
+        model.onNavigation = { intent = $0 }
+
+        panel.sendEvent(keyDownEvent(keyCode: 48, modifiers: .shift))
+
+        XCTAssertEqual(intent, .shiftTab)
+    }
 }

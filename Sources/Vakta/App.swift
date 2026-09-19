@@ -78,7 +78,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// but haven't reported back yet; drained (and the observer torn down)
     /// as each arrives -- see `showSessionSwitcher`.
     private var pendingPaletteWorkspaceFetches: Set<Session.ID> = []
+    private var globalPaneFetchGeneration: Int?
     private var workspacesObserver: AnyCancellable?
+    private var panesObserver: AnyCancellable?
 
     /// Sidebar widths: a narrow icon rail when collapsed, and the expanded
     /// panel's draggable bounds. The expanded width itself is persisted in
@@ -753,59 +755,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Opens (or refocuses) the command palette: sessions, workspaces, and
     /// static actions in one flat, searchable list.
     private func showSessionSwitcher() {
+        switcherModel.onQueryChanged = nil
+        globalPaneFetchGeneration = nil
         let sessions = sessionStore.sessions.map {
             PaletteItemAssembler.SessionEntry(id: $0.id, title: $0.displayTitle, status: sessionStore.agentStatus[$0.id] ?? .none)
         }
         let items = PaletteItemAssembler.assemble(
             sessions: sessions,
-            workspaces: sessionStore.workspaces,
+            workspaces: [:],
             workspaceStatus: sessionStore.paneStatusByWorkspaceID,
             actions: Self.paletteActions
         )
         let generation = switcherModel.reset(items: items)
+        switcherModel.onNavigation = nil
         switcherModel.onSelect = { [weak self] item in self?.selectFromSwitcher(item) }
         switcherModel.onCancel = { [weak self] in self?.closeSwitcher() }
-
-        // The palette is the point of asking "what workspaces exist" --
-        // unlike the sidebar disclosure, it queries every workspace-capable
-        // session regardless of `HerdrPreferencesStore.showWorkspaces`, and
-        // it re-queries even a session whose workspaces are already cached
-        // (fetch-on-expand only re-asks once otherwise -- see
-        // `SessionStore.fetchWorkspaces` -- so a workspace created since
-        // that first fetch would otherwise never appear here). The initial
-        // snapshot above already shows any cached answer; this replaces it
-        // once the fresh one lands, via `SessionSwitcherModel.replaceWorkspaces`.
-        pendingPaletteWorkspaceFetches = Set(sessionStore.sessions
-            .filter(Self.supportsWorkspaces)
-            .map(\.id))
-        for id in pendingPaletteWorkspaceFetches {
-            sessionStore.fetchWorkspaces(for: id)
+        switcherModel.onScopeRequested = { [weak self] scope in
+            self?.requestSessionSwitcherScope(scope, generation: generation)
         }
-        workspacesObserver = pendingPaletteWorkspaceFetches.isEmpty ? nil : sessionStore.$workspaces
-            .sink { [weak self] workspacesByID in
-                guard let self else { return }
-                let arrived = self.pendingPaletteWorkspaceFetches.filter { workspacesByID[$0] != nil }
-                guard !arrived.isEmpty else { return }
-                self.pendingPaletteWorkspaceFetches.subtract(arrived)
-
-                for sessionID in arrived {
-                    guard let session = self.sessionStore.sessions.first(where: { $0.id == sessionID }) else { continue }
-                    let entry = PaletteItemAssembler.SessionEntry(
-                        id: session.id,
-                        title: session.displayTitle,
-                        status: self.sessionStore.agentStatus[session.id] ?? .none
-                    )
-                    let newItems = PaletteItemAssembler.assemble(
-                        sessions: [entry],
-                        workspaces: [sessionID: workspacesByID[sessionID] ?? []],
-                        workspaceStatus: self.sessionStore.paneStatusByWorkspaceID,
-                        actions: []
-                    ).filter { $0.category == .workspace }
-                    self.switcherModel.replaceWorkspaces(newItems, forSessionID: sessionID, forGeneration: generation)
-                }
-
-                if self.pendingPaletteWorkspaceFetches.isEmpty { self.workspacesObserver = nil }
-            }
+        switcherModel.onQueryChanged = { [weak self] query in
+            self?.requestGlobalPaneSearch(query, generation: generation)
+        }
+        workspacesObserver = nil
+        panesObserver = nil
 
         if let panel = switcherPanel {
             // Refresh theme colors on every reopen (cheap, and covers a
@@ -849,6 +821,93 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    private func requestGlobalPaneSearch(_ rawQuery: String, generation: Int) {
+        guard switcherModel.generation == generation,
+              switcherModel.scope == .root,
+              PaletteQuery.parse(rawQuery).mode == .allPanes,
+              globalPaneFetchGeneration != generation
+        else { return }
+
+        globalPaneFetchGeneration = generation
+        sessionStore.fetchGlobalPanes { [weak self] entries in
+            guard let self, self.switcherModel.generation == generation else { return }
+            self.switcherModel.replaceGlobalPaneItems(
+                PaletteItemAssembler.assembleGlobalPanes(entries),
+                forGeneration: generation
+            )
+        }
+    }
+
+    private func requestSessionSwitcherScope(_ scope: PaletteNavigationScope, generation: Int) {
+        guard switcherModel.generation == generation else { return }
+
+        switch scope {
+        case .root:
+            return
+        case .workspaces(let sessionID):
+            guard let session = sessionStore.sessions.first(where: { $0.id == sessionID }),
+                  Self.supportsWorkspaces(session)
+            else { return }
+
+            let initialItems = paletteWorkspaceItems(for: sessionID, workspaces: sessionStore.workspaces[sessionID] ?? [])
+            switcherModel.showScope(scope, items: initialItems)
+            workspacesObserver = sessionStore.$workspaces.sink { [weak self] workspacesByID in
+                guard let self,
+                      self.switcherModel.generation == generation,
+                      self.switcherModel.scope == scope,
+                      let workspaces = workspacesByID[sessionID]
+                else { return }
+                self.switcherModel.replaceScopeItems(
+                    self.paletteWorkspaceItems(for: sessionID, workspaces: workspaces),
+                    for: scope
+                )
+                self.workspacesObserver = nil
+            }
+            sessionStore.fetchWorkspaces(for: sessionID)
+
+        case .panes(let sessionID, let workspaceID):
+            guard sessionStore.sessions.contains(where: { $0.id == sessionID }) else { return }
+            let initialItems = PaletteItemAssembler.assemble(
+                panes: sessionStore.panes[sessionID]?[workspaceID] ?? [],
+                sessionID: sessionID,
+                workspaceID: workspaceID
+            )
+            switcherModel.showScope(scope, items: initialItems)
+            panesObserver = sessionStore.$panes.sink { [weak self] panesByID in
+                guard let self,
+                      self.switcherModel.generation == generation,
+                      self.switcherModel.scope == scope,
+                      let panes = panesByID[sessionID]?[workspaceID]
+                else { return }
+                self.switcherModel.replaceScopeItems(
+                    PaletteItemAssembler.assemble(
+                        panes: panes,
+                        sessionID: sessionID,
+                        workspaceID: workspaceID
+                    ),
+                    for: scope
+                )
+                self.panesObserver = nil
+            }
+            sessionStore.fetchPanes(for: sessionID, workspaceID: workspaceID)
+        }
+    }
+
+    private func paletteWorkspaceItems(for sessionID: Session.ID, workspaces: [Workspace]) -> [PaletteItem] {
+        guard let session = sessionStore.sessions.first(where: { $0.id == sessionID }) else { return [] }
+        let entry = PaletteItemAssembler.SessionEntry(
+            id: session.id,
+            title: session.displayTitle,
+            status: sessionStore.agentStatus[session.id] ?? .none
+        )
+        return PaletteItemAssembler.assemble(
+            sessions: [entry],
+            workspaces: [sessionID: workspaces],
+            workspaceStatus: sessionStore.paneStatusByWorkspaceID,
+            actions: []
+        ).filter { $0.category == .workspace }
+    }
+
     /// Repaints the palette in the current terminal theme's colors -- same
     /// solid-background choice `makeWindow` uses for the sidebar/terminal
     /// seam -- and flips the panel's appearance to match, so standard
@@ -872,6 +931,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             activateSession(id)
         case .focusWorkspace(let sessionID, let workspaceID):
             sessionStore.focusWorkspace(workspaceID, in: sessionID)
+            activateSession(sessionID)
+        case .focusPane(let sessionID, let workspaceID, let paneID):
+            sessionStore.focusPane(paneID, workspaceID: workspaceID, in: sessionID)
             activateSession(sessionID)
         case .action(let id):
             performPaletteAction(id)

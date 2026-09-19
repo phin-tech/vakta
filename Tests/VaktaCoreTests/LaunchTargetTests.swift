@@ -222,6 +222,32 @@ final class LaunchTargetTests: XCTestCase {
         )
     }
 
+    // MARK: paneListArgv / paneFocusArgv
+
+    func test_paneListArgv_herdr_targetsWorkspace() {
+        let target = MultiplexerTarget(backend: .herdr, executable: "herdr", tmuxSocketPath: nil, environment: [:])
+        XCTAssertEqual(
+            target.paneListArgv(sessionName: "foo", workspaceID: "w2G"),
+            ["herdr", "--session", "foo", "pane", "list", "--workspace", "w2G"]
+        )
+    }
+
+    func test_paneListArgv_tmux_targetsWindow() {
+        let target = MultiplexerTarget(backend: .tmux, executable: "tmux", tmuxSocketPath: nil, environment: [:])
+        XCTAssertEqual(
+            target.paneListArgv(sessionName: "foo", workspaceID: "@3"),
+            ["tmux", "list-panes", "-t", "foo:@3", "-F", "#{pane_id}|#{window_id}|#{pane_title}|#{pane_active}"]
+        )
+    }
+
+    func test_paneFocusArgv_tmux_targetsPaneDirectly() {
+        let target = MultiplexerTarget(backend: .tmux, executable: "tmux", tmuxSocketPath: nil, environment: [:])
+        XCTAssertEqual(
+            target.paneFocusArgv(sessionName: "foo", workspaceID: "@3", paneID: "%1"),
+            ["tmux", "select-pane", "-t", "%1"]
+        )
+    }
+
     // MARK: eventStreamSocketPath
 
     func test_eventStreamSocketPath_herdr_resolvesUnderConfigDirectory() {

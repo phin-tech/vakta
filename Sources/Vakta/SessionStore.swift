@@ -114,6 +114,11 @@ final class SessionStore: ObservableObject {
     /// display the same empty disclosure.
     @Published private(set) var workspaces: [Session.ID: [Workspace]] = [:]
 
+    /// Panes fetched on demand for the Cmd-K hierarchy. The inner key is a
+    /// backend workspace/window id; nil means the pane list has not been
+    /// queried yet.
+    @Published private(set) var panes: [Session.ID: [String: [Pane]]] = [:]
+
     /// A workspace's own agent status, keyed by workspace id -- lets
     /// `WorkspaceRow` show a workspace's actual status (e.g. a
     /// checkmark for `.done`) instead of only the encompassing session's
@@ -899,6 +904,7 @@ final class SessionStore: ObservableObject {
             paneStatusByWorkspaceID[workspace.id] = nil
         }
         workspaces[id] = nil
+        panes[id] = nil
         tmuxCommandStatusObservers[id] = nil
         tmuxCommandStatusQueues[id] = nil
         herdrEventClients[id]?.stop()
@@ -974,6 +980,10 @@ final class SessionStore: ObservableObject {
         unreadPanes.removeAll { $0.paneID == paneID }
     }
 
+    private static func supportsGlobalPaneSearch(_ session: Session) -> Bool {
+        LaunchTargetResolver.supportsWorkspaces(session.profile, sessionName: session.sessionName)
+    }
+
     /// Queries `id`'s workspaces (off the main thread) and publishes the
     /// result into `workspaces`, once, for the sidebar's disclosure to show
     /// when it's first expanded. A target with no workspace analogue, or one
@@ -999,6 +1009,116 @@ final class SessionStore: ObservableObject {
                 self.workspaces[id] = workspaces
             }
         }
+    }
+
+    /// Queries `workspaceID`'s panes for the Cmd-K hierarchy. Results are
+    /// discarded when the enclosing session has been closed while the helper
+    /// process was running.
+    func fetchPanes(for id: Session.ID, workspaceID: String) {
+        guard let session = sessions.first(where: { $0.id == id }) else { return }
+        guard case .multiplexer(let target) = LaunchTargetResolver.resolve(session.profile) else { return }
+        let sessionName = session.sessionName
+        let path = resolvedPATH
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            guard let panes = PaneQuery.panes(
+                sessionName: sessionName,
+                target: target,
+                workspaceID: workspaceID,
+                path: path,
+                isCancelled: { [weak self] in self?.isShuttingDown ?? true }
+            ) else { return }
+            DispatchQueue.main.async {
+                guard WorkspaceFetchPlanner.shouldApply(sessionID: id, liveSessionIDs: Set(self.sessions.map(\.id))) else { return }
+                self.panes[id, default: [:]][workspaceID] = panes
+            }
+        }
+    }
+
+    /// Queries every workspace and pane exposed by each multiplexer session.
+    /// The expensive discovery runs off the main thread; callers own stale
+    /// palette-generation checks for the returned snapshot.
+    func fetchGlobalPanes(completion: @escaping ([PaletteItemAssembler.GlobalPaneEntry]) -> Void) {
+        struct Snapshot {
+            let id: Session.ID
+            let title: String
+            let sessionName: String
+            let target: MultiplexerTarget
+        }
+        let snapshots = sessions.compactMap { session -> Snapshot? in
+            guard case .multiplexer(let target) = LaunchTargetResolver.resolve(session.profile),
+                  Self.supportsGlobalPaneSearch(session)
+            else { return nil }
+            return Snapshot(
+                id: session.id,
+                title: session.displayTitle,
+                sessionName: session.sessionName,
+                target: target
+            )
+        }
+        let path = resolvedPATH
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            var entries: [PaletteItemAssembler.GlobalPaneEntry] = []
+            for snapshot in snapshots {
+                let isCancelled = { [weak self] in self?.isShuttingDown ?? true }
+                guard let workspaces = WorkspaceQuery.workspaces(
+                    sessionName: snapshot.sessionName,
+                    target: snapshot.target,
+                    path: path,
+                    isCancelled: isCancelled
+                ) else { continue }
+
+                for workspace in workspaces {
+                    guard let panes = PaneQuery.panes(
+                        sessionName: snapshot.sessionName,
+                        target: snapshot.target,
+                        workspaceID: workspace.id,
+                        path: path,
+                        isCancelled: isCancelled
+                    ) else { continue }
+                    entries += panes.map {
+                        PaletteItemAssembler.GlobalPaneEntry(
+                            pane: $0,
+                            sessionID: snapshot.id,
+                            sessionTitle: snapshot.title,
+                            workspaceID: workspace.id,
+                            workspaceTitle: workspace.label
+                        )
+                    }
+                }
+            }
+
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                let liveSessionIDs = Set(self.sessions.map(\.id))
+                completion(entries.filter { liveSessionIDs.contains($0.sessionID) })
+            }
+        }
+    }
+
+    /// Selects a pane's enclosing session and focuses the exact pane. The
+    /// backend operation runs off the main thread: tmux selects the window
+    /// before the pane, while Herdr uses its exact-pane socket method.
+    func focusPane(_ paneID: String, workspaceID: String, in id: Session.ID) {
+        guard let session = sessions.first(where: { $0.id == id }) else { return }
+        guard case .multiplexer(let target) = LaunchTargetResolver.resolve(session.profile) else {
+            select(id)
+            return
+        }
+        let sessionName = session.sessionName
+        let path = resolvedPATH
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            _ = PaneFocus.focus(
+                sessionName: sessionName,
+                target: target,
+                workspaceID: workspaceID,
+                paneID: paneID,
+                path: path,
+                isCancelled: { self?.isShuttingDown ?? true }
+            )
+        }
+        select(id)
     }
 
     /// Switches `id`'s server to `workspaceID` and brings `id` itself

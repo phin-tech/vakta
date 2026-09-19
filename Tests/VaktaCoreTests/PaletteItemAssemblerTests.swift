@@ -104,6 +104,26 @@ final class PaletteItemAssemblerTests: XCTestCase {
         XCTAssertEqual(items.map(\.title), ["alpha", "one", "beta", "two"])
     }
 
+    func test_assembleGlobalPanes_usesPaneNameAndSessionWorkspaceContext() {
+        let sessionID = UUID()
+        let pane = Pane(id: "w2C:p4", tabID: "w2C:t1", label: "test-123", focused: true, status: .none)
+        let items = PaletteItemAssembler.assembleGlobalPanes([
+            PaletteItemAssembler.GlobalPaneEntry(
+                pane: pane,
+                sessionID: sessionID,
+                sessionTitle: "default",
+                workspaceID: "w2C",
+                workspaceTitle: "guildhall"
+            )
+        ])
+
+        XCTAssertEqual(items.count, 1)
+        XCTAssertEqual(items[0].title, "test-123")
+        XCTAssertEqual(items[0].subtitle, "default / guildhall")
+        XCTAssertEqual(items[0].category, .pane)
+        XCTAssertEqual(items[0].kind, .focusPane(sessionID: sessionID, workspaceID: "w2C", paneID: "w2C:p4"))
+    }
+
     func test_assemble_actionsAppearLast_asActionCategory() {
         let (_, entry) = session("alpha")
         let action = PaletteAction(id: "toggleSidebar", title: "Toggle Sidebar")

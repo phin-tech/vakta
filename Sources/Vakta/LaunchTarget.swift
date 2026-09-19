@@ -126,6 +126,33 @@ struct MultiplexerTarget: Equatable {
         }
     }
 
+    /// The argv to list the panes in `workspaceID`, or `nil` for a backend
+    /// with no equivalent. Herdr returns JSON; tmux returns one pipe-separated
+    /// record per pane for `PaneQuery.parse`.
+    func paneListArgv(sessionName: String, workspaceID: String) -> [String]? {
+        switch backend {
+        case .herdr:
+            return [executable, "--session", sessionName, "pane", "list", "--workspace", workspaceID]
+        case .tmux:
+            return tmuxArgv([
+                "list-panes", "-t", "\(sessionName):\(workspaceID)", "-F",
+                "#{pane_id}|#{window_id}|#{pane_title}|#{pane_active}"
+            ])
+        }
+    }
+
+    /// The argv to focus `paneID` directly, or `nil` when the backend's CLI
+    /// does not expose direct pane focus. Herdr's current CLI only exposes
+    /// directional focus; its exact-pane path uses the socket API adapter.
+    func paneFocusArgv(sessionName: String, workspaceID: String, paneID: String) -> [String]? {
+        switch backend {
+        case .herdr:
+            return nil
+        case .tmux:
+            return tmuxArgv(["select-pane", "-t", paneID])
+        }
+    }
+
     /// The argv to focus `workspaceID` on `sessionName`, or `nil` for a
     /// backend with no equivalent. tmux's own "bring the session forward"
     /// step is `switch-client`, but that targets the *invoking* client's

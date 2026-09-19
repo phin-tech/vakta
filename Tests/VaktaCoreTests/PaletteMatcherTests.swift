@@ -33,6 +33,28 @@ final class PaletteMatcherTests: XCTestCase {
         XCTAssertEqual(PaletteMatcher.matches(query: "   ", in: items).count, 2)
     }
 
+    func test_matches_atLeader_searchesOnlyPaneRows_andStripsLeader() {
+        let panes = [
+            item("test-123", subtitle: "alpha / guildhall", category: .pane),
+            item("test-999", subtitle: "beta / other", category: .pane),
+            item("test-123", subtitle: nil, category: .session)
+        ]
+
+        XCTAssertEqual(
+            PaletteMatcher.matches(query: "@test-123", in: panes).map(\.category),
+            [.pane]
+        )
+    }
+
+    func test_matches_doubleAt_escapesTheGlobalPaneLeader() {
+        let items = [item("@test-123", category: .session), item("test-123", category: .pane)]
+
+        XCTAssertEqual(
+            PaletteMatcher.matches(query: "@@test", in: items).map(\.title),
+            ["@test-123"]
+        )
+    }
+
     func test_matches_caseInsensitiveSubstring_onTitle() {
         let items = [item("Herdr Session"), item("tmux"), item("Other")]
 

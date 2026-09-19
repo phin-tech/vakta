@@ -53,6 +53,8 @@ enum SwitcherKeyIntent: Equatable {
     case moveUp
     case commit
     case cancel
+    case drillDown
+    case back
     /// Not one of the switcher's navigation keys, or marked text (an
     /// in-progress input-method composition) owns this key instead --
     /// let it reach the search field's field editor normally.
@@ -64,6 +66,7 @@ enum SessionSwitcherKeyRouter {
     private static let moveUpKeyCode: UInt16 = 126
     private static let returnKeyCode: UInt16 = 36
     private static let escapeKeyCode: UInt16 = 53
+    private static let tabKeyCode: UInt16 = 48
 
     /// The subset of `NSEvent.modifierFlags` relevant to distinguishing a
     /// modified chord from a bare navigation key. Callers must intersect
@@ -80,9 +83,20 @@ enum SessionSwitcherKeyRouter {
     /// A held modifier also always falls through -- ⇧↑/⇧↓ extend the search
     /// field's text selection, ⌘↑/⌘↓ jump to its start/end, and neither the
     /// switcher's own bare-key nav nor any bound `KeybindingAction` chord
-    /// should shadow the field editor's normal text-editing behavior.
+    /// should shadow the field editor's normal text-editing behavior. The
+    /// sole intentional exception is ⇧Tab, which backs out of a palette
+    /// scope rather than moving focus to another control.
     static func intent(keyCode: UInt16, modifiers: NSEvent.ModifierFlags, hasMarkedText: Bool) -> SwitcherKeyIntent {
-        guard !hasMarkedText, modifiers.intersection(relevantModifierMask).isEmpty else { return .passthrough }
+        guard !hasMarkedText else { return .passthrough }
+        let relevantModifiers = modifiers.intersection(relevantModifierMask)
+        if keyCode == tabKeyCode {
+            switch relevantModifiers {
+            case []: return .drillDown
+            case [.shift]: return .back
+            default: return .passthrough
+            }
+        }
+        guard relevantModifiers.isEmpty else { return .passthrough }
         switch keyCode {
         case moveDownKeyCode: return .moveDown
         case moveUpKeyCode: return .moveUp

@@ -14,6 +14,14 @@ enum PaletteItemAssembler {
         let status: AgentStatus
     }
 
+    struct GlobalPaneEntry: Equatable {
+        let pane: Pane
+        let sessionID: UUID
+        let sessionTitle: String
+        let workspaceID: String
+        let workspaceTitle: String
+    }
+
     /// - Parameters:
     ///   - sessions: display order for the session rows, and the order their
     ///     workspace rows follow (grouped per owning session).
@@ -63,5 +71,43 @@ enum PaletteItemAssembler {
         }
 
         return items
+    }
+
+    static func assembleGlobalPanes(_ entries: [GlobalPaneEntry]) -> [PaletteItem] {
+        entries.map { entry in
+            PaletteItem(
+                id: "global-pane:\(entry.sessionID.uuidString):\(entry.workspaceID):\(entry.pane.id)",
+                title: entry.pane.label,
+                subtitle: "\(entry.sessionTitle) / \(entry.workspaceTitle)",
+                category: .pane,
+                status: entry.pane.status,
+                kind: .focusPane(
+                    sessionID: entry.sessionID,
+                    workspaceID: entry.workspaceID,
+                    paneID: entry.pane.id
+                )
+            )
+        }
+    }
+
+    static func assemble(
+        panes: [Pane],
+        sessionID: UUID,
+        workspaceID: String
+    ) -> [PaletteItem] {
+        panes.map { pane in
+            PaletteItem(
+                id: "pane:\(sessionID.uuidString):\(workspaceID):\(pane.id)",
+                title: pane.label,
+                subtitle: pane.tabID,
+                category: .pane,
+                status: pane.status,
+                kind: .focusPane(
+                    sessionID: sessionID,
+                    workspaceID: workspaceID,
+                    paneID: pane.id
+                )
+            )
+        }
     }
 }
