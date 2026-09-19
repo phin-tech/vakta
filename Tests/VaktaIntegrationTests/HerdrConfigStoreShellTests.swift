@@ -367,4 +367,26 @@ final class HerdrConfigStoreShellTests: XCTestCase {
         XCTAssertEqual(result, .saved(reload: .reloaded))
         XCTAssertEqual(HerdrConfigDocument(text: liveConfig() ?? "").arrayTableEntries("keys.command").count, 1)
     }
+
+    func test_store_load_bumpsLoadGeneration_soViewsCanDiscardStaleDrafts() {
+        let store = makeStore()
+        let before = store.loadGeneration
+        store.load()
+        store.load()
+        XCTAssertEqual(store.loadGeneration, before + 2)
+    }
+
+    func test_store_afterASave_aFurtherEditIsDirtyAndSavesAgain() async throws {
+        try writeConfig("[ui]\nconfirm_close = true\n")
+        let store = makeStore()
+        store.load()
+        store.set("ui.confirm_close", to: .bool(false))
+        let first = await store.save()
+        XCTAssertEqual(first, .saved(reload: .reloaded))
+        store.set("ui.mouse_scroll_lines", to: .integer(5))
+        XCTAssertTrue(store.isDirty)
+        let second = await store.save()
+        XCTAssertEqual(second, .saved(reload: .reloaded))
+        XCTAssertEqual(HerdrConfigDocument(text: liveConfig() ?? "").value(at: "ui.mouse_scroll_lines"), .integer(5))
+    }
 }

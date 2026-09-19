@@ -24,6 +24,9 @@ final class HerdrConfigStore: ObservableObject {
     @Published private(set) var document = HerdrConfigDocument(text: "")
     @Published private(set) var isDirty = false
     @Published private(set) var loadError: String?
+    /// Bumped on every `load()`. Views key their identity on it so local text
+    /// drafts are rebuilt from the document after a discard/reload.
+    @Published private(set) var loadGeneration = 0
 
     private let file: HerdrConfigFile
     private let checker: HerdrConfigChecker
@@ -47,6 +50,7 @@ final class HerdrConfigStore: ObservableObject {
 
     /// Adopts whatever is on disk, discarding pending edits.
     func load() {
+        defer { loadGeneration += 1 }
         switch file.load() {
         case .missing:
             document = HerdrConfigDocument(text: "")

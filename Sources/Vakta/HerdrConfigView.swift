@@ -33,9 +33,9 @@ struct HerdrConfigView: View {
             header
             Divider()
             if HerdrConfigSearch.isActive(query) {
-                searchResults
+                searchResults.id(store.loadGeneration)
             } else {
-                tabContent
+                tabContent.id(store.loadGeneration)
             }
             Divider()
             footer
@@ -117,9 +117,19 @@ struct HerdrConfigView: View {
                 Text("Couldn't read config.toml: \(error)").foregroundStyle(.red)
             }
             ForEach(HerdrConfigCatalog.groups, id: \.self) { group in
-                Section(group.title) {
+                Section {
                     ForEach(HerdrConfigCatalog.entries(in: group), id: \.path) { entry in
                         HerdrConfigFieldRow(entry: entry)
+                    }
+                } header: {
+                    HStack {
+                        Text(group.title)
+                        Spacer()
+                        Button("Reset Section") {
+                            store.apply { HerdrConfigReset.settings(in: $0, group: group) }
+                        }
+                        .buttonStyle(.borderless)
+                        .disabled(HerdrConfigReset.setSettingPaths(in: store.document, group: group).isEmpty)
                     }
                 }
             }
@@ -145,13 +155,23 @@ struct HerdrConfigView: View {
                 EmptyView()
             } footer: {
                 Text("Bindings use herdr's syntax: prefix+shift+n, cmd+1..9, ctrl+alt+]. "
-                    + "“prefix+” means after the prefix key. Leave a row at its default to keep herdr's binding.")
+                    + "“prefix+” means after the prefix key. Clear a field and press Return to reset it to herdr's default.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             ForEach(HerdrKeyGroup.allCases, id: \.self) { group in
-                Section(group.title) {
+                Section {
                     ForEach(HerdrKeyActionCatalog.actions(in: group), id: \.name) { action in
                         HerdrKeyBindingRow(action: action, conflicts: conflicts)
+                    }
+                } header: {
+                    HStack {
+                        Text(group.title)
+                        Spacer()
+                        Button("Reset Section") {
+                            store.apply { HerdrConfigReset.keys(in: $0, group: group) }
+                        }
+                        .buttonStyle(.borderless)
+                        .disabled(HerdrConfigReset.setKeyPaths(in: store.document, group: group).isEmpty)
                     }
                 }
             }
@@ -213,7 +233,7 @@ struct HerdrConfigView: View {
             if canSaveUnverified {
                 Button("Save anyway") { save(confirmUnverified: true) }
             }
-            Button("Revert") {
+            Button("Discard Changes") {
                 store.load()
                 message = nil
                 canSaveUnverified = false
@@ -244,34 +264,36 @@ private struct HerdrConfigFieldRow: View {
     @EnvironmentObject private var store: HerdrConfigStore
     @State private var draft = ""
     @State private var inputError: String?
+    @FocusState private var focused: Bool
 
     var body: some View {
         let state = HerdrConfigFieldState.resolve(entry, in: store.document)
-        VStack(alignment: .leading, spacing: 2) {
-            HStack {
-                Text(entry.label)
-                if entry.requiresRestart {
-                    Text("restart").font(.caption2).padding(.horizontal, 4)
-                        .background(.quaternary, in: Capsule())
-                }
-                if state.isSetInFile {
-                    Circle().fill(.tint).frame(width: 6, height: 6).help("Set in config.toml")
-                }
-                Spacer()
+        LabeledContent {
+            HStack(spacing: 6) {
                 control(state)
-                if state.isSetInFile {
-                    Button {
-                        store.unset(entry.path)
-                    } label: {
-                        Image(systemName: "arrow.uturn.backward")
-                    }
-                    .buttonStyle(.borderless)
-                    .help("Remove from config.toml (use herdr's default)")
+                Button {
+                    store.unset(entry.path)
+                } label: {
+                    Image(systemName: "arrow.uturn.backward")
                 }
+                .buttonStyle(.borderless)
+                .disabled(!state.isSetInFile)
+                .help(state.isSetInFile ? "Reset to herdr's default" : "Already using herdr's default")
             }
-            Text(inputError ?? state.problem ?? entry.help)
-                .font(.caption)
-                .foregroundStyle(inputError != nil || state.problem != nil ? Color.red : Color.secondary)
+        } label: {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(entry.label)
+                    if entry.requiresRestart {
+                        Text("restart").font(.caption2).padding(.horizontal, 4)
+                            .background(.quaternary, in: Capsule())
+                    }
+                }
+                Text(inputError ?? state.problem ?? entry.help)
+                    .font(.caption)
+                    .foregroundStyle(inputError != nil || state.problem != nil ? Color.red : Color.secondary)
+                    .lineLimit(2)
+            }
         }
     }
 
@@ -298,13 +320,23 @@ private struct HerdrConfigFieldRow: View {
                 .labelsHidden()
                 .fixedSize()
             case .integer, .text, .color:
-                TextField("", text: $draft)
+                TextField("", text: $draft, prompt: Text(display(entry.defaultValue)))
+                    .labelsHidden()
                     .textFieldStyle(.roundedBorder)
                     .multilineTextAlignment(entry.kind.isNumeric ? .trailing : .leading)
-                    .frame(width: entry.kind.isNumeric ? 90 : 220)
+                    .frame(minWidth: entry.kind.isNumeric ? 80 : 180, maxWidth: entry.kind.isNumeric ? 100 : 260)
+                    .focused($focused)
                     .onAppear { draft = display(state.value) }
-                    .onChange(of: state.value) { draft = display($0) }
-                    .onSubmit { commit() }
+                    .onChange(of: state.value) { newValue in
+                        // Adopt outside changes (reset, revert) but never
+                        // rewrite what the user is mid-way through typing.
+                        if HerdrConfigInput.value(from: draft, for: entry) != .success(newValue) {
+                            draft = display(newValue)
+                        }
+                    }
+                    .onChange(of: draft) { _ in commit(state, final: false) }
+                    .onChange(of: focused) { isFocused in if !isFocused { commit(state, final: true) } }
+                    .onSubmit { commit(state, final: true) }
             }
         }
     }
@@ -318,17 +350,22 @@ private struct HerdrConfigFieldRow: View {
         }
     }
 
-    private func commit() {
+    /// Live commits keep Save enabled as soon as a valid value is typed (a
+    /// value only committed on Return left Save disabled). `final` (Return or
+    /// focus loss) also resolves an emptied numeric/color field to "reset".
+    private func commit(_ state: HerdrConfigFieldState, final: Bool) {
+        let isEmpty = draft.trimmingCharacters(in: .whitespaces).isEmpty
+        if isEmpty, entry.kind != .text || entry.defaultValue == .string("") && entry.kind == .color {
+            guard final else { return }
+            inputError = nil
+            if state.isSetInFile { store.unset(entry.path) }
+            return
+        }
+        guard draft != display(state.value) else { inputError = nil; return }
         switch HerdrConfigInput.value(from: draft, for: entry) {
         case .success(let value):
             inputError = nil
-            // An empty optional color means "no override": remove the key
-            // rather than writing `key = ""`.
-            if entry.kind == .color, value == .string(""), entry.defaultValue == .string("") {
-                store.unset(entry.path)
-            } else {
-                store.set(entry.path, to: value)
-            }
+            if value != state.value { store.set(entry.path, to: value) }
         case .failure(let error):
             inputError = error.message
         }
@@ -351,41 +388,47 @@ private struct HerdrKeyBindingRow: View {
     @EnvironmentObject private var store: HerdrConfigStore
     @State private var draft = ""
     @State private var inputError: String?
+    @FocusState private var focused: Bool
 
     var body: some View {
         let state = HerdrKeyBindingState.resolve(action, in: store.document)
-        VStack(alignment: .leading, spacing: 2) {
-            HStack {
-                Text(action.label)
-                if state.isSetInFile {
-                    Circle().fill(.tint).frame(width: 6, height: 6).help("Set in config.toml")
-                }
-                Spacer()
+        LabeledContent {
+            HStack(spacing: 6) {
                 if state.isEditable {
-                    TextField(action.defaultBinding ?? "unbound", text: $draft)
+                    TextField("", text: $draft, prompt: Text(action.defaultBinding ?? "unbound"))
+                        .labelsHidden()
                         .textFieldStyle(.roundedBorder)
                         .font(.system(.body, design: .monospaced))
-                        .frame(width: 200)
+                        .frame(minWidth: 170, maxWidth: 240)
+                        .focused($focused)
                         .onAppear { draft = state.binding }
-                        .onChange(of: state.binding) { draft = $0 }
-                        .onSubmit { commit() }
+                        .onChange(of: state.binding) { newValue in
+                            if draft.trimmingCharacters(in: .whitespaces) != newValue { draft = newValue }
+                        }
+                        .onChange(of: draft) { _ in commit(state, final: false) }
+                        .onChange(of: focused) { isFocused in if !isFocused { commit(state, final: true) } }
+                        .onSubmit { commit(state, final: true) }
                 } else {
                     Text(state.rawText ?? "").font(.system(.caption, design: .monospaced)).foregroundStyle(.secondary)
                 }
-                if state.isSetInFile {
-                    Button {
-                        store.unset(action.path)
-                    } label: {
-                        Image(systemName: "arrow.uturn.backward")
-                    }
-                    .buttonStyle(.borderless)
-                    .help("Remove from config.toml (use herdr's default)")
+                Button {
+                    store.unset(action.path)
+                } label: {
+                    Image(systemName: "arrow.uturn.backward")
                 }
+                .buttonStyle(.borderless)
+                .disabled(!state.isSetInFile)
+                .help(state.isSetInFile ? "Reset to herdr's default" : "Already using herdr's default")
             }
-            if let message = inputError ?? state.problem ?? conflictMessage(state) ?? readOnlyNote(state) {
-                Text(message)
-                    .font(.caption)
-                    .foregroundStyle(message == readOnlyNote(state) ? Color.secondary : Color.red)
+        } label: {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(action.label)
+                if let message = inputError ?? state.problem ?? conflictMessage(state) ?? readOnlyNote(state) {
+                    Text(message)
+                        .font(.caption)
+                        .foregroundStyle(message == readOnlyNote(state) ? Color.secondary : Color.red)
+                        .lineLimit(2)
+                }
             }
         }
     }
@@ -402,13 +445,22 @@ private struct HerdrKeyBindingRow: View {
         state.isEditable ? nil : "Multiple bindings — edit in the Raw tab."
     }
 
-    private func commit() {
-        switch HerdrKeyBindingInput.value(from: draft, for: action) {
+    /// Valid bindings commit as you type (so Save enables immediately). An
+    /// emptied field is only resolved on Return/focus loss, where it means
+    /// "reset to herdr's default" -- resolving it mid-edit would snap the
+    /// default back under the cursor.
+    private func commit(_ state: HerdrKeyBindingState, final: Bool) {
+        let trimmed = draft.trimmingCharacters(in: .whitespaces)
+        if trimmed.isEmpty {
+            guard final else { return }
+            inputError = nil
+            if state.isSetInFile { store.unset(action.path) }
+            return
+        }
+        guard trimmed != state.binding else { inputError = nil; return }
+        switch HerdrKeyBindingInput.value(from: trimmed, for: action) {
         case .success(let value):
             inputError = nil
-            // Committing the default text unchanged shouldn't pin it into the file.
-            if case .string(let text) = value, text == (action.defaultBinding ?? ""),
-               !HerdrKeyBindingState.resolve(action, in: store.document).isSetInFile { return }
             store.set(action.path, to: value)
         case .failure(let error):
             inputError = error.message
