@@ -45,6 +45,8 @@ enum HerdrConfigCatalog {
         case bool
         case integer(ClosedRange<Int>)
         case choice([String])
+        /// A string with a menu of common values; anything else is still allowed.
+        case suggested([String])
         case text
         case color
     }
@@ -93,10 +95,22 @@ enum HerdrConfigCatalog {
         Entry(path: path, kind: .text, defaultValue: .string(value), group: group, label: label, help: help)
     }
 
+    private static func suggested(_ path: String, _ label: String, _ value: String, _ options: [String],
+                                  _ group: HerdrConfigGroup, _ help: String) -> Entry {
+        Entry(path: path, kind: .suggested(options), defaultValue: .string(value), group: group, label: label, help: help)
+    }
+
     private static func color(_ path: String, _ label: String, _ value: String,
                               _ group: HerdrConfigGroup, _ help: String) -> Entry {
         Entry(path: path, kind: .color, defaultValue: .string(value), group: group, label: label, help: help)
     }
+
+    private static let builtinThemes = ["catppuccin", "terminal", "tokyo-night", "dracula", "nord", "gruvbox",
+                                         "one-dark", "solarized", "kanagawa", "rose-pine", "vesper"]
+
+    private static let soundAgents = ["pi", "claude", "codex", "gemini", "cursor", "devin", "agy", "cline", "open_code",
+                                      "github_copilot", "kimi", "kiro", "droid", "amp", "grok", "hermes", "kilo",
+                                      "qodercli", "qwen", "letta", "maki", "muse"]
 
     private static let corners = ["top-left", "top-right", "bottom-left", "bottom-right"]
 
@@ -106,8 +120,8 @@ enum HerdrConfigCatalog {
              "Executable for new panes. Empty uses $SHELL, then /bin/sh."),
         choice("terminal.shell_mode", "Shell mode", "auto", ["auto", "login", "non_login"], .terminal,
                "Startup mode for new pane shells."),
-        text("terminal.new_cwd", "New pane directory", "follow", .terminal,
-             "follow, home, current, or a fixed path such as ~/Projects."),
+        suggested("terminal.new_cwd", "New pane directory", "follow", ["follow", "home", "current"], .terminal,
+                  "follow inherits the source pane, home uses $HOME, current uses herdr's directory. Choose Custom for a fixed path such as ~/Projects."),
         flag("terminal.kitty_graphics", "Kitty graphics", true, .terminal, "Render pane images in Kitty-compatible terminals."),
 
         // Layout & sidebar
@@ -151,8 +165,9 @@ enum HerdrConfigCatalog {
         flag("ui.mouse_capture", "Capture mouse", true, .input, "Set false to let the terminal handle normal clicks."),
         flag("ui.copy_on_select", "Copy on select", true, .input, "Copy text selected with the mouse."),
         choice("ui.host_cursor", "Host cursor", "auto", ["auto", "native", "drawn"], .input, "Cursor rendering policy."),
-        text("ui.right_click_passthrough_modifier", "Right-click passthrough modifier", "", .input,
-             "Modifier (ctrl, alt, cmd, super, meta, hyper) that forwards right-click to pane apps. Empty disables."),
+        suggested("ui.right_click_passthrough_modifier", "Right-click passthrough modifier", "",
+                  ["", "ctrl", "alt", "cmd", "super", "meta", "hyper"], .input,
+                  "Modifier that forwards right-click to pane apps. Not set disables it. Choose Custom for combinations."),
         number("ui.mouse_scroll_lines", "Scroll lines per notch", 3, 1...1000, .input, "Lines scrolled per wheel notch."),
         flag("ui.redraw_on_focus_gained", "Redraw on focus", true, .input,
              "Force a full redraw when the outer terminal regains focus."),
@@ -170,6 +185,12 @@ enum HerdrConfigCatalog {
         // Sound
         flag("ui.sound.enabled", "Play sounds", true, .sound, "Play sounds when agents change state in the background."),
 
+        // Per-agent sounds (droid is muted by default)
+    ] + soundAgents.map { agent in
+        choice("ui.sound.agents.\(agent)", "Sound: \(agent.replacingOccurrences(of: "_", with: " "))",
+               agent == "droid" ? "off" : "default", ["default", "on", "off"], .sound,
+               "default follows the global sound setting; on/off overrides it for this agent.")
+    } + [
         // Session
         flag("session.resume_agents_on_restore", "Resume agents on restore", true, .session,
              "Resume supported agent panes into their native conversations after a server restart."),
@@ -182,14 +203,14 @@ enum HerdrConfigCatalog {
              "Background agent-detection manifest updates."),
 
         // Theme & accent
-        text("theme.name", "Theme", "catppuccin", .appearance,
-             "Built-in: catppuccin, terminal, tokyo-night, dracula, nord, gruvbox, one-dark, solarized, kanagawa, rose-pine, vesper."),
+        suggested("theme.name", "Theme", "catppuccin", builtinThemes, .appearance,
+                  "A built-in theme, or Custom for another name."),
         flag("theme.auto_switch", "Follow terminal light/dark", false, .appearance,
              "Switch themes with the host terminal's appearance (uses light/dark theme names)."),
-        text("theme.dark_name", "Dark theme", "", .appearance,
-             "Theme used when auto-switch follows a dark terminal. Empty leaves it unset."),
-        text("theme.light_name", "Light theme", "", .appearance,
-             "Theme used when auto-switch follows a light terminal. Empty leaves it unset."),
+        suggested("theme.dark_name", "Dark theme", "", [""] + builtinThemes, .appearance,
+                  "Theme used when auto-switch follows a dark terminal."),
+        suggested("theme.light_name", "Light theme", "", ["", "catppuccin-latte"] + builtinThemes, .appearance,
+                  "Theme used when auto-switch follows a light terminal."),
         color("ui.accent", "Accent color", "cyan", .appearance, "Hex (#89b4fa), a color name, or rgb(r,g,b)."),
 
         // Server
@@ -215,6 +236,9 @@ enum HerdrConfigCatalog {
              "Save recent pane screen history across server restarts."),
         flag("experimental.switch_ascii_input_source_in_prefix", "ASCII input in prefix mode", false, .experimental,
              "macOS/Windows: switch to an ASCII input source while in prefix mode."),
+        choice("experimental.cjk_ime_cursor_shape", "CJK IME cursor shape", "steady_block",
+               ["block", "steady_block", "underline", "steady_underline", "bar", "steady_bar"], .experimental,
+               "Cursor shape rendered when the CJK IME cursor reveal is on."),
         flag("experimental.reveal_hidden_cursor_for_cjk_ime", "Reveal cursor for CJK IME", false, .experimental,
              "Expose the cursor anchor so input methods keep tracking the candidate window.")
     ] + themeColorEntries
@@ -250,7 +274,7 @@ enum HerdrConfigFieldValidator {
             return range.contains(number) ? nil : "Must be between \(range.lowerBound) and \(range.upperBound)."
         case (.choice(let options), .string(let text)):
             return options.contains(text) ? nil : "Must be one of: \(options.joined(separator: ", "))."
-        case (.text, .string):
+        case (.text, .string), (.suggested, .string):
             return nil
         case (.color, .string(let text)):
             // Optional colors (default "") treat empty as "no override".
@@ -265,7 +289,7 @@ enum HerdrConfigFieldValidator {
         switch kind {
         case .bool: return "true or false"
         case .integer: return "a whole number"
-        case .choice, .text, .color: return "a string"
+        case .choice, .suggested, .text, .color: return "a string"
         }
     }
 
@@ -311,7 +335,7 @@ enum HerdrConfigInput {
                 return .failure(HerdrConfigInputError(message: "Expected a whole number."))
             }
             candidate = .integer(number)
-        case .choice, .color:
+        case .choice, .color, .suggested:
             candidate = .string(trimmed)
         case .text:
             candidate = .string(input)
@@ -352,7 +376,7 @@ struct HerdrConfigFieldState: Equatable {
 
     private static func hasExpectedShape(_ value: HerdrConfigValue, for kind: HerdrConfigCatalog.Kind) -> Bool {
         switch (kind, value) {
-        case (.bool, .bool), (.integer, .integer), (.choice, .string), (.text, .string), (.color, .string): return true
+        case (.bool, .bool), (.integer, .integer), (.choice, .string), (.suggested, .string), (.text, .string), (.color, .string): return true
         default: return false
         }
     }

@@ -197,3 +197,55 @@ final class HerdrConfigCatalogTests: XCTestCase {
         XCTAssertTrue(HerdrConfigSaveMessage.describe(.writeFailed("permission denied")).text.contains("permission denied"))
     }
 }
+
+final class HerdrConfigSuggestedValueTests: XCTestCase {
+    private func entry(_ path: String) throws -> HerdrConfigCatalog.Entry {
+        try XCTUnwrap(HerdrConfigCatalog.entry(for: path), "catalog is missing \(path)")
+    }
+
+    func test_themeNames_areSuggestedFromTheBuiltIns_andStillAcceptAnyString() throws {
+        let theme = try entry("theme.name")
+        guard case .suggested(let options) = theme.kind else { return XCTFail("theme.name should offer suggestions") }
+        XCTAssertTrue(options.contains("dracula") && options.contains("tokyo-night") && options.contains("catppuccin"))
+        XCTAssertNil(HerdrConfigFieldValidator.validate(.string("my-custom-theme"), for: theme))
+        XCTAssertNotNil(HerdrConfigFieldValidator.validate(.bool(true), for: theme))
+    }
+
+    func test_optionalThemeNames_offerNotSetAsTheEmptyOption() throws {
+        for path in ["theme.dark_name", "theme.light_name"] {
+            guard case .suggested(let options) = try entry(path).kind else { return XCTFail(path) }
+            XCTAssertEqual(options.first, "")
+        }
+    }
+
+    func test_newPaneDirectory_suggestsTheDocumentedPolicies_butAllowsAFixedPath() throws {
+        let cwd = try entry("terminal.new_cwd")
+        guard case .suggested(let options) = cwd.kind else { return XCTFail() }
+        XCTAssertEqual(options, ["follow", "home", "current"])
+        XCTAssertNil(HerdrConfigFieldValidator.validate(.string("~/Projects"), for: cwd))
+    }
+
+    func test_perAgentSounds_areDefaultOnOffChoices_withDroidMutedByDefault() throws {
+        XCTAssertEqual(try entry("ui.sound.agents.claude").kind, .choice(["default", "on", "off"]))
+        XCTAssertEqual(try entry("ui.sound.agents.claude").defaultValue, .string("default"))
+        XCTAssertEqual(try entry("ui.sound.agents.droid").defaultValue, .string("off"))
+        XCTAssertEqual(HerdrConfigCatalog.entries.filter { $0.path.hasPrefix("ui.sound.agents.") }.count, 22)
+    }
+
+    func test_cjkCursorShape_isAChoice() throws {
+        XCTAssertEqual(
+            try entry("experimental.cjk_ime_cursor_shape").kind,
+            .choice(["block", "steady_block", "underline", "steady_underline", "bar", "steady_bar"])
+        )
+    }
+
+    func test_suggestedInput_isTrimmedString_andEmptyIsAllowedForOptionalOnes() throws {
+        XCTAssertEqual(HerdrConfigInput.value(from: " dracula ", for: try entry("theme.name")), .success(.string("dracula")))
+        XCTAssertEqual(HerdrConfigInput.value(from: "", for: try entry("theme.dark_name")), .success(.string("")))
+    }
+
+    func test_fieldState_suggestedValueOfWrongShape_isReadOnly() throws {
+        let doc = HerdrConfigDocument(text: "[theme]\nname = 5\n")
+        XCTAssertFalse(HerdrConfigFieldState.resolve(try entry("theme.name"), in: doc).isEditable)
+    }
+}

@@ -288,6 +288,7 @@ private struct HerdrConfigFieldRow: View {
     @EnvironmentObject private var store: HerdrConfigStore
     @State private var draft = ""
     @State private var inputError: String?
+    @State private var customMode = false
     @FocusState private var focused: Bool
 
     var body: some View {
@@ -343,26 +344,65 @@ private struct HerdrConfigFieldRow: View {
                 }
                 .labelsHidden()
                 .fixedSize()
+            case .suggested(let options):
+                suggestedControl(options, state)
             case .integer, .text, .color:
-                TextField("", text: $draft, prompt: Text(display(entry.defaultValue)))
-                    .labelsHidden()
-                    .textFieldStyle(.roundedBorder)
-                    .multilineTextAlignment(entry.kind.isNumeric ? .trailing : .leading)
-                    .frame(minWidth: entry.kind.isNumeric ? 80 : 180, maxWidth: entry.kind.isNumeric ? 100 : 260)
-                    .focused($focused)
-                    .onAppear { draft = display(state.value) }
-                    .onChange(of: state.value) { newValue in
-                        // Adopt outside changes (reset, revert) but never
-                        // rewrite what the user is mid-way through typing.
-                        if HerdrConfigInput.value(from: draft, for: entry) != .success(newValue) {
-                            draft = display(newValue)
-                        }
-                    }
-                    .onChange(of: draft) { _ in commit(state, final: false) }
-                    .onChange(of: focused) { isFocused in if !isFocused { commit(state, final: true) } }
-                    .onSubmit { commit(state, final: true) }
+                textInput(state)
             }
         }
+    }
+
+    private static let customTag = "\u{1}custom"
+
+    /// Dropdown of common values plus "Custom…", which reveals a text field.
+    /// A current value outside the menu is shown as Custom automatically.
+    private func suggestedControl(_ options: [String], _ state: HerdrConfigFieldState) -> some View {
+        let current: String = { if case .string(let text) = state.value { return text } else { return "" } }()
+        let isCustom = customMode || !options.contains(current)
+        return HStack(spacing: 6) {
+            Picker("", selection: Binding(
+                get: { isCustom ? Self.customTag : current },
+                set: { tag in
+                    if tag == Self.customTag {
+                        customMode = true
+                    } else {
+                        customMode = false
+                        if tag.isEmpty, entry.defaultValue == .string("") {
+                            store.unset(entry.path)
+                        } else {
+                            store.set(entry.path, to: .string(tag))
+                        }
+                    }
+                }
+            )) {
+                ForEach(options, id: \.self) { Text($0.isEmpty ? "Not set" : $0).tag($0) }
+                Divider()
+                Text("Custom…").tag(Self.customTag)
+            }
+            .labelsHidden()
+            .fixedSize()
+            if isCustom { textInput(state) }
+        }
+    }
+
+    private func textInput(_ state: HerdrConfigFieldState) -> some View {
+        TextField("", text: $draft, prompt: Text(display(entry.defaultValue)))
+            .labelsHidden()
+            .textFieldStyle(.roundedBorder)
+            .multilineTextAlignment(entry.kind.isNumeric ? .trailing : .leading)
+            .frame(minWidth: entry.kind.isNumeric ? 80 : 160, maxWidth: entry.kind.isNumeric ? 100 : 260)
+            .focused($focused)
+            .onAppear { draft = display(state.value) }
+            .onChange(of: state.value) { newValue in
+                // Adopt outside changes (reset, revert) but never
+                // rewrite what the user is mid-way through typing.
+                if HerdrConfigInput.value(from: draft, for: entry) != .success(newValue) {
+                    draft = display(newValue)
+                }
+            }
+            .onChange(of: draft) { _ in commit(state, final: false) }
+            .onChange(of: focused) { isFocused in if !isFocused { commit(state, final: true) } }
+            .onSubmit { commit(state, final: true) }
     }
 
     private func display(_ value: HerdrConfigValue) -> String {
