@@ -26,6 +26,18 @@ enum SidebarTerminalGlyphs {
         }
     }
 
+    /// The leading focus marker on a workspace row: a heavy left bar for the
+    /// workspace on screen, a hairline for one that is merely focused under an
+    /// unselected session. A space (not empty) when unfocused, so the column
+    /// keeps every label aligned.
+    static func workspaceFocusMarker(_ highlight: SidebarRowPresentation.WorkspaceHighlight) -> String {
+        switch highlight {
+        case .prominent: return "▌"
+        case .subtle: return "▏"
+        case .none: return " "
+        }
+    }
+
     /// A tmux workspace's command-result mark. It stays a filled circle for
     /// both success and failure so color carries the result without changing
     /// row alignment; an unset option gets the muted placeholder.

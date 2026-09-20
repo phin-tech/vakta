@@ -379,7 +379,12 @@ struct SidebarView: View {
                             status: sessionStore.paneStatusByWorkspaceID[workspace.id] ?? .none,
                             isTmux: isTmux(session),
                             font: rowFont,
-                            terminalStyle: terminalStyle
+                            terminalStyle: terminalStyle,
+                            highlight: SidebarRowPresentation.workspaceHighlight(
+                                workspaceFocused: workspace.focused,
+                                sessionSelected: session.id == sessionStore.selectedID
+                            ),
+                            accent: Color(nsColor: sessionStore.terminalAccentColor)
                         )
                             // Focus is a row background in both styles, shaped
                             // like the session selection above (square and
@@ -415,15 +420,10 @@ struct SidebarView: View {
 
     @ViewBuilder
     private func workspaceHighlightBackground(_ highlight: SidebarRowPresentation.WorkspaceHighlight) -> some View {
-        let opacity: Double = {
-            switch highlight {
-            case .none: return 0
-            case .subtle: return 0.07
-            case .prominent: return 0.18
-            }
-        }()
+        let style = SidebarRowPresentation.workspaceRowStyle(highlight)
+        let base = style.usesAccentFill ? Color(nsColor: sessionStore.terminalAccentColor) : Color.secondary
         RoundedRectangle(cornerRadius: terminalStyle ? 0 : 6)
-            .fill(Color.secondary.opacity(opacity))
+            .fill(base.opacity(style.fillOpacity))
             .padding(.horizontal, terminalStyle ? 0 : 6)
             .animation(.easeOut(duration: 0.08), value: highlight)
     }
@@ -785,6 +785,12 @@ private struct WorkspaceRow: View {
     let isTmux: Bool
     let font: Font?
     let terminalStyle: Bool
+    let highlight: SidebarRowPresentation.WorkspaceHighlight
+    let accent: Color
+
+    private var rowStyle: SidebarRowPresentation.WorkspaceRowStyle {
+        SidebarRowPresentation.workspaceRowStyle(highlight)
+    }
 
     var body: some View {
         if terminalStyle {
@@ -799,7 +805,13 @@ private struct WorkspaceRow: View {
     /// session name's first character (herdr's tree indent); focus is drawn
     /// by the caller's full-width `listRowBackground`, plus a bold label.
     private var terminalBody: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 6) {
+        HStack(alignment: .firstTextBaseline, spacing: 0) {
+            // Focus marker in the tree-indent column (see `WorkspaceRowStyle`).
+            Text(SidebarTerminalGlyphs.workspaceFocusMarker(highlight))
+                .font(font)
+                .foregroundStyle(highlight == .prominent ? accent : Color.secondary)
+                .frame(width: SidebarView.herdrGutterWidth + 4, alignment: .leading)
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
             if isTmux {
                 Text(SidebarTerminalGlyphs.tmuxCommandStatus(workspace.lastCommandExitCode))
                     .font(font)
@@ -811,12 +823,13 @@ private struct WorkspaceRow: View {
                     .foregroundStyle(sidebarStatusColor(status, isFocused: false))
             }
             Text(workspace.label)
-                .font(workspace.focused ? font?.bold() : font)
+                .font(rowStyle.labelEmphasis == .strong ? font?.bold() : font)
+                .foregroundStyle(rowStyle.labelEmphasis == .dim ? Color.secondary : Color.primary)
                 .lineLimit(1)
                 .help(workspace.label)
             Spacer()
+            }
         }
-        .padding(.leading, SidebarView.herdrGutterWidth + 4)
     }
 
     private var tmuxStatusHelp: String {
@@ -834,8 +847,13 @@ private struct WorkspaceRow: View {
             // vertically greedy, and under `.firstTextBaseline` its bottom
             // edge becomes the baseline the label aligns to -- which pushed
             // the text to the bottom of the row.
-            Color.clear
-                .frame(width: SidebarView.herdrGutterWidth, height: 1)
+            ZStack(alignment: .leading) {
+                Color.clear.frame(width: SidebarView.herdrGutterWidth, height: 1)
+                if highlight == .prominent {
+                    Capsule().fill(accent).frame(width: 3, height: 14)
+                }
+            }
+            .frame(width: SidebarView.herdrGutterWidth, alignment: .leading)
             // The mark's column is reserved even when there is no mark, so
             // every workspace label starts at the same x whether or not its
             // backend reports agent status.
@@ -867,8 +885,8 @@ private struct WorkspaceRow: View {
             // One step smaller than the session name, so sessions read as
             // headings and workspaces as their children.
             Text(workspace.label)
-                .font(.callout)
-                .foregroundStyle(workspace.focused ? .primary : .secondary)
+                .font(.callout.weight(rowStyle.labelEmphasis == .strong ? .semibold : .regular))
+                .foregroundStyle(rowStyle.labelEmphasis == .dim ? Color.secondary : Color.primary)
                 .lineLimit(1)
                 // Workspace names are often long repo names that differ at
                 // the end; middle truncation keeps both ends visible.
