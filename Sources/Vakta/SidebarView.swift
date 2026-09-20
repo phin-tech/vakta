@@ -320,6 +320,40 @@ struct SidebarView: View {
 
     // MARK: Full panel
 
+    /// The selectable name portion of a session row. A `Button` rather than a
+    /// bare `.onTapGesture`: inside a `List` (an `NSTableView`), only a
+    /// control's own frame is reliably hit-tested across a cell's blank
+    /// areas -- a tap gesture fires on the drawn label but the surrounding
+    /// highlight falls through to the table view, which has no `selection:` to
+    /// act on and drops the click. A button (as `RailSessionItem` already uses)
+    /// claims its whole frame. While renaming, stay a plain view so the inner
+    /// `TextField` keeps its own clicks. The disclosure stays a sibling in the
+    /// caller's `HStack`, never a button nested inside this one.
+    @ViewBuilder
+    private func sessionNameCell(_ session: Session) -> some View {
+        let content = SessionRow(
+            session: session,
+            status: sessionStore.agentStatus[session.id] ?? .none,
+            font: rowFont,
+            terminalStyle: terminalStyle,
+            isEditing: editingID == session.id,
+            onCommitName: { name in
+                sessionStore.renameSession(session.id, to: name)
+                editingID = nil
+            },
+            onEndEditing: { editingID = nil }
+        )
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+
+        if editingID == session.id {
+            content
+        } else {
+            Button { sessionStore.select(session.id) } label: { content }
+                .buttonStyle(.plain)
+        }
+    }
+
     private var fullList: some View {
         List {
             ForEach(sessionStore.sessions) { session in
@@ -348,28 +382,12 @@ struct SidebarView: View {
                         .frame(width: Self.herdrGutterWidth, alignment: .center)
                     }
 
-                    SessionRow(
-                        session: session,
-                        status: sessionStore.agentStatus[session.id] ?? .none,
-                        font: rowFont,
-                        terminalStyle: terminalStyle,
-                        isEditing: editingID == session.id,
-                        onCommitName: { name in
-                            sessionStore.renameSession(session.id, to: name)
-                            editingID = nil
-                        },
-                        onEndEditing: { editingID = nil }
-                    )
+                    sessionNameCell(session)
                 }
-                // Fill the cell and carry the row's padding inside, so the tap
-                // target below is the whole highlighted cell, not just the label.
-                .frame(maxWidth: .infinity, alignment: .leading)
+                // The row owns its padding (see `rowContentInsets`), with
+                // `listRowInsets` zeroed below, so the selectable button fills
+                // the cell the `listRowBackground` paints.
                 .padding(rowContentInsets)
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    guard editingID != session.id else { return }
-                    sessionStore.select(session.id)
-                }
                 // Drive selection ourselves (a tap) and paint the highlight with
                 // herdr's selection color. Using the List's own `selection:`
                 // draws its inactive system-gray highlight on top -- doubling
@@ -394,27 +412,31 @@ struct SidebarView: View {
 
                 if herdrPreferences.showWorkspaces, supportsWorkspaces(session), expandedHerdrSessionIDs.contains(session.id) {
                     ForEach(sessionStore.workspaces[session.id] ?? [], id: \.id) { workspace in
-                        WorkspaceRow(
-                            workspace: workspace,
-                            status: sessionStore.paneStatusByWorkspaceID[workspace.id] ?? .none,
-                            isTmux: isTmux(session),
-                            font: rowFont,
-                            terminalStyle: terminalStyle,
-                            highlight: SidebarRowPresentation.workspaceHighlight(
-                                workspaceFocused: workspace.focused,
-                                sessionSelected: session.id == sessionStore.selectedID
-                            ),
-                            accent: Color(nsColor: sessionStore.terminalAccentColor)
-                        )
-                            // Fill the cell and pad inside (see the session row
-                            // above) so tapping anywhere in the highlight focuses
-                            // the workspace, not only its label.
+                        // A `Button` for the same reason as the session row
+                        // (see `sessionNameCell`): the whole highlighted cell
+                        // is hit-tested, not just the label. Padding lives
+                        // inside the label -- a workspace row has no disclosure
+                        // sibling, so nothing has to stay outside the button.
+                        Button {
+                            sessionStore.focusWorkspace(workspace.id, in: session.id)
+                        } label: {
+                            WorkspaceRow(
+                                workspace: workspace,
+                                status: sessionStore.paneStatusByWorkspaceID[workspace.id] ?? .none,
+                                isTmux: isTmux(session),
+                                font: rowFont,
+                                terminalStyle: terminalStyle,
+                                highlight: SidebarRowPresentation.workspaceHighlight(
+                                    workspaceFocused: workspace.focused,
+                                    sessionSelected: session.id == sessionStore.selectedID
+                                ),
+                                accent: Color(nsColor: sessionStore.terminalAccentColor)
+                            )
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(rowContentInsets)
                             .contentShape(Rectangle())
-                            .onTapGesture {
-                                sessionStore.focusWorkspace(workspace.id, in: session.id)
-                            }
+                        }
+                        .buttonStyle(.plain)
                             // Focus is a row background in both styles, shaped
                             // like the session selection above (square and
                             // full-width in terminal style, an inset rounded
