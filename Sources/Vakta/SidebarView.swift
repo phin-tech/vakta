@@ -58,6 +58,20 @@ struct SidebarView: View {
     /// instead of at the sidebar list style's airier pitch.
     fileprivate static let terminalRowInsets = EdgeInsets(top: 0, leading: 10, bottom: 0, trailing: 10)
 
+    /// System-style row insets. Roughly the `.sidebar` list style's own
+    /// vertical rhythm, kept explicit now that the row -- not `listRowInsets`
+    /// -- owns its padding (see `rowContentInsets`).
+    fileprivate static let systemRowInsets = EdgeInsets(top: 6, leading: 10, bottom: 6, trailing: 10)
+
+    /// Padding a row draws *inside* itself, with its `listRowInsets` zeroed.
+    /// This is what makes the whole highlighted cell -- not just the label --
+    /// the tap target: `contentShape` over this padded, full-width content
+    /// then matches the `listRowBackground`'s full-cell rectangle, instead of
+    /// hugging the text and leaving the surrounding highlight dead to clicks.
+    private var rowContentInsets: EdgeInsets {
+        terminalStyle ? Self.terminalRowInsets : Self.systemRowInsets
+    }
+
     /// Whether the sidebar is in terminal style: terminal font, rows at the
     /// font's line height, text glyphs (see `SidebarTerminalGlyphs`) instead
     /// of symbols/shapes, and squared full-width highlights.
@@ -347,6 +361,15 @@ struct SidebarView: View {
                         onEndEditing: { editingID = nil }
                     )
                 }
+                // Fill the cell and carry the row's padding inside, so the tap
+                // target below is the whole highlighted cell, not just the label.
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(rowContentInsets)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    guard editingID != session.id else { return }
+                    sessionStore.select(session.id)
+                }
                 // Drive selection ourselves (a tap) and paint the highlight with
                 // herdr's selection color. Using the List's own `selection:`
                 // draws its inactive system-gray highlight on top -- doubling
@@ -360,13 +383,10 @@ struct SidebarView: View {
                             .padding(.horizontal, terminalStyle ? 0 : 6)
                         : nil
                 )
-                .listRowInsets(terminalStyle ? Self.terminalRowInsets : nil)
+                // Zeroed: the row now owns its padding (see `rowContentInsets`)
+                // so `contentShape` covers the full cell the background fills.
+                .listRowInsets(EdgeInsets())
                 .listRowSeparator(terminalStyle ? .hidden : .automatic)
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    guard editingID != session.id else { return }
-                    sessionStore.select(session.id)
-                }
                 .contextMenu {
                     Button("Rename…") { editingID = session.id }
                     Button("Detach Session") { sessionStore.requestClose(session.id) }
@@ -386,6 +406,15 @@ struct SidebarView: View {
                             ),
                             accent: Color(nsColor: sessionStore.terminalAccentColor)
                         )
+                            // Fill the cell and pad inside (see the session row
+                            // above) so tapping anywhere in the highlight focuses
+                            // the workspace, not only its label.
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(rowContentInsets)
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                sessionStore.focusWorkspace(workspace.id, in: session.id)
+                            }
                             // Focus is a row background in both styles, shaped
                             // like the session selection above (square and
                             // full-width in terminal style, an inset rounded
@@ -400,12 +429,8 @@ struct SidebarView: View {
                                     )
                                 )
                             )
-                            .listRowInsets(terminalStyle ? Self.terminalRowInsets : nil)
+                            .listRowInsets(EdgeInsets())
                             .listRowSeparator(terminalStyle ? .hidden : .automatic)
-                            .contentShape(Rectangle())
-                            .onTapGesture {
-                                sessionStore.focusWorkspace(workspace.id, in: session.id)
-                            }
                     }
                 }
             }
