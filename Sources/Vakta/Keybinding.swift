@@ -166,14 +166,17 @@ extension Keybinding {
     static let zeroKeyCode: UInt16 = 29
     /// `kVK_ANSI_U` -- the "U" in the default ⌘U next-unread-session chord.
     static let uKeyCode: UInt16 = 32
+    /// `kVK_ANSI_Comma` -- the "," in the default ⌘, open-preferences chord.
+    static let commaKeyCode: UInt16 = 43
 
     /// Default bindings: Ctrl+Shift+1 ... Ctrl+Shift+9 select session 0...8,
     /// ⌘K opens the session switcher, ⌘Q quits, ⌘C/⌘V/⌘X are the standard
     /// macOS copy/paste/cut chords, ⌘A selects all, ⌘W closes the front
     /// window, ⌘=/⌘-/⌘0 zoom the terminal font size (Terminal.app's own
     /// convention), and ⌘U jumps to the next unread session (see
-    /// `NextUnreadSessionPlanner`). `toggleSidebar` and `openPreferences`
-    /// ship unbound (absent from the array); the Preferences pane lets the
+    /// `NextUnreadSessionPlanner`), and ⌘, opens Preferences (macOS's own
+    /// convention). `toggleSidebar`
+    /// ships unbound (absent from the array); the Preferences pane lets the
     /// user assign, reassign, or clear any of these -- including ⌘W, for a
     /// user who wants that chord to reach a terminal multiplexer running
     /// inside the session instead. Note that a bound chord is consumed
@@ -195,6 +198,7 @@ extension Keybinding {
         bindings.append(Keybinding(modifierMask: [.command], keyCode: minusKeyCode, action: .decreaseFontSize))
         bindings.append(Keybinding(modifierMask: [.command], keyCode: zeroKeyCode, action: .resetFontSize))
         bindings.append(Keybinding(modifierMask: [.command], keyCode: uKeyCode, action: .nextUnreadSession))
+        bindings.append(Keybinding(modifierMask: [.command], keyCode: commaKeyCode, action: .openPreferences))
         return bindings
     }
 

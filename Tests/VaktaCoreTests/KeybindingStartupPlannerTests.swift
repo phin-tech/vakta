@@ -226,4 +226,50 @@ final class KeybindingStartupPlannerTests: XCTestCase {
         XCTAssertTrue(hasCommandChord(bindings, keyCode: Self.minusKeyCode), "⌘-'s chord is free and must still be added")
         XCTAssertTrue(shouldPersist, "the migration adding ⌘=/⌘- must be written back even though ⌘0 was skipped")
     }
+
+    // ⌘, open-preferences -- v6->v7 default (macOS's own Preferences chord).
+    // kVK_ANSI_Comma = 43.
+    private static let commaKeyCode: UInt16 = 43
+
+    func test_missing_seedsDefaults_includesOpenPreferencesChord() {
+        guard case .use(let bindings, _) = KeybindingStartupPlanner.plan(for: .missing) else {
+            return XCTFail("unreachable")
+        }
+        XCTAssertTrue(
+            bindings.contains { $0.modifierMask == [.command] && $0.keyCode == Self.commaKeyCode && $0.action == .openPreferences },
+            "⌘, must be a default open-preferences chord"
+        )
+    }
+
+    func test_loaded_versionSix_addsOpenPreferencesChordAndPersists() {
+        let payload = StoredKeybindingsPayload(version: 6, bindings: [])
+        guard case .use(let bindings, let shouldPersist) = KeybindingStartupPlanner.plan(for: .loaded(payload)) else {
+            return XCTFail("unreachable")
+        }
+        XCTAssertTrue(hasCommandChord(bindings, keyCode: Self.commaKeyCode))
+        XCTAssertTrue(shouldPersist, "the v6->v7 migration ran and must be written back")
+    }
+
+    func test_loaded_versionSix_commaChordAlreadyTaken_isNotOverwritten() {
+        let conflicting = binding(Self.commaKeyCode, action: .toggleSidebar, modifiers: .command)
+        let payload = StoredKeybindingsPayload(version: 6, bindings: [conflicting])
+        guard case .use(let bindings, _) = KeybindingStartupPlanner.plan(for: .loaded(payload)) else {
+            return XCTFail("unreachable")
+        }
+        XCTAssertTrue(bindings.contains(conflicting), "a pre-existing ⌘, binding must survive untouched")
+        XCTAssertFalse(
+            bindings.contains { $0.keyCode == Self.commaKeyCode && $0.action == .openPreferences },
+            "open-preferences must not be force-added onto an already-taken ⌘,"
+        )
+    }
+
+    func test_loaded_currentVersion_userClearedOpenPreferences_doesNotReaddIt() {
+        // A file already at currentVersion has migrated; clearing ⌘, must stick.
+        let payload = StoredKeybindingsPayload(version: KeybindingFileCodec.currentVersion, bindings: [])
+        guard case .use(let bindings, let shouldPersist) = KeybindingStartupPlanner.plan(for: .loaded(payload)) else {
+            return XCTFail("unreachable")
+        }
+        XCTAssertFalse(bindings.contains { $0.action == .openPreferences })
+        XCTAssertFalse(shouldPersist)
+    }
 }

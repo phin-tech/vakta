@@ -72,6 +72,9 @@ enum KeybindingStartupPlanner {
                 addDefaultIfFree(&bindings, chord: Keybinding.minusKeyCode, action: .decreaseFontSize)
                 addDefaultIfFree(&bindings, chord: Keybinding.zeroKeyCode, action: .resetFontSize)
             }
+            if payload.version < 7 {
+                addDefaultIfFree(&bindings, chord: Keybinding.commaKeyCode, action: .openPreferences)
+            }
             return .use(bindings: bindings, shouldPersist: payload.version < KeybindingFileCodec.currentVersion)
 
         case .corrupt, .unreadable:

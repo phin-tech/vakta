@@ -60,15 +60,15 @@ final class KeybindingFileCodecTests: XCTestCase {
         XCTAssertEqual(codec.decode(data), payload)
     }
 
-    // vakta font-size zoom: v6 adds default ⌘=/⌘-/⌘0 bindings on top of v5's
-    // ⌘A/⌘W (see `KeybindingStartupPlannerTests`). Supersedes the transient
-    // "isFive" assertion -- `currentVersion` only ever has one "current"
-    // value at a time.
-    func test_currentVersion_isSix_forFontSizeZoomDefaults() {
+    // ⌘, open-preferences: v7 adds the default ⌘, binding on top of v6's
+    // font-size zoom (see `KeybindingStartupPlannerTests`). Supersedes the
+    // transient "isSix" assertion -- `currentVersion` only ever has one
+    // "current" value at a time.
+    func test_currentVersion_isSeven_forOpenPreferencesDefault() {
         XCTAssertEqual(
             KeybindingFileCodec.currentVersion,
-            6,
-            "adding default ⌘=/⌘-/⌘0 bindings is a schema migration and must bump currentVersion"
+            7,
+            "adding the default ⌘, open-preferences binding is a schema migration and must bump currentVersion"
         )
     }
 }
