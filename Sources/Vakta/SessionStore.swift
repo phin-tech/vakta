@@ -1152,6 +1152,102 @@ final class SessionStore: ObservableObject {
         select(id)
     }
 
+    /// The id of `id`'s currently focused workspace, if known -- the target
+    /// ⌘K workspace actions operate on ("act on the current selection").
+    /// Populated by `fetchWorkspaces`/`focusWorkspace`; `nil` before the
+    /// first disclosure/query or for a non-multiplexer session.
+    func focusedWorkspaceID(in id: Session.ID) -> String? {
+        workspaces[id]?.first(where: \.focused)?.id
+    }
+
+    /// Runs a mutating multiplexer `action` (one that already carries its
+    /// pane/workspace target) against `id`'s server off the main thread, then
+    /// refetches that session's workspaces and any already-known panes so the
+    /// sidebar and ⌘K reflect the new topology. A Vakta-initiated mutation is
+    /// not observed by `WorkspaceRefreshMonitor`, so the refetch is explicit;
+    /// it is guarded by `WorkspaceFetchPlanner.shouldApply` for a session
+    /// closed while the command was in flight. Fire-and-forget, like every
+    /// other sidebar action.
+    func performAction(_ action: MultiplexerAction, in id: Session.ID) {
+        guard let session = sessions.first(where: { $0.id == id }) else { return }
+        guard case .multiplexer(let target) = LaunchTargetResolver.resolve(session.profile) else { return }
+        let sessionName = session.sessionName
+        let path = resolvedPATH
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            _ = MultiplexerCommand.run(
+                action: action,
+                sessionName: sessionName,
+                target: target,
+                path: path,
+                isCancelled: { self?.isShuttingDown ?? true }
+            )
+            DispatchQueue.main.async { [weak self] in
+                self?.refetchTopology(for: id)
+            }
+        }
+    }
+
+    /// Renames `workspaceID` on `id`'s server. A thin wrapper over
+    /// `performAction` (which refetches topology, so the new label appears in
+    /// the sidebar/⌘K once the query settles), named to mirror `renameSession`.
+    func renameWorkspace(_ workspaceID: String, to label: String, in id: Session.ID) {
+        performAction(.renameWorkspace(workspaceID: workspaceID, label: label), in: id)
+    }
+
+    /// Runs a pane-targeted action against `workspaceID`'s currently active
+    /// pane. The pane id isn't reliably known outside a herdr agent poll
+    /// (`lastKnownFocusedPaneID` is herdr-only and tmux has no equivalent),
+    /// so this resolves it cross-backend via `PaneQuery` off the main thread
+    /// -- the focused pane, or the first pane as a fallback -- then runs
+    /// `make(paneID)` and refetches topology. No live pane: no-op.
+    func performPaneAction(
+        _ make: @escaping (String) -> MultiplexerAction,
+        workspaceID: String,
+        in id: Session.ID
+    ) {
+        guard let session = sessions.first(where: { $0.id == id }) else { return }
+        guard case .multiplexer(let target) = LaunchTargetResolver.resolve(session.profile) else { return }
+        let sessionName = session.sessionName
+        let path = resolvedPATH
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let isCancelled = { [weak self] in self?.isShuttingDown ?? true }
+            guard let panes = PaneQuery.panes(
+                sessionName: sessionName,
+                target: target,
+                workspaceID: workspaceID,
+                path: path,
+                isCancelled: isCancelled
+            ), let paneID = (panes.first(where: \.focused) ?? panes.first)?.id
+            else { return }
+
+            _ = MultiplexerCommand.run(
+                action: make(paneID),
+                sessionName: sessionName,
+                target: target,
+                path: path,
+                isCancelled: isCancelled
+            )
+            DispatchQueue.main.async { [weak self] in
+                self?.refetchTopology(for: id)
+            }
+        }
+    }
+
+    /// Re-queries `id`'s workspaces and every pane list already loaded for it,
+    /// after a Vakta-initiated mutation changed the layout. Guarded so a
+    /// session closed mid-command doesn't resurrect state.
+    private func refetchTopology(for id: Session.ID) {
+        guard WorkspaceFetchPlanner.shouldApply(sessionID: id, liveSessionIDs: Set(sessions.map(\.id))) else { return }
+        fetchWorkspaces(for: id)
+        if let workspaceIDs = panes[id]?.keys {
+            for workspaceID in workspaceIDs {
+                fetchPanes(for: id, workspaceID: workspaceID)
+            }
+        }
+    }
+
     /// Resolves "Open in Editor"'s outcome for `id`: queries a multiplexer
     /// target's active pane (off the main thread) when one applies, falls
     /// back through OSC-7/profile launch directory via

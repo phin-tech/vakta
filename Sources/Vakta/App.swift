@@ -741,6 +741,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         PaletteAction(id: "toggleSidebar", title: "Toggle Sidebar"),
         PaletteAction(id: "openPreferences", title: "Open Preferences"),
         PaletteAction(id: "openInEditor", title: "Open in Editor"),
+        PaletteAction(id: "splitPaneRight", title: "Split Pane Right"),
+        PaletteAction(id: "splitPaneDown", title: "Split Pane Down"),
+        PaletteAction(id: "zoomPane", title: "Zoom Pane"),
+        PaletteAction(id: "closePane", title: "Close Pane"),
+        PaletteAction(id: "renamePane", title: "Rename Pane…"),
+        PaletteAction(id: "closeWorkspace", title: "Close Workspace"),
+        PaletteAction(id: "newWorkspace", title: "New Workspace"),
+        PaletteAction(id: "stopSession", title: "Stop Session"),
         PaletteAction(id: "editHerdrConfig", title: "Edit Herdr Config…"),
         PaletteAction(id: "reloadHerdrConfig", title: "Reload Herdr Config"),
         PaletteAction(id: "increaseFontSize", title: "Increase Font Size"),
@@ -754,6 +762,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         LaunchTargetResolver.supportsWorkspaces(session.profile, sessionName: session.sessionName)
     }
 
+    /// The ⌘K action ids that mutate a multiplexer layout (see
+    /// `MultiplexerAction`). They only make sense for a session whose backend
+    /// vends them, so they are filtered from the palette by
+    /// `LaunchTargetResolver.supportsActions` -- the sidebar's equivalent menu
+    /// already only exists on workspace rows, which require `supportsWorkspaces`.
+    private static let multiplexerActionIDs: Set<String> = [
+        "splitPaneRight", "splitPaneDown", "zoomPane", "closePane", "renamePane",
+        "closeWorkspace", "newWorkspace", "stopSession",
+    ]
+
+    /// Whether the selected session's backend can perform the mutating
+    /// multiplexer actions -- the ⌘K capability gate for `multiplexerActionIDs`.
+    private func selectedSessionSupportsActions() -> Bool {
+        guard let id = sessionStore.selectedID,
+              let session = sessionStore.sessions.first(where: { $0.id == id })
+        else { return false }
+        return LaunchTargetResolver.supportsActions(session.profile, sessionName: session.sessionName)
+    }
+
     /// Opens (or refocuses) the command palette: sessions, workspaces, and
     /// static actions in one flat, searchable list.
     private func showSessionSwitcher() {
@@ -762,11 +789,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let sessions = sessionStore.sessions.map {
             PaletteItemAssembler.SessionEntry(id: $0.id, title: $0.displayTitle, status: sessionStore.agentStatus[$0.id] ?? .none)
         }
+        // Filter the mutating multiplexer actions out unless the selected
+        // session's backend supports them -- the ⌘K equivalent of the sidebar
+        // menu living only on workspace rows.
+        let actionsSupported = selectedSessionSupportsActions()
+        let actions = Self.paletteActions.filter { action in
+            actionsSupported || !Self.multiplexerActionIDs.contains(action.id)
+        }
         let items = PaletteItemAssembler.assemble(
             sessions: sessions,
             workspaces: [:],
             workspaceStatus: sessionStore.paneStatusByWorkspaceID,
-            actions: Self.paletteActions
+            actions: actions
         )
         let generation = switcherModel.reset(items: items)
         switcherModel.onNavigation = nil
@@ -987,6 +1021,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case "toggleSidebar": toggleSidebar()
         case "openPreferences": showPreferences()
         case "openInEditor": openInEditor()
+        case "splitPaneRight": performWorkspacePaneAction { .splitPane(paneID: $0, direction: .right) }
+        case "splitPaneDown": performWorkspacePaneAction { .splitPane(paneID: $0, direction: .down) }
+        case "zoomPane": performWorkspacePaneAction { .zoomPane(paneID: $0) }
+        case "closePane": performWorkspacePaneAction { .closePane(paneID: $0) }
+        case "renamePane": renameFocusedPane()
+        case "closeWorkspace": performFocusedWorkspaceAction { .closeWorkspace(workspaceID: $0) }
+        case "newWorkspace":
+            if let id = sessionStore.selectedID { sessionStore.performAction(.createWorkspace(label: nil), in: id) }
+        case "stopSession": confirmStopSelectedSession()
         case "editHerdrConfig": preferencesController.show(section: .herdr)
         case "reloadHerdrConfig": reloadHerdrConfig()
         case "increaseFontSize": increaseFontSize()
@@ -994,6 +1037,71 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case "resetFontSize": resetFontSize()
         default: break
         }
+    }
+
+    /// ⌘K workspace-level action on the selected session's focused workspace
+    /// (the "act on the current selection" model). No selection or no focused
+    /// workspace (e.g. a plain shell, or before the disclosure was ever
+    /// opened): silent no-op, like Open in Editor with nothing to open.
+    private func performFocusedWorkspaceAction(_ make: (String) -> MultiplexerAction) {
+        guard let id = sessionStore.selectedID,
+              let workspaceID = sessionStore.focusedWorkspaceID(in: id)
+        else { return }
+        sessionStore.performAction(make(workspaceID), in: id)
+    }
+
+    /// ⌘K pane-level action on the active pane of the selected session's
+    /// focused workspace. The store resolves the exact pane cross-backend.
+    private func performWorkspacePaneAction(_ make: @escaping (String) -> MultiplexerAction) {
+        guard let id = sessionStore.selectedID,
+              let workspaceID = sessionStore.focusedWorkspaceID(in: id)
+        else { return }
+        sessionStore.performPaneAction(make, workspaceID: workspaceID, in: id)
+    }
+
+    /// ⌘K "Stop Session": confirms, then ends the selected session on the
+    /// server (`.stopSession`) -- not re-attachable, unlike Detach.
+    private func confirmStopSelectedSession() {
+        guard let id = sessionStore.selectedID,
+              let session = sessionStore.sessions.first(where: { $0.id == id })
+        else { return }
+        let alert = NSAlert()
+        alert.messageText = "Stop “\(session.displayTitle)”?"
+        alert.informativeText = "This ends the session on the server. Detach instead if you want to keep it running in the background."
+        alert.addButton(withTitle: "Stop")
+        alert.addButton(withTitle: "Cancel")
+        if alert.runModal() == .alertFirstButtonReturn {
+            sessionStore.performAction(.stopSession, in: id)
+        }
+    }
+
+    /// ⌘K "Rename Pane…": prompts for a name, then renames the active pane of
+    /// the selected session's focused workspace. The name is gathered up front
+    /// (a synchronous prompt) before the store resolves the pane off-main.
+    private func renameFocusedPane() {
+        guard let id = sessionStore.selectedID,
+              let workspaceID = sessionStore.focusedWorkspaceID(in: id),
+              let name = promptForText(title: "Rename Pane", message: "New name for the focused pane:"),
+              !name.isEmpty
+        else { return }
+        sessionStore.performPaneAction({ .renamePane(paneID: $0, label: name) }, workspaceID: workspaceID, in: id)
+    }
+
+    /// A minimal single-line text prompt (an `NSAlert` with an accessory
+    /// field). Returns the entered string, or `nil` if cancelled. AppKit lives
+    /// here in the adapter, not in the store.
+    private func promptForText(title: String, message: String) -> String? {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = message
+        alert.addButton(withTitle: "Rename")
+        alert.addButton(withTitle: "Cancel")
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+        return alert.runModal() == .alertFirstButtonReturn
+            ? field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            : nil
     }
 
     /// ⌘K "Reload Herdr Config": asks the running herdr server to re-read its

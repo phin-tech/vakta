@@ -99,6 +99,9 @@ not a gap to paper over.
    (drives live sidebar updates instead of polling), if any.
 7. **Active pane working directory** -- the currently focused pane's cwd, for
    a one-shot action (not a poll) like "Open in Editor."
+8. **Mutating layout/session actions** -- split/close/zoom/resize a pane and
+   create/rename/close a workspace, targeting an explicit id the caller
+   already enumerated. A right-click menu / ⌘K command, not a query.
 
 ## Capability matrix
 
@@ -118,6 +121,7 @@ to reproduce: `tmux list-commands`, `man tmux` (§ CONTROL MODE), `zellij
 | **Last command status** | shell integration callback | Vakta stores the shell integration exit code in `@vakta_last_exit` per window | not implemented |
 | **Event stream** | socket subscription (`HerdrEventStreamClient`) | control mode `tmux -C` / `-CC` (`%output`, `%window-add`, `%session-changed`, `%layout-change`, …) | `subscribe --pane-id … --format json` (render/scrollback updates) |
 | **Active pane working directory** | `pane current` (`result.pane.cwd`/`foreground_cwd`; exactly one `focused: true` pane per session, confirmed live) | `display-message -p -t <session> '#{pane_current_path}'` | not surveyed — `action list-panes` likely carries a cwd field, unconfirmed |
+| **Mutating actions** | `pane split/close/zoom/resize/rename` (by `--pane <id>`/positional), `workspace create/rename/close` (positional id), `session stop <name>` — CLI over the socket; every op also has a socket method | `split-window`/`kill-pane`/`resize-pane -Z`/`resize-pane`/`select-pane -T`, `new-window`/`rename-window`/`kill-window` (`-t <target>`), `kill-session -t <name>` | `action new-pane`/`close-pane`/`toggle-fullscreen`/`resize`, `action new-tab`/`rename-tab`/`close-tab` — not wired |
 
 zellij's `--session <name>` global flag reads "Specify name of a new session"
 in `--help`, but it also targets an existing session for `action` and
@@ -173,6 +177,24 @@ directly rather than `ProcessRunner`: herdr writes its error envelope to
 stdout even on a non-zero exit code (confirmed live for
 `server_not_running`), which `ProcessRunner.run` would silently discard.
 
+**Mutating actions are argv, not a new wire protocol.** Every v1 action
+(split/close/zoom/resize a pane; create/rename/close a workspace) is a
+one-shot CLI invocation on both backends -- herdr's `pane`/`workspace`
+subcommands accept explicit ids (each also has a socket method, but the CLI
+covers them, so the herdr socket adapter stays reserved for the by-id
+`pane.focus` the CLI can't express); tmux's `split-window`/`kill-pane`/
+`new-window`/... take a `-t` target and fit the same `tmuxArgv` helper.
+`MultiplexerTarget.actionArgv` vends it, returning `nil` where a backend
+lacks the op, and `MultiplexerCommand` runs it exactly like `WorkspaceFocus`.
+tmux control mode (`-C`) is *not* needed for actions -- that's the deferred
+event-stream capability (#6), a persistent client that sends commands *and*
+receives `%`-notifications; one-shot mutations don't need it. resize is the
+one op whose unit differs (herdr a split-ratio delta, tmux whole cells), so
+`actionArgv` bakes a per-backend step rather than threading a shared scalar.
+Pane targeting outside a herdr agent poll (`lastKnownFocusedPaneID` is
+herdr-only) is resolved cross-backend via `PaneQuery` in
+`SessionStore.performPaneAction`.
+
 **Server addressing: herdr and zellij share a model; tmux is the outlier.**
 Both herdr and zellij address a server by **session name as a global
 `--session` flag** -- every herdr `MultiplexerTarget` argv except
@@ -209,5 +231,11 @@ state" above.
 - `Sources/Vakta/HerdrWorkspace.swift`, `AgentStatus.swift` — herdr workspace
   and agent-status queries (the `nil`-for-other-backends capabilities today).
 - `Sources/Vakta/HerdrEventStreamClient.swift` — the herdr event stream.
+- `Sources/Vakta/MultiplexerAction.swift` — the mutating-action value type and
+  `MultiplexerCommand` runner; `MultiplexerTarget.actionArgv`
+  (`LaunchTarget.swift`) vends the per-backend argv;
+  `LaunchTargetResolver.supportsActions` gates the ⌘K action rows (the
+  sidebar's equivalent menu lives only on workspace rows, already gated by
+  `supportsWorkspaces`).
 - `Sources/Vakta/SessionStore.swift` — the shell that orchestrates all of the
-  above per session.
+  above per session (`performAction`/`performPaneAction` refetch topology).

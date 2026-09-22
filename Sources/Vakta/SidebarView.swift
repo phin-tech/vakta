@@ -27,6 +27,11 @@ struct SidebarView: View {
     /// The session whose row is currently in rename mode, if any.
     @State private var editingID: Session.ID?
 
+    /// The workspace whose row is currently in rename mode, if any.
+    @State private var editingWorkspaceID: String?
+    @State private var workspaceDraftName: String = ""
+    @FocusState private var workspaceFieldFocused: Bool
+
     /// Herdr session rows currently expanded to show their workspaces (see
     /// the Appearance pane's "Show workspaces" toggle). Transient UI
     /// state, not persisted -- collapses again on relaunch.
@@ -408,6 +413,9 @@ struct SidebarView: View {
                 .contextMenu {
                     Button("Rename…") { editingID = session.id }
                     Button("Detach Session") { sessionStore.requestClose(session.id) }
+                    if supportsActions(session) {
+                        Button("Stop Session") { confirmStopSession(session) }
+                    }
                 }
 
                 if herdrPreferences.showWorkspaces, supportsWorkspaces(session), expandedHerdrSessionIDs.contains(session.id) {
@@ -417,26 +425,37 @@ struct SidebarView: View {
                         // is hit-tested, not just the label. Padding lives
                         // inside the label -- a workspace row has no disclosure
                         // sibling, so nothing has to stay outside the button.
-                        Button {
-                            sessionStore.focusWorkspace(workspace.id, in: session.id)
-                        } label: {
-                            WorkspaceRow(
-                                workspace: workspace,
-                                status: sessionStore.paneStatusByWorkspaceID[workspace.id] ?? .none,
-                                isTmux: isTmux(session),
-                                font: rowFont,
-                                terminalStyle: terminalStyle,
-                                highlight: SidebarRowPresentation.workspaceHighlight(
-                                    workspaceFocused: workspace.focused,
-                                    sessionSelected: session.id == sessionStore.selectedID
-                                ),
-                                accent: Color(nsColor: sessionStore.terminalAccentColor)
-                            )
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(rowContentInsets)
-                            .contentShape(Rectangle())
+                        // While renaming, drop the button so the inner
+                        // `TextField` keeps its own clicks (see `sessionNameCell`).
+                        Group {
+                            if editingWorkspaceID == workspace.id {
+                                workspaceNameEditor(workspace: workspace, session: session)
+                            } else {
+                                Button {
+                                    sessionStore.focusWorkspace(workspace.id, in: session.id)
+                                } label: {
+                                    WorkspaceRow(
+                                        workspace: workspace,
+                                        status: sessionStore.paneStatusByWorkspaceID[workspace.id] ?? .none,
+                                        isTmux: isTmux(session),
+                                        font: rowFont,
+                                        terminalStyle: terminalStyle,
+                                        highlight: SidebarRowPresentation.workspaceHighlight(
+                                            workspaceFocused: workspace.focused,
+                                            sessionSelected: session.id == sessionStore.selectedID
+                                        ),
+                                        accent: Color(nsColor: sessionStore.terminalAccentColor)
+                                    )
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(rowContentInsets)
+                                    .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                                .contextMenu {
+                                    workspaceActions(workspace: workspace, session: session)
+                                }
+                            }
                         }
-                        .buttonStyle(.plain)
                             // Focus is a row background in both styles, shaped
                             // like the session selection above (square and
                             // full-width in terminal style, an inset rounded
@@ -465,6 +484,65 @@ struct SidebarView: View {
         .tint(Color(nsColor: sessionStore.terminalAccentColor))
     }
 
+    /// The right-click menu on a workspace row: mutating multiplexer commands
+    /// (see `MultiplexerAction`). Pane commands target the workspace's active
+    /// pane, resolved cross-backend by the store. "Workspace" is the neutral
+    /// noun the sidebar already uses for a herdr workspace or a tmux window.
+    @ViewBuilder
+    private func workspaceActions(workspace: Workspace, session: Session) -> some View {
+        Button("Split Right") {
+            sessionStore.performPaneAction({ .splitPane(paneID: $0, direction: .right) }, workspaceID: workspace.id, in: session.id)
+        }
+        Button("Split Down") {
+            sessionStore.performPaneAction({ .splitPane(paneID: $0, direction: .down) }, workspaceID: workspace.id, in: session.id)
+        }
+        Button("Zoom Pane") {
+            sessionStore.performPaneAction({ .zoomPane(paneID: $0) }, workspaceID: workspace.id, in: session.id)
+        }
+        Menu("Resize Pane") {
+            Button("Left") { sessionStore.performPaneAction({ .resizePane(paneID: $0, direction: .left) }, workspaceID: workspace.id, in: session.id) }
+            Button("Right") { sessionStore.performPaneAction({ .resizePane(paneID: $0, direction: .right) }, workspaceID: workspace.id, in: session.id) }
+            Button("Up") { sessionStore.performPaneAction({ .resizePane(paneID: $0, direction: .up) }, workspaceID: workspace.id, in: session.id) }
+            Button("Down") { sessionStore.performPaneAction({ .resizePane(paneID: $0, direction: .down) }, workspaceID: workspace.id, in: session.id) }
+        }
+        Divider()
+        Button("Rename…") {
+            workspaceDraftName = workspace.label
+            editingWorkspaceID = workspace.id
+        }
+        Button("Close Pane") {
+            sessionStore.performPaneAction({ .closePane(paneID: $0) }, workspaceID: workspace.id, in: session.id)
+        }
+        Button("Close Workspace") {
+            sessionStore.performAction(.closeWorkspace(workspaceID: workspace.id), in: session.id)
+        }
+        Button("New Workspace") {
+            sessionStore.performAction(.createWorkspace(label: nil), in: session.id)
+        }
+    }
+
+    /// The inline rename field a workspace row becomes while `editingWorkspaceID`
+    /// matches it -- Enter commits, Esc cancels, mirroring the session row's
+    /// `SessionRow` editor. An empty/whitespace name is dropped (no rename).
+    @ViewBuilder
+    private func workspaceNameEditor(workspace: Workspace, session: Session) -> some View {
+        TextField("Workspace name", text: $workspaceDraftName)
+            .textFieldStyle(.plain)
+            .font(rowFont)
+            .focused($workspaceFieldFocused)
+            .onSubmit {
+                let name = workspaceDraftName.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !name.isEmpty {
+                    sessionStore.renameWorkspace(workspace.id, to: name, in: session.id)
+                }
+                editingWorkspaceID = nil
+            }
+            .onExitCommand { editingWorkspaceID = nil }
+            .onAppear { workspaceFieldFocused = true }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(rowContentInsets)
+    }
+
     @ViewBuilder
     private func workspaceHighlightBackground(_ highlight: SidebarRowPresentation.WorkspaceHighlight) -> some View {
         let style = SidebarRowPresentation.workspaceRowStyle(highlight)
@@ -477,6 +555,23 @@ struct SidebarView: View {
 
     private func supportsWorkspaces(_ session: Session) -> Bool {
         LaunchTargetResolver.supportsWorkspaces(session.profile, sessionName: session.sessionName)
+    }
+
+    private func supportsActions(_ session: Session) -> Bool {
+        LaunchTargetResolver.supportsActions(session.profile, sessionName: session.sessionName)
+    }
+
+    /// Confirms before ending a session on the server (`.stopSession`), which
+    /// -- unlike Detach -- is not re-attachable.
+    private func confirmStopSession(_ session: Session) {
+        let alert = NSAlert()
+        alert.messageText = "Stop “\(session.displayTitle)”?"
+        alert.informativeText = "This ends the session on the server. Detach instead if you want to keep it running in the background."
+        alert.addButton(withTitle: "Stop")
+        alert.addButton(withTitle: "Cancel")
+        if alert.runModal() == .alertFirstButtonReturn {
+            sessionStore.performAction(.stopSession, in: session.id)
+        }
     }
 
     private func isTmux(_ session: Session) -> Bool {
@@ -524,6 +619,9 @@ struct SidebarView: View {
                     )
                     .contextMenu {
                         Button("Detach Session") { sessionStore.requestClose(session.id) }
+                        if supportsActions(session) {
+                            Button("Stop Session") { confirmStopSession(session) }
+                        }
                     }
                 }
             }

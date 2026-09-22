@@ -196,6 +196,100 @@ struct MultiplexerTarget: Equatable {
         guard backend == .herdr else { return nil }
         return HerdrSocketPath.resolve(sessionName: sessionName, configDirectory: configDirectory)
     }
+
+    /// The argv to perform a mutating layout/session `action`, or `nil` for a
+    /// backend with no equivalent. herdr addresses a pane/workspace by its
+    /// opaque id positionally (mirroring `workspace focus <id>`); tmux
+    /// qualifies a window as `<session>:<window>` and a pane by its own id.
+    /// `splitPane` focuses the new pane (herdr `--focus`; tmux focuses it by
+    /// default). `resizePane` bakes a per-backend step because the two
+    /// backends' resize units are incompatible (herdr a split-ratio delta,
+    /// tmux whole cells) -- see `ResizeDirection`.
+    func actionArgv(sessionName: String, _ action: MultiplexerAction) -> [String]? {
+        switch backend {
+        case .herdr:
+            let base = [executable, "--session", sessionName]
+            switch action {
+            case let .splitPane(paneID, direction):
+                return base + ["pane", "split", "--pane", paneID, "--direction", herdrSplitDirection(direction), "--focus"]
+            case let .closePane(paneID):
+                return base + ["pane", "close", paneID]
+            case let .zoomPane(paneID):
+                return base + ["pane", "zoom", "--pane", paneID]
+            case let .resizePane(paneID, direction):
+                return base + ["pane", "resize", "--pane", paneID, "--direction", herdrResizeDirection(direction), "--amount", Self.herdrResizeStep]
+            case let .renamePane(paneID, label):
+                return base + ["pane", "rename", paneID, label]
+            case let .closeWorkspace(workspaceID):
+                return base + ["workspace", "close", workspaceID]
+            case let .createWorkspace(label):
+                return base + ["workspace", "create"] + (label.map { ["--label", $0] } ?? [])
+            case let .renameWorkspace(workspaceID, label):
+                return base + ["workspace", "rename", workspaceID, label]
+            case .stopSession:
+                // `session stop <name>` names which session to stop; it is not
+                // the `--session` addressing used to run *inside* a session.
+                return [executable, "session", "stop", sessionName]
+            }
+        case .tmux:
+            switch action {
+            case let .splitPane(paneID, direction):
+                return tmuxArgv(["split-window", tmuxSplitFlag(direction), "-t", paneID])
+            case let .closePane(paneID):
+                return tmuxArgv(["kill-pane", "-t", paneID])
+            case let .zoomPane(paneID):
+                return tmuxArgv(["resize-pane", "-Z", "-t", paneID])
+            case let .resizePane(paneID, direction):
+                return tmuxArgv(["resize-pane", "-t", paneID, tmuxResizeFlag(direction), Self.tmuxResizeStep])
+            case let .renamePane(paneID, label):
+                return tmuxArgv(["select-pane", "-t", paneID, "-T", label])
+            case let .closeWorkspace(workspaceID):
+                return tmuxArgv(["kill-window", "-t", "\(sessionName):\(workspaceID)"])
+            case let .createWorkspace(label):
+                return tmuxArgv(["new-window", "-t", sessionName] + (label.map { ["-n", $0] } ?? []))
+            case let .renameWorkspace(workspaceID, label):
+                return tmuxArgv(["rename-window", "-t", "\(sessionName):\(workspaceID)", label])
+            case .stopSession:
+                return tmuxArgv(["kill-session", "-t", sessionName])
+            }
+        }
+    }
+
+    /// herdr `--amount` is a split-ratio delta; tmux resize is in cells.
+    private static let herdrResizeStep = "0.05"
+    private static let tmuxResizeStep = "5"
+
+    private func herdrSplitDirection(_ direction: SplitDirection) -> String {
+        switch direction {
+        case .right: return "right"
+        case .down: return "down"
+        }
+    }
+
+    private func tmuxSplitFlag(_ direction: SplitDirection) -> String {
+        switch direction {
+        case .right: return "-h"
+        case .down: return "-v"
+        }
+    }
+
+    private func herdrResizeDirection(_ direction: ResizeDirection) -> String {
+        switch direction {
+        case .left: return "left"
+        case .right: return "right"
+        case .up: return "up"
+        case .down: return "down"
+        }
+    }
+
+    private func tmuxResizeFlag(_ direction: ResizeDirection) -> String {
+        switch direction {
+        case .left: return "-L"
+        case .right: return "-R"
+        case .up: return "-U"
+        case .down: return "-D"
+        }
+    }
 }
 
 /// The outcome of querying (or not attempting to query) a profile's server
@@ -250,6 +344,19 @@ enum LaunchTargetResolver {
     static func supportsWorkspaces(_ profile: Profile, sessionName: String) -> Bool {
         guard case .multiplexer(let target) = resolve(profile) else { return false }
         return target.workspaceListArgv(sessionName: sessionName) != nil
+    }
+
+    /// Whether `profile`'s resolved target can perform mutating layout/session
+    /// actions (split, close, zoom, workspace create/rename/close) -- the
+    /// single capability check the sidebar context menu and ⌘K action rows
+    /// defer to, so they cannot drift on which backends qualify. Uses
+    /// `closeWorkspace` as the representative action; every backend that vends
+    /// a workspace analogue can close one. A plain shell and a herdr `--remote`
+    /// profile (whose server can't be reliably reached from a local query)
+    /// both return `false`.
+    static func supportsActions(_ profile: Profile, sessionName: String) -> Bool {
+        guard case .multiplexer(let target) = resolve(profile) else { return false }
+        return target.actionArgv(sessionName: sessionName, .closeWorkspace(workspaceID: "")) != nil
     }
 
     /// Whether `pollAgentStatus` should poll `profile`'s resolved target for
