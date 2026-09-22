@@ -218,6 +218,19 @@ final class SessionSwitcherModel: ObservableObject {
 
 /// A key-capable floating panel that routes navigation keys to its model and
 /// lets everything else (typing) fall through to the search field.
+private extension SwitcherEditingCommand {
+    /// The field editor action selector this command dispatches, sent up the
+    /// first-responder chain to the focused `NSTextView`.
+    var fieldEditorSelector: Selector {
+        switch self {
+        case .selectAll: return #selector(NSResponder.selectAll(_:))
+        case .copy: return #selector(NSText.copy(_:))
+        case .cut: return #selector(NSText.cut(_:))
+        case .paste: return #selector(NSText.paste(_:))
+        }
+    }
+}
+
 final class SessionSwitcherPanel: NSPanel {
     weak var model: SessionSwitcherModel?
 
@@ -231,6 +244,27 @@ final class SessionSwitcherPanel: NSPanel {
     }
 
     override var canBecomeKey: Bool { true }
+
+    /// Standard editing shortcuts (⌘A select-all, ⌘C/⌘X/⌘V) for the search
+    /// field. Vakta's app menu deliberately carries no ⌘ key-equivalents (so
+    /// the terminal receives keys), which also strips the Edit menu's
+    /// `selectAll:`/`copy:`/... -- so the palette field has no way to run them
+    /// unless the panel routes the chord to its field editor itself. Scoped to
+    /// this panel: the terminal is unaffected.
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        let command = MainActor.assumeIsolated {
+            SessionSwitcherKeyRouter.editingCommand(
+                characters: event.charactersIgnoringModifiers,
+                modifiers: event.modifierFlags,
+                hasMarkedText: hasMarkedTextProvider()
+            )
+        }
+        if let selector = command?.fieldEditorSelector,
+           firstResponder?.tryToPerform(selector, with: self) == true {
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
+    }
 
     override func sendEvent(_ event: NSEvent) {
         if event.type == .keyDown, let model {

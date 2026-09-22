@@ -96,6 +96,42 @@ final class SessionSwitcherKeyRouterTests: XCTestCase {
         }
     }
 
+    // MARK: editingCommand -- ⌘A/⌘C/⌘X/⌘V for the search field, which Vakta's
+    // ⌘-equivalent-free menu doesn't otherwise provide.
+
+    func test_commandA_isSelectAll() {
+        XCTAssertEqual(
+            SessionSwitcherKeyRouter.editingCommand(characters: "a", modifiers: .command, hasMarkedText: false),
+            .selectAll
+        )
+    }
+
+    func test_commandCXV_mapToClipboardCommands() {
+        XCTAssertEqual(SessionSwitcherKeyRouter.editingCommand(characters: "c", modifiers: .command, hasMarkedText: false), .copy)
+        XCTAssertEqual(SessionSwitcherKeyRouter.editingCommand(characters: "x", modifiers: .command, hasMarkedText: false), .cut)
+        XCTAssertEqual(SessionSwitcherKeyRouter.editingCommand(characters: "v", modifiers: .command, hasMarkedText: false), .paste)
+    }
+
+    func test_commandA_uppercaseCharacters_stillSelectAll() {
+        // charactersIgnoringModifiers can arrive uppercased when Shift/CapsLock
+        // is involved; match case-insensitively.
+        XCTAssertEqual(
+            SessionSwitcherKeyRouter.editingCommand(characters: "A", modifiers: [.command, .shift], hasMarkedText: false),
+            .selectAll
+        )
+    }
+
+    func test_commandA_withMarkedText_isNil_soTheIMEKeepsTheKey() {
+        XCTAssertNil(SessionSwitcherKeyRouter.editingCommand(characters: "a", modifiers: .command, hasMarkedText: true))
+    }
+
+    func test_bareA_orOtherModifier_isNotAnEditingCommand() {
+        XCTAssertNil(SessionSwitcherKeyRouter.editingCommand(characters: "a", modifiers: [], hasMarkedText: false))
+        XCTAssertNil(SessionSwitcherKeyRouter.editingCommand(characters: "a", modifiers: .control, hasMarkedText: false))
+        XCTAssertNil(SessionSwitcherKeyRouter.editingCommand(characters: "b", modifiers: .command, hasMarkedText: false))
+        XCTAssertNil(SessionSwitcherKeyRouter.editingCommand(characters: nil, modifiers: .command, hasMarkedText: false))
+    }
+
     func test_navigationKeys_withAHeldModifier_arePassthroughToTheFieldEditor() {
         // ⇧↑/⇧↓ extend the search field's text selection, ⌘↑/⌘↓ jump to its
         // start/end, ⌥⏎ is a text-editing convention elsewhere -- none of

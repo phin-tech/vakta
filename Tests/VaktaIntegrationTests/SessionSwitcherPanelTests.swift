@@ -83,6 +83,48 @@ final class SessionSwitcherPanelTests: XCTestCase {
         XCTAssertNil(selected, "Return must confirm the IME composition, not commit the switcher's highlighted session")
     }
 
+    func test_commandA_selectsAllTextInTheFocusedField() {
+        let panel = SessionSwitcherPanel()
+        panel.hasMarkedTextProvider = { false }
+
+        let textView = NSTextView(frame: NSRect(x: 0, y: 0, width: 120, height: 22))
+        textView.string = "hello world"
+        panel.contentView?.addSubview(textView)
+        XCTAssertTrue(panel.makeFirstResponder(textView), "setup: the text view must be first responder")
+        textView.setSelectedRange(NSRange(location: 0, length: 0))
+
+        let handled = panel.performKeyEquivalent(with: commandKeyEvent("a"))
+
+        XCTAssertTrue(handled, "⌘A must be handled by the panel")
+        XCTAssertEqual(textView.selectedRange(), NSRange(location: 0, length: 11), "the whole field should be selected")
+    }
+
+    func test_commandB_isNotHandled_soItReachesTheFieldNormally() {
+        let panel = SessionSwitcherPanel()
+        panel.hasMarkedTextProvider = { false }
+        let textView = NSTextView(frame: NSRect(x: 0, y: 0, width: 120, height: 22))
+        textView.string = "hello"
+        panel.contentView?.addSubview(textView)
+        _ = panel.makeFirstResponder(textView)
+
+        XCTAssertFalse(panel.performKeyEquivalent(with: commandKeyEvent("b")))
+    }
+
+    private func commandKeyEvent(_ characters: String) -> NSEvent {
+        NSEvent.keyEvent(
+            with: .keyDown,
+            location: .zero,
+            modifierFlags: .command,
+            timestamp: 0,
+            windowNumber: 0,
+            context: nil,
+            characters: characters,
+            charactersIgnoringModifiers: characters,
+            isARepeat: false,
+            keyCode: 0
+        )!
+    }
+
     func test_shiftDownArrow_noMarkedText_doesNotMoveHighlight() {
         let panel = SessionSwitcherPanel()
         let model = makeModel()

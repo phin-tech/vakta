@@ -61,6 +61,17 @@ enum SwitcherKeyIntent: Equatable {
     case passthrough
 }
 
+/// A standard text-editing command the switcher's search field should run but
+/// that Vakta's ⌘-equivalent-free menu (kept empty so the terminal receives
+/// keys) doesn't provide. The panel dispatches these to the field editor
+/// directly -- see `SessionSwitcherPanel.performKeyEquivalent`.
+enum SwitcherEditingCommand: Equatable {
+    case selectAll
+    case copy
+    case cut
+    case paste
+}
+
 enum SessionSwitcherKeyRouter {
     private static let moveDownKeyCode: UInt16 = 125
     private static let moveUpKeyCode: UInt16 = 126
@@ -103,6 +114,24 @@ enum SessionSwitcherKeyRouter {
         case returnKeyCode: return .commit
         case escapeKeyCode: return .cancel
         default: return .passthrough
+        }
+    }
+
+    /// The standard editing command for a ⌘-chord, matched by the produced
+    /// character (layout-independent, unlike a physical key code) so ⌘A means
+    /// "select all" wherever the `a` key lives. Only a bare ⌘ counts; any other
+    /// modifier (except the Shift that may uppercase the character) or an
+    /// in-progress IME composition yields `nil`, letting the field editor keep
+    /// the key.
+    static func editingCommand(characters: String?, modifiers: NSEvent.ModifierFlags, hasMarkedText: Bool) -> SwitcherEditingCommand? {
+        guard !hasMarkedText else { return nil }
+        guard modifiers.intersection(relevantModifierMask).subtracting(.shift) == [.command] else { return nil }
+        switch characters?.lowercased() {
+        case "a": return .selectAll
+        case "c": return .copy
+        case "x": return .cut
+        case "v": return .paste
+        default: return nil
         }
     }
 }
