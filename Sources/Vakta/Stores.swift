@@ -19,6 +19,7 @@ final class Stores {
     let unreadTrackingSettings: UnreadTrackingSettingsStore
     let terminalSettings: TerminalSettingsStore
     let herdrPreferences: HerdrPreferencesStore
+    let fileSidebarPreferences: FileSidebarPreferencesStore
     let editorPreferences: EditorPreferencesStore
     let sessionStore: SessionStore
     let workspaceRefreshMonitor: WorkspaceRefreshMonitor
@@ -57,6 +58,7 @@ final class Stores {
         unreadTrackingSettings = UnreadTrackingSettingsStore(root: root)
         terminalSettings = TerminalSettingsStore(root: root)
         herdrPreferences = HerdrPreferencesStore(root: root)
+        fileSidebarPreferences = FileSidebarPreferencesStore(root: root)
         editorPreferences = EditorPreferencesStore(root: root)
         // `sessionStore` needs `terminalSettings`/`unreadTrackingSettings`
         // (already initialized above).
@@ -66,7 +68,11 @@ final class Stores {
             root: root,
             pathResolver: resolvedPATH
         )
-        workspaceRefreshMonitor = WorkspaceRefreshMonitor(sessionStore: sessionStore, herdrPreferences: herdrPreferences)
+        workspaceRefreshMonitor = WorkspaceRefreshMonitor(
+            sessionStore: sessionStore,
+            herdrPreferences: herdrPreferences,
+            fileSidebarPreferences: fileSidebarPreferences
+        )
     }
 }
 
@@ -80,6 +86,7 @@ extension View {
             .environmentObject(stores.unreadTrackingSettings)
             .environmentObject(stores.terminalSettings)
             .environmentObject(stores.herdrPreferences)
+            .environmentObject(stores.fileSidebarPreferences)
             .environmentObject(stores.editorPreferences)
             .environmentObject(stores.sessionStore)
             .environmentObject(stores.sessionStore.notifier)

@@ -128,6 +128,13 @@ final class SessionStore: ObservableObject {
     /// `applyPaneUpdates`; not published until the first poll after launch.
     @Published private(set) var paneStatusByWorkspaceID: [String: AgentStatus] = [:]
 
+    /// The selected session's focused-pane working directory -- the root of
+    /// the file sidebar tree. Resolved off-main with the same precedence as
+    /// Open in Editor (multiplexer active-pane query → OSC-7 → profile launch
+    /// dir) by `refreshFileSidebarRoot`; `nil` when nothing resolves or no
+    /// session is selected.
+    @Published private(set) var fileSidebarRoot: String?
+
     /// Fallback repeating poll for `agentStatus` -- stays active unchanged
     /// even once `herdrEventClients` exist (defense in depth: a bug in the
     /// socket path never regresses status updates below this cadence). Each
@@ -939,6 +946,56 @@ final class SessionStore: ObservableObject {
         selectedID = id
         hostContainer.select(id)
         saveWorkspace()
+        refreshFileSidebarRoot()
+    }
+
+    /// Resolves the selected session's focused-pane working directory off the
+    /// main thread and publishes it as `fileSidebarRoot` (the file sidebar
+    /// tree's root), using the same precedence as Open in Editor. A completion
+    /// for a session that is no longer selected is dropped. Call it on
+    /// selection change, when the sidebar appears, or from its refresh control
+    /// (a herdr `cd` produces no outer OSC-7, so live tracking needs a
+    /// re-query).
+    func refreshFileSidebarRoot() {
+        guard let id = selectedID, let session = sessions.first(where: { $0.id == id }) else {
+            fileSidebarRoot = nil
+            return
+        }
+        let terminalReportedWorkingDirectory = session.viewState.workingDirectory
+        let profileWorkingDirectory = session.profile.workingDirectory
+        let sessionName = session.sessionName
+        let path = resolvedPATH
+        let target: MultiplexerTarget?
+        if case .multiplexer(let resolved) = LaunchTargetResolver.resolve(session.profile),
+           resolved.activePaneWorkingDirectoryArgv(sessionName: sessionName) != nil {
+            target = resolved
+        } else {
+            target = nil
+        }
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let multiplexerResult = target.flatMap {
+                ActivePaneWorkingDirectoryQuery.query(
+                    sessionName: sessionName,
+                    target: $0,
+                    path: path,
+                    isCancelled: { self?.isShuttingDown ?? true }
+                )
+            }
+            let root = WorkingDirectoryResolver.resolve(
+                multiplexerResult: multiplexerResult,
+                terminalReportedWorkingDirectory: terminalReportedWorkingDirectory,
+                profileWorkingDirectory: profileWorkingDirectory
+            )
+            DispatchQueue.main.async {
+                guard let self, self.selectedID == id else { return }
+                // Only republish on a real change: the refresh fires on every
+                // input while the sidebar is visible, and a no-op assignment
+                // would still fire `@Published` and rebuild the tree, collapsing
+                // whatever the user expanded.
+                if self.fileSidebarRoot != root { self.fileSidebarRoot = root }
+            }
+        }
     }
 
     /// Jumps to the specific workspace behind `pane` (via `focusWorkspace`,

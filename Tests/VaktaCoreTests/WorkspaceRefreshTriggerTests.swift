@@ -63,6 +63,43 @@ final class WorkspaceRefreshGateTests: XCTestCase {
     }
 }
 
+final class FileSidebarRefreshGateTests: XCTestCase {
+    func test_allConditionsMet_triggers() {
+        XCTAssertTrue(FileSidebarRefreshGate.shouldTrigger(
+            eventIsKeyDownOrLeftMouseDown: true,
+            sessionIsFocused: true,
+            fileSidebarVisible: true
+        ))
+    }
+
+    func test_notVisible_doesNotTrigger() {
+        XCTAssertFalse(FileSidebarRefreshGate.shouldTrigger(
+            eventIsKeyDownOrLeftMouseDown: true,
+            sessionIsFocused: true,
+            fileSidebarVisible: false
+        ))
+    }
+
+    func test_wrongEventKind_doesNotTrigger() {
+        XCTAssertFalse(FileSidebarRefreshGate.shouldTrigger(
+            eventIsKeyDownOrLeftMouseDown: false,
+            sessionIsFocused: true,
+            fileSidebarVisible: true
+        ))
+    }
+
+    func test_sessionNotFocused_doesNotTrigger() {
+        XCTAssertFalse(FileSidebarRefreshGate.shouldTrigger(
+            eventIsKeyDownOrLeftMouseDown: true,
+            sessionIsFocused: false,
+            fileSidebarVisible: true
+        ))
+    }
+
+    // Independent of the workspace disclosure: the file sidebar follows the
+    // focused pane even when "Show workspaces" is off (no such input here).
+}
+
 final class WorkspaceRefreshDebouncerTests: XCTestCase {
     private let scheduler = WorkspaceRefreshDebouncer(debounceInterval: 0.15, minInterval: 0.5)
     private let epoch = Date(timeIntervalSince1970: 0)

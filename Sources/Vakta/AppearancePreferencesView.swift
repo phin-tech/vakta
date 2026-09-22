@@ -11,6 +11,7 @@ struct AppearancePreferencesView: View {
     @EnvironmentObject private var store: AppearanceStore
     @EnvironmentObject private var sidebarSettings: SidebarSettingsStore
     @EnvironmentObject private var herdrPreferences: HerdrPreferencesStore
+    @EnvironmentObject private var fileSidebarPreferences: FileSidebarPreferencesStore
 
     var body: some View {
         Form {
@@ -84,6 +85,17 @@ struct AppearancePreferencesView: View {
             } footer: {
                 Text("Lets a session's sidebar row expand to show its workspaces (herdr) or "
                     + "windows (tmux) — on this machine only — and click one to switch to it.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section {
+                Toggle("Show file sidebar", isOn: $fileSidebarPreferences.isVisible)
+            } header: {
+                Text("File sidebar")
+            } footer: {
+                Text("A right-hand pane showing an expandable file tree of the selected "
+                    + "session's focused-pane working directory. Double-click a file to open it.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

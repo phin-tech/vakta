@@ -33,6 +33,20 @@ enum WorkspaceRefreshGate {
     }
 }
 
+/// Whether a passthrough input event should refresh the file sidebar's root.
+/// Independent of the workspace disclosure: switching panes in the focused
+/// terminal changes the focused pane's working directory, and the file sidebar
+/// follows it whenever it is shown -- no `showWorkspaces` requirement.
+enum FileSidebarRefreshGate {
+    static func shouldTrigger(
+        eventIsKeyDownOrLeftMouseDown: Bool,
+        sessionIsFocused: Bool,
+        fileSidebarVisible: Bool
+    ) -> Bool {
+        eventIsKeyDownOrLeftMouseDown && sessionIsFocused && fileSidebarVisible
+    }
+}
+
 /// Trailing debounce with a minimum-interval floor: a burst of candidate
 /// events collapses to one fetch `debounceInterval` after the burst's last
 /// event, but never fires sooner than `minInterval` after the previous
@@ -63,15 +77,25 @@ struct WorkspaceRefreshDebouncer {
 final class WorkspaceRefreshMonitor {
     private let sessionStore: SessionStore
     private let herdrPreferences: HerdrPreferencesStore
+    private let fileSidebarPreferences: FileSidebarPreferencesStore
     private let debouncer = WorkspaceRefreshDebouncer(debounceInterval: 0.15, minInterval: 0.5)
 
     private var monitor: Any?
     private var lastFireDate: [Session.ID: Date] = [:]
     private var pendingWorkItems: [Session.ID: DispatchWorkItem] = [:]
+    /// Which refreshes a pending (debounced) fire owes, so a later event of a
+    /// different kind can't cancel a refresh an earlier one asked for.
+    private var pendingWorkspace: Set<Session.ID> = []
+    private var pendingFileSidebar: Set<Session.ID> = []
 
-    init(sessionStore: SessionStore, herdrPreferences: HerdrPreferencesStore) {
+    init(
+        sessionStore: SessionStore,
+        herdrPreferences: HerdrPreferencesStore,
+        fileSidebarPreferences: FileSidebarPreferencesStore
+    ) {
         self.sessionStore = sessionStore
         self.herdrPreferences = herdrPreferences
+        self.fileSidebarPreferences = fileSidebarPreferences
     }
 
     /// Installs the monitor. Never consumes -- always returns `event`
@@ -96,13 +120,23 @@ final class WorkspaceRefreshMonitor {
               let session = sessionStore.sessions.first(where: { $0.id == id })
         else { return }
 
-        guard WorkspaceRefreshGate.shouldTrigger(
-            eventIsKeyDownOrLeftMouseDown: event.type == .keyDown || event.type == .leftMouseDown,
-            sessionIsFocused: session.viewState.isFocused,
+        let isInput = event.type == .keyDown || event.type == .leftMouseDown
+        let focused = session.viewState.isFocused
+        let workspace = WorkspaceRefreshGate.shouldTrigger(
+            eventIsKeyDownOrLeftMouseDown: isInput,
+            sessionIsFocused: focused,
             supportsWorkspaces: LaunchTargetResolver.supportsWorkspaces(session.profile, sessionName: session.sessionName),
             showWorkspaces: herdrPreferences.showWorkspaces
-        ) else { return }
+        )
+        let fileSidebar = FileSidebarRefreshGate.shouldTrigger(
+            eventIsKeyDownOrLeftMouseDown: isInput,
+            sessionIsFocused: focused,
+            fileSidebarVisible: fileSidebarPreferences.isVisible
+        )
+        guard workspace || fileSidebar else { return }
 
+        if workspace { pendingWorkspace.insert(id) }
+        if fileSidebar { pendingFileSidebar.insert(id) }
         schedule(for: id)
     }
 
@@ -115,7 +149,12 @@ final class WorkspaceRefreshMonitor {
             guard let self else { return }
             self.lastFireDate[id] = Date()
             self.pendingWorkItems[id] = nil
-            self.sessionStore.fetchWorkspaces(for: id)
+            if self.pendingWorkspace.remove(id) != nil {
+                self.sessionStore.fetchWorkspaces(for: id)
+            }
+            if self.pendingFileSidebar.remove(id) != nil {
+                self.sessionStore.refreshFileSidebarRoot()
+            }
         }
         pendingWorkItems[id] = workItem
         DispatchQueue.main.asyncAfter(deadline: .now() + max(0, fireDate.timeIntervalSince(now)), execute: workItem)

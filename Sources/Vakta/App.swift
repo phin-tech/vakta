@@ -54,6 +54,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var terminalSettings: TerminalSettingsStore { stores.terminalSettings }
     private var workspaceRefreshMonitor: WorkspaceRefreshMonitor { stores.workspaceRefreshMonitor }
     private var editorPreferences: EditorPreferencesStore { stores.editorPreferences }
+    private var fileSidebarPreferences: FileSidebarPreferencesStore { stores.fileSidebarPreferences }
 
     /// The AppKit sidebar/terminal chrome whose colors follow the terminal
     /// theme; re-applied when it changes (SwiftUI parts update themselves).
@@ -61,6 +62,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var terminalWrapperView: NSView?
     private var sidebarHostView: NSView?
     private var terminalColorObserver: AnyCancellable?
+
+    /// The right-hand file sidebar pane (a third `NSSplitView` arranged
+    /// subview) and the subscription that shows/hides it on the preference.
+    private var fileSidebarContainerView: NSView?
+    private var fileSidebarHostView: NSView?
+    private var fileSidebarObserver: AnyCancellable?
 
     /// Menu-bar status item summarizing agent activity across all sessions, and
     /// the subscription that keeps its icon live.
@@ -244,6 +251,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self else { return }
             self.applySidebarWidth(collapsed: self.sidebarSettings.isCollapsed, style: style)
         }
+
+        // Show/hide the right file sidebar on its preference. `@Published`
+        // replays the current value on subscribe, so a launch with the sidebar
+        // enabled applies it here (and one disabled leaves it hidden).
+        fileSidebarObserver = fileSidebarPreferences.$isVisible.sink { [weak self] visible in
+            self?.applyFileSidebarVisibility(visible)
+        }
+    }
+
+    /// Shows or hides the right file sidebar pane, sizing it to the persisted
+    /// width when shown and kicking off a working-directory resolve so it isn't
+    /// blank on first reveal.
+    private func applyFileSidebarVisibility(_ visible: Bool) {
+        guard let splitView, let container = fileSidebarContainerView else { return }
+        let isAttached = container.superview === splitView
+
+        if visible, !isAttached {
+            let width = CGFloat(fileSidebarPreferences.clampedWidth)
+            container.frame.size.width = width
+            splitView.addArrangedSubview(container)
+            splitView.setHoldingPriority(.defaultHigh, forSubviewAt: splitView.arrangedSubviews.count - 1)
+            splitView.layoutSubtreeIfNeeded()
+            // Position after the layout pass has created the second divider,
+            // so this actually sizes the file sidebar to `width`.
+            DispatchQueue.main.async { [weak self] in
+                guard let self, let splitView = self.splitView, splitView.arrangedSubviews.count >= 3 else { return }
+                splitView.setPosition(splitView.bounds.width - width, ofDividerAt: 1)
+                splitView.layoutSubtreeIfNeeded()
+            }
+            sessionStore.refreshFileSidebarRoot()
+        } else if !visible, isAttached {
+            container.removeFromSuperview()
+            splitView.layoutSubtreeIfNeeded()
+        }
+        splitView.needsDisplay = true
+        splitView.window?.viewsNeedDisplay = true
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_: NSApplication) -> Bool {
@@ -307,6 +350,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         sidebarContainerView?.layer?.backgroundColor = color.cgColor
         terminalWrapperView?.layer?.backgroundColor = color.cgColor
         sidebarHostView?.appearance = NSAppearance(named: color.isDark ? .darkAqua : .aqua)
+        fileSidebarContainerView?.layer?.backgroundColor = color.cgColor
+        fileSidebarHostView?.appearance = NSAppearance(named: color.isDark ? .darkAqua : .aqua)
     }
 
     @objc private func showPreferences() {
@@ -395,10 +440,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         terminalContainer.autoresizingMask = [.width, .height]
         terminalWrapper.addSubview(terminalContainer)
 
+        // The right-hand file sidebar: a third pane hosting `FileSidebarView`.
+        // Painted the terminal background like the left sidebar so the three
+        // panes read as one surface. Starts hidden unless the preference is on
+        // (the `$isVisible` subscription re-applies this on launch too).
+        let fileSidebarHost = NSHostingView(rootView: FileSidebarView().environmentStores(stores))
+        fileSidebarHost.appearance = NSAppearance(named: sessionStore.terminalBackgroundColor.isDark ? .darkAqua : .aqua)
+        fileSidebarHostView = fileSidebarHost
+
+        let fileSidebarContainer = NSView()
+        fileSidebarContainer.wantsLayer = true
+        fileSidebarContainer.layer?.backgroundColor = sessionStore.terminalBackgroundColor.cgColor
+        fileSidebarContainer.frame = NSRect(x: 0, y: 0, width: CGFloat(fileSidebarPreferences.clampedWidth), height: 640)
+        fileSidebarHost.frame = fileSidebarContainer.bounds
+        fileSidebarHost.autoresizingMask = [.width, .height]
+        fileSidebarContainer.addSubview(fileSidebarHost)
+        fileSidebarContainerView = fileSidebarContainer
+        // The file sidebar is added to / removed from the split on demand by
+        // `applyFileSidebarVisibility` (add/remove is far more predictable than
+        // hiding an arranged subview), so it is NOT added here.
+
         split.addArrangedSubview(sidebarContainer)
         split.addArrangedSubview(terminalWrapper)
         // Sidebar keeps its width when the window resizes; the terminal flexes.
         split.setHoldingPriority(.defaultHigh, forSubviewAt: 0)
+        // Persist a user-dragged file-sidebar width (the second divider); only
+        // when it's attached and actually changed.
+        split.onFileSidebarDragEnded = { [weak self] width in
+            guard let self, self.fileSidebarContainerView?.superview != nil else { return }
+            let clamped = FileSidebarPreferences(width: Double(width)).clampedWidth
+            if abs(clamped - self.fileSidebarPreferences.width) > 0.5 {
+                self.fileSidebarPreferences.width = clamped
+            }
+        }
         self.splitView = split
 
         let window = NSWindow(
@@ -739,6 +813,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private static let paletteActions: [PaletteAction] = [
         PaletteAction(id: "newSession", title: "New Session"),
         PaletteAction(id: "toggleSidebar", title: "Toggle Sidebar"),
+        PaletteAction(id: "toggleFileSidebar", title: "Toggle File Sidebar"),
         PaletteAction(id: "openPreferences", title: "Open Preferences"),
         PaletteAction(id: "openInEditor", title: "Open in Editor"),
         PaletteAction(id: "splitPaneRight", title: "Split Pane Right"),
@@ -1019,6 +1094,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         switch id {
         case "newSession": sessionStore.createSession()
         case "toggleSidebar": toggleSidebar()
+        case "toggleFileSidebar": fileSidebarPreferences.isVisible.toggle()
         case "openPreferences": showPreferences()
         case "openInEditor": openInEditor()
         case "splitPaneRight": performWorkspacePaneAction { .splitPane(paneID: $0, direction: .right) }
@@ -1233,6 +1309,11 @@ private final class SeamlessSplitView: NSSplitView {
     /// `applySidebarWidth`). `AppDelegate` decides whether to record it.
     var onDividerDragEnded: ((CGFloat) -> Void)?
 
+    /// Like `onDividerDragEnded` but for the right-hand file sidebar (the last
+    /// arranged subview), reported after a drag of the second divider. Fires
+    /// for any divider drag; `AppDelegate` only records a real change.
+    var onFileSidebarDragEnded: ((CGFloat) -> Void)?
+
     // `NSSplitView.mouseDown` runs its divider drag-tracking loop synchronously,
     // so by the time `super` returns the drag is complete and the sidebar pane's
     // frame holds the width the user let go at.
@@ -1240,6 +1321,9 @@ private final class SeamlessSplitView: NSSplitView {
         super.mouseDown(with: event)
         if let sidebarWidth = arrangedSubviews.first?.frame.width {
             onDividerDragEnded?(sidebarWidth)
+        }
+        if arrangedSubviews.count >= 3, let fileWidth = arrangedSubviews.last?.frame.width {
+            onFileSidebarDragEnded?(fileWidth)
         }
     }
 
