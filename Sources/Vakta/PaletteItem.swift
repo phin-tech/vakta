@@ -3,7 +3,7 @@
 //  Vakta
 //
 //  One row in the ⌘K command palette -- a session to switch to, a
-//  multiplexer workspace to focus, or an action to run. Flattened across
+//  multiplexer workspace to focus, or an `AppCommand` to run. Flattened across
 //  categories so a single query/highlight/commit state machine can treat
 //  them uniformly; `category`/`subtitle`/`status` only affect how a row
 //  renders.
@@ -21,7 +21,7 @@ enum PaletteItemKind: Equatable {
     case selectSession(UUID)
     case focusWorkspace(sessionID: UUID, workspaceID: String)
     case focusPane(sessionID: UUID, workspaceID: String, paneID: String)
-    case action(id: String)
+    case command(AppCommand)
 }
 
 enum PaletteNavigationScope: Equatable {
@@ -63,7 +63,7 @@ enum PaletteNavigationPlanner {
                 return .drillInto(.workspaces(sessionID: sessionID))
             case .focusWorkspace(let sessionID, let workspaceID):
                 return .drillInto(.panes(sessionID: sessionID, workspaceID: workspaceID))
-            case .focusPane, .action:
+            case .focusPane, .command:
                 return .noOp
             }
         case .shiftTab, .escape:
@@ -79,12 +79,4 @@ struct PaletteItem: Identifiable, Equatable {
     let category: PaletteCategory
     let status: AgentStatus
     let kind: PaletteItemKind
-}
-
-/// A static, always-available command (New Session, Toggle Sidebar, ...).
-/// The shell resolves `id` to an actual handler; the core never executes
-/// anything.
-struct PaletteAction: Equatable {
-    let id: String
-    let title: String
 }

@@ -53,11 +53,69 @@ final class KeybindingMatcher: ObservableObject {
     /// Passthrough mode: while on, NO binding is matched -- every key falls
     /// through raw to the focused session. Transient (always off at launch);
     /// toggled by the double-tap chord. `@Published` so the UI can indicate it.
-    @Published private(set) var passthrough = false
+    @Published private(set) var passthrough = false {
+        didSet { if passthrough { leaderPath = nil } }
+    }
 
     /// Which double-tap modifier toggles `passthrough`. Persisted.
     @Published var passthroughToggle: PassthroughToggle {
         didSet { PassthroughSettingsPersistence.save(passthroughToggle, root: root) }
+    }
+
+    /// The leader-key flag and chord (see `LeaderKeys.swift`). Persisted;
+    /// turning the flag off abandons any pending sequence. Enabling it (or
+    /// moving the chord) unbinds a keybinding on the leader chord, which the
+    /// leader would otherwise shadow forever.
+    @Published var leaderSettings: LeaderSettings {
+        didSet {
+            LeaderSettingsPersistence.save(leaderSettings, root: root)
+            if leaderSettings.isEnabled {
+                removeBindings(onLeaderChord: leaderSettings)
+            } else {
+                leaderPath = nil
+            }
+        }
+    }
+
+    /// The pending leader sequence: `nil` when idle, `[]` right after the
+    /// leader chord, then the keys typed so far. Transient (never persisted);
+    /// `@Published` so the which-key overlay can follow it.
+    @Published private(set) var leaderPath: [UInt16]?
+
+    /// The tree leader sequences walk.
+    let leaderRoot: LeaderNode = LeaderTree.defaultRoot
+
+    /// The live availability snapshot a leader step decides against (the
+    /// selected session's capabilities). Supplied by the app delegate.
+    var commandContextProvider: () -> CommandContext = { CommandContext(supportsSelectedSessionActions: false) }
+
+    /// Abandons a pending leader sequence (Esc in the overlay, app
+    /// deactivation).
+    func cancelLeader() {
+        leaderPath = nil
+    }
+
+    /// Sets the leader chord, unbinding any keybinding on the same chord.
+    /// One `leaderSettings` assignment, so one persist.
+    func setLeaderChord(_ modifierMask: NSEvent.ModifierFlags, keyCode: UInt16) {
+        var updated = leaderSettings
+        updated.modifierMask = modifierMask.intersection(relevantModifierMask)
+        updated.keyCode = keyCode
+        removeBindings(onLeaderChord: updated)
+        leaderSettings = updated
+    }
+
+    private func removeBindings(onLeaderChord settings: LeaderSettings) {
+        let isOnChord = { (binding: Keybinding) in
+            binding.modifierMask == settings.modifierMask && binding.keyCode == settings.keyCode
+        }
+        if bindings.contains(where: isOnChord) {
+            bindings.removeAll(where: isOnChord)
+        }
+    }
+
+    private func isLeaderChord(_ modifierMask: NSEvent.ModifierFlags, keyCode: UInt16) -> Bool {
+        leaderSettings.isEnabled && leaderSettings.modifierMask == modifierMask && leaderSettings.keyCode == keyCode
     }
 
     /// Flips passthrough mode. Exposed so a UI affordance (the sidebar status
@@ -104,6 +162,14 @@ final class KeybindingMatcher: ObservableObject {
         // startup write (seed or migration) is issued explicitly. A corrupt
         // or unreadable file is deliberately NOT overwritten here -- see
         // `KeybindingStartupPlanner`.
+        // Leader settings: defaults on a missing, corrupt or unreadable file,
+        // and a corrupt file is left on disk (assigning in init fires no
+        // `didSet`, so nothing is written here).
+        switch LeaderSettingsPersistence.load(root: root) {
+        case .loaded(let settings): leaderSettings = settings
+        case .missing, .corrupt, .unreadable: leaderSettings = LeaderSettings()
+        }
+
         let decision = KeybindingStartupPlanner.plan(for: KeybindingPersistence.load(root: root))
         switch decision {
         case .use(let planned, let shouldPersist):
@@ -115,7 +181,7 @@ final class KeybindingMatcher: ObservableObject {
     }
 
     /// Installs the monitor. `onMatch` receives the matched binding's action.
-    func install(onMatch: @escaping (KeybindingAction) -> Void) {
+    func install(onMatch: @escaping (AppCommand) -> Void) {
         guard monitor == nil else { return }
         // Local monitor callbacks are documented to run on the main
         // thread/run loop that installed them; the `@MainActor` annotation
@@ -192,7 +258,7 @@ final class KeybindingMatcher: ObservableObject {
     /// Sets `binding.action`'s chord, replacing any existing binding for that
     /// action and unbinding any other action that already used this exact chord
     /// (the matcher's `first(where:)` would otherwise silently shadow one).
-    func setBinding(_ modifierMask: NSEvent.ModifierFlags, keyCode: UInt16, for action: KeybindingAction) {
+    func setBinding(_ modifierMask: NSEvent.ModifierFlags, keyCode: UInt16, for action: AppCommand) {
         // Normalize to the same mask `handle` matches against, so a caller
         // that passes an un-intersected `NSEvent.modifierFlags` (device
         // flags, caps lock, ...) can't store a chord that then never
@@ -203,6 +269,9 @@ final class KeybindingMatcher: ObservableObject {
         // see the in-between state with the old chord already gone and the
         // new one not yet added.
         let normalizedMask = modifierMask.intersection(relevantModifierMask)
+        // The leader is matched before bindings, so a binding on its chord
+        // could never fire: refuse it rather than store a dead binding.
+        guard !isLeaderChord(normalizedMask, keyCode: keyCode) else { return }
         var updated = bindings
         updated.removeAll { $0.action == action || ($0.modifierMask == normalizedMask && $0.keyCode == keyCode) }
         updated.append(Keybinding(modifierMask: normalizedMask, keyCode: keyCode, action: action))
@@ -210,12 +279,12 @@ final class KeybindingMatcher: ObservableObject {
     }
 
     /// Removes any chord bound to `action`.
-    func clearBinding(for action: KeybindingAction) {
+    func clearBinding(for action: AppCommand) {
         bindings.removeAll { $0.action == action }
     }
 
     /// The chord currently bound to `action`, if any.
-    func binding(for action: KeybindingAction) -> Keybinding? {
+    func binding(for action: AppCommand) -> Keybinding? {
         bindings.first { $0.action == action }
     }
 
@@ -225,7 +294,7 @@ final class KeybindingMatcher: ObservableObject {
         bindings = Keybinding.defaults
     }
 
-    func handle(_ event: NSEvent, onMatch: (KeybindingAction) -> Void) -> NSEvent? {
+    func handle(_ event: NSEvent, onMatch: (AppCommand) -> Void) -> NSEvent? {
         // Modifier press/release: never consumed (modifiers must reach the
         // terminal); used only to detect the passthrough double-tap.
         if event.type == .flagsChanged {
@@ -250,7 +319,39 @@ final class KeybindingMatcher: ObservableObject {
             return event
         }
 
+        // A pending leader sequence owns every key until it commits or
+        // cancels; each one is consumed, including an undefined key.
+        if let path = leaderPath {
+            switch LeaderSequencePlanner.step(
+                root: leaderRoot,
+                path: path,
+                keyCode: event.keyCode,
+                modifiers: event.modifierFlags,
+                context: commandContextProvider()
+            ) {
+            case .descend(let next), .back(let next):
+                leaderPath = next
+            case .commit(let command):
+                leaderPath = nil
+                onMatch(command)
+            case .cancel:
+                leaderPath = nil
+            }
+            return nil
+        }
+
         let mods = event.modifierFlags.intersection(relevantModifierMask)
+        let isTextEntryFocused = firstResponderProvider() is NSTextView
+
+        // The leader chord starts a sequence -- except while a text field is
+        // being edited, where (like any contextSensitive chord) the key keeps
+        // its normal meaning.
+        if isLeaderChord(mods, keyCode: event.keyCode) {
+            guard !isTextEntryFocused else { return event }
+            leaderPath = []
+            return nil
+        }
+
         guard let binding = bindings.first(where: { $0.modifierMask == mods && $0.keyCode == event.keyCode }) else {
             // No match: fall through so the key reaches the focused surface
             // and, from there, herdr.
@@ -262,7 +363,6 @@ final class KeybindingMatcher: ObservableObject {
         // user-recorded chord that happens to collide with a standard
         // editing shortcut like ⌘V -- falls through to its normal text
         // meaning instead of being silently stolen app-wide.
-        let isTextEntryFocused = firstResponderProvider() is NSTextView
         guard KeybindingRoutingPlanner.shouldConsume(action: binding.action, isTextEntryFocused: isTextEntryFocused) else {
             return event
         }

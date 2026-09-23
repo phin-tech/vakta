@@ -3,7 +3,7 @@
 //  Vakta
 //
 //  Flattens the palette's three sources -- open sessions, each session's
-//  already-known workspaces, and the static action list -- into one
+//  already-known workspaces, and the static command rows -- into one
 //  ordered `[PaletteItem]`. Pure: takes plain snapshots, no store access.
 import Foundation
 
@@ -29,12 +29,13 @@ enum PaletteItemAssembler {
     ///     session id, not the session's own multiplexer session name.
     ///   - workspaceStatus: a workspace's own agent status, keyed by
     ///     workspace id; missing entries fall back to `.none`.
-    ///   - actions: the static command list, appended last.
+    ///   - commands: the static command rows (already availability-filtered),
+    ///     appended last.
     static func assemble(
         sessions: [SessionEntry],
         workspaces: [UUID: [Workspace]],
         workspaceStatus: [String: AgentStatus],
-        actions: [PaletteAction]
+        commands: [AppCommand]
     ) -> [PaletteItem] {
         var items: [PaletteItem] = []
 
@@ -59,14 +60,14 @@ enum PaletteItemAssembler {
             }
         }
 
-        for action in actions {
+        for command in commands {
             items.append(PaletteItem(
-                id: "action:\(action.id)",
-                title: action.title,
+                id: "action:\(command.stableID)",
+                title: command.title,
                 subtitle: nil,
                 category: .action,
                 status: .none,
-                kind: .action(id: action.id)
+                kind: .command(command)
             ))
         }
 

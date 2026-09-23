@@ -17,7 +17,7 @@ final class KeybindingRoutingPlannerTests: XCTestCase {
     }
 
     func test_contextSensitiveAction_consumesWhenNoTextEntryIsFocused() {
-        let actions: [KeybindingAction] = [
+        let actions: [AppCommand] = [
             .selectSession(0), .toggleSidebar, .openPreferences, .openSessionSwitcher
         ]
         for action in actions {
@@ -29,7 +29,7 @@ final class KeybindingRoutingPlannerTests: XCTestCase {
     }
 
     func test_contextSensitiveAction_fallsThroughWhenTextEntryFocused() {
-        let actions: [KeybindingAction] = [
+        let actions: [AppCommand] = [
             .selectSession(3), .toggleSidebar, .openPreferences, .openSessionSwitcher
         ]
         for action in actions {
@@ -38,6 +38,29 @@ final class KeybindingRoutingPlannerTests: XCTestCase {
                 "\(action) must fall through to normal text editing (paste/undo/select-all/...) " +
                 "when a text field is being edited"
             )
+        }
+    }
+}
+
+extension KeybindingRoutingPlannerTests {
+    /// Commands the registry added from the ⌘K palette: all ordinary app
+    /// commands, so a text field keeps its normal meaning for the chord.
+    func test_registryAddedCommands_areContextSensitive() {
+        let added: [AppCommand] = [
+            .newSession, .toggleFileSidebar, .openInEditor,
+            .splitPaneRight, .splitPaneDown, .zoomPane, .closePane, .renamePane,
+            .closeWorkspace, .newWorkspace, .stopSession,
+            .editHerdrConfig, .reloadHerdrConfig, .focusWorkspace(0),
+        ]
+        for command in added {
+            XCTAssertTrue(KeybindingRoutingPlanner.shouldConsume(action: command, isTextEntryFocused: false), "\(command)")
+            XCTAssertFalse(KeybindingRoutingPlanner.shouldConsume(action: command, isTextEntryFocused: true), "\(command)")
+        }
+    }
+
+    func test_quitAndCloseWindow_remainGlobal() {
+        for command: AppCommand in [.quit, .closeWindow] {
+            XCTAssertEqual(command.scope, .global, "\(command)")
         }
     }
 }

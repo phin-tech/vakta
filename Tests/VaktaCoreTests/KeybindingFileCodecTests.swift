@@ -71,4 +71,62 @@ final class KeybindingFileCodecTests: XCTestCase {
             "adding the default ⌘, open-preferences binding is a schema migration and must bump currentVersion"
         )
     }
+
+    // MARK: Command registry -- the rename from `KeybindingAction` to
+    // `AppCommand` must not change the on-disk shape.
+
+    /// Bytes as written by a v7 build before the registry existed: ⌘B-style
+    /// toggle-sidebar (a no-payload case) and ⌃⇧3 select-session (an
+    /// associated-value case). Fixed literals, not produced by the encoder.
+    private static let legacyV7Bytes = Data(#"""
+    {"version":7,"bindings":[\#
+    {"modifierMask":1048576,"keyCode":11,"action":{"toggleSidebar":{}}},\#
+    {"modifierMask":393216,"keyCode":20,"action":{"selectSession":{"_0":2}}}\#
+    ]}
+    """#.utf8)
+
+    private static let legacyV7Bindings = [
+        Keybinding(modifierMask: .command, keyCode: 11, action: .toggleSidebar),
+        Keybinding(modifierMask: [.control, .shift], keyCode: 20, action: .selectSession(2)),
+    ]
+
+    func test_decode_legacyV7Bytes_yieldsTheSameCommands() {
+        XCTAssertEqual(
+            codec.decode(Self.legacyV7Bytes),
+            StoredKeybindingsPayload(version: 7, bindings: Self.legacyV7Bindings)
+        )
+    }
+
+    func test_encode_afterRename_keepsTheLegacyActionJSONShape() throws {
+        let payload = StoredKeybindingsPayload(version: 7, bindings: Self.legacyV7Bindings)
+        let encoded = try XCTUnwrap(codec.encode(payload))
+        let actual = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? NSDictionary)
+        let expected = try XCTUnwrap(JSONSerialization.jsonObject(with: Self.legacyV7Bytes) as? NSDictionary)
+        XCTAssertEqual(actual, expected)
+    }
+
+    func test_bindingToARegistryAddedCommand_roundTrips() throws {
+        let payload = StoredKeybindingsPayload(
+            version: KeybindingFileCodec.currentVersion,
+            bindings: [
+                Keybinding(modifierMask: .command, keyCode: 42, action: .splitPaneRight),
+                Keybinding(modifierMask: .control, keyCode: 18, action: .focusWorkspace(0)),
+            ]
+        )
+        let data = try XCTUnwrap(codec.encode(payload))
+        XCTAssertEqual(codec.decode(data), payload)
+    }
+
+    func test_decode_unknownCommandCase_returnsNilRatherThanDroppingTheBinding() {
+        // What an older build sees when a newer one saved a command it
+        // doesn't know: the whole file is undecodable (corrupt), never a
+        // partial list that a later save would silently truncate.
+        let data = Data(#"""
+        {"version":7,"bindings":[\#
+        {"modifierMask":1048576,"keyCode":11,"action":{"toggleSidebar":{}}},\#
+        {"modifierMask":1048576,"keyCode":42,"action":{"frobnicate":{}}}\#
+        ]}
+        """#.utf8)
+        XCTAssertNil(codec.decode(data))
+    }
 }

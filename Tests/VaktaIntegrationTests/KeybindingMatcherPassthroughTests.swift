@@ -164,7 +164,7 @@ final class KeybindingMatcherPassthroughTests: XCTestCase {
         tap(matcher, modifier: .shift, at: base + 0.2)
         XCTAssertTrue(matcher.passthrough)
 
-        var fired: KeybindingAction?
+        var fired: AppCommand?
         let result = matcher.handle(keyDownEvent(modifiers: .command, timestamp: base + 1)) { fired = $0 }
 
         XCTAssertNotNil(result)

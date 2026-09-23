@@ -153,4 +153,29 @@ final class PaletteNavigationPlannerTests: XCTestCase {
             .dismiss
         )
     }
+
+    private var commandItem: PaletteItem {
+        PaletteItem(
+            id: "action:splitPaneRight",
+            title: "Split Pane Right",
+            subtitle: nil,
+            category: .action,
+            status: .none,
+            kind: .command(.splitPaneRight)
+        )
+    }
+
+    func test_enter_onCommand_commitsThatCommand() {
+        XCTAssertEqual(
+            PaletteNavigationPlanner.decide(intent: .enter, highlighted: commandItem, scope: .root),
+            .commit(.command(.splitPaneRight))
+        )
+    }
+
+    func test_tab_onCommand_isNoOp() {
+        XCTAssertEqual(
+            PaletteNavigationPlanner.decide(intent: .tab, highlighted: commandItem, scope: .root),
+            .noOp
+        )
+    }
 }

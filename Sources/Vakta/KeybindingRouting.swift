@@ -25,12 +25,16 @@ enum KeybindingActionScope {
     case contextSensitive
 }
 
-extension KeybindingAction {
+extension AppCommand {
     var scope: KeybindingActionScope {
         switch self {
         case .quit, .closeWindow: return .global
         case .selectSession, .toggleSidebar, .openPreferences, .openSessionSwitcher, .copy, .paste, .cut, .selectAll,
-             .increaseFontSize, .decreaseFontSize, .resetFontSize, .nextUnreadSession:
+             .increaseFontSize, .decreaseFontSize, .resetFontSize, .nextUnreadSession,
+             .newSession, .toggleFileSidebar, .openInEditor,
+             .splitPaneRight, .splitPaneDown, .zoomPane, .closePane, .renamePane,
+             .closeWorkspace, .newWorkspace, .stopSession,
+             .editHerdrConfig, .reloadHerdrConfig, .focusWorkspace:
             return .contextSensitive
         }
     }
@@ -39,7 +43,7 @@ extension KeybindingAction {
 enum KeybindingRoutingPlanner {
     /// `true` if a matched `action` should actually be dispatched given
     /// whether the current first responder is a text-editing view.
-    static func shouldConsume(action: KeybindingAction, isTextEntryFocused: Bool) -> Bool {
+    static func shouldConsume(action: AppCommand, isTextEntryFocused: Bool) -> Bool {
         switch action.scope {
         case .global: return true
         case .contextSensitive: return !isTextEntryFocused
@@ -93,7 +97,7 @@ enum SessionSwitcherKeyRouter {
     ///
     /// A held modifier also always falls through -- ⇧↑/⇧↓ extend the search
     /// field's text selection, ⌘↑/⌘↓ jump to its start/end, and neither the
-    /// switcher's own bare-key nav nor any bound `KeybindingAction` chord
+    /// switcher's own bare-key nav nor any bound `AppCommand` chord
     /// should shadow the field editor's normal text-editing behavior. The
     /// sole intentional exception is ⇧Tab, which backs out of a palette
     /// scope rather than moving focus to another control.

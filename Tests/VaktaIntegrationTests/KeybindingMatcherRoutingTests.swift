@@ -50,7 +50,7 @@ final class KeybindingMatcherRoutingTests: XCTestCase {
         matcher.setBinding(.command, keyCode: 7, for: .toggleSidebar)
         matcher.firstResponderProvider = { nil }
 
-        var fired: KeybindingAction?
+        var fired: AppCommand?
         let result = matcher.handle(keyDownEvent(modifiers: .command, keyCode: 7)) { fired = $0 }
 
         XCTAssertNil(result, "a consumed event must return nil so AppKit dispatch stops here")
@@ -66,7 +66,7 @@ final class KeybindingMatcherRoutingTests: XCTestCase {
         let realTextView = NSTextView(frame: .zero)
         matcher.firstResponderProvider = { realTextView }
 
-        var fired: KeybindingAction?
+        var fired: AppCommand?
         let event = keyDownEvent(modifiers: .command, keyCode: 9)
         let result = matcher.handle(event) { fired = $0 }
 
@@ -80,7 +80,7 @@ final class KeybindingMatcherRoutingTests: XCTestCase {
         let realTextView = NSTextView(frame: .zero)
         matcher.firstResponderProvider = { realTextView }
 
-        var fired: KeybindingAction?
+        var fired: AppCommand?
         let result = matcher.handle(keyDownEvent(modifiers: .command, keyCode: 12)) { fired = $0 }
 
         XCTAssertNil(result, "quit must remain reachable even while a text field has focus")
@@ -91,8 +91,38 @@ final class KeybindingMatcherRoutingTests: XCTestCase {
         let matcher = KeybindingMatcher(root: tempDirectory)
         matcher.firstResponderProvider = { NSTextView(frame: .zero) }
 
-        var fired: KeybindingAction?
+        var fired: AppCommand?
         let result = matcher.handle(keyDownEvent(modifiers: [], keyCode: 0)) { fired = $0 }
+
+        XCTAssertNotNil(result)
+        XCTAssertNil(fired)
+    }
+
+    // MARK: - Registry-added commands route like any other binding
+
+    func test_chordBoundToRegistryAddedCommand_noTextEntryFocused_consumesAndDelivers() {
+        // Delivered even when the selected session can't act on it: the
+        // AppDelegate dispatcher no-ops, but the chord is still consumed so
+        // its meaning never depends on which session is selected.
+        let matcher = KeybindingMatcher(root: tempDirectory)
+        matcher.setBinding(.command, keyCode: 42, for: .splitPaneRight)
+        matcher.firstResponderProvider = { nil }
+
+        var fired: AppCommand?
+        let result = matcher.handle(keyDownEvent(modifiers: .command, keyCode: 42)) { fired = $0 }
+
+        XCTAssertNil(result)
+        XCTAssertEqual(fired, .splitPaneRight)
+    }
+
+    func test_chordBoundToRegistryAddedCommand_realTextViewFocused_fallsThroughUnfired() {
+        let matcher = KeybindingMatcher(root: tempDirectory)
+        matcher.setBinding(.command, keyCode: 42, for: .splitPaneRight)
+        let realTextView = NSTextView(frame: .zero)
+        matcher.firstResponderProvider = { realTextView }
+
+        var fired: AppCommand?
+        let result = matcher.handle(keyDownEvent(modifiers: .command, keyCode: 42)) { fired = $0 }
 
         XCTAssertNotNil(result)
         XCTAssertNil(fired)

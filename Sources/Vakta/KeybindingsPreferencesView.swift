@@ -20,32 +20,68 @@ struct KeybindingsPreferencesView: View {
     @EnvironmentObject private var matcher: KeybindingMatcher
 
     /// The action currently being recorded, if any.
-    @State private var recordingAction: KeybindingAction?
+    @State private var recordingAction: AppCommand?
+    /// Whether the leader chord (rather than an action) is being recorded.
+    @State private var isRecordingLeader = false
     /// A transient hint shown under the list (e.g. "needs a modifier").
     @State private var notice: String?
 
-    /// The fixed, ordered set of bindable actions the pane exposes. Session
-    /// selection covers the nine default chords; the two app actions ship
-    /// unbound and can be assigned here.
-    private static let sessionActions: [KeybindingAction] = (0..<9).map { .selectSession($0) }
-    private static let appActions: [KeybindingAction] = [
-        .openSessionSwitcher, .toggleSidebar, .openPreferences, .quit,
-        .copy, .paste, .cut, .selectAll, .closeWindow,
-        .increaseFontSize, .decreaseFontSize, .resetFontSize,
-    ]
+    /// The bindable commands, grouped by `AppCommandGroup` in catalog order.
+    /// Derived from `AppCommandCatalog` so a command can't be dispatchable
+    /// yet missing from Preferences.
+    private static let sections: [(group: AppCommandGroup, commands: [AppCommand])] =
+        AppCommandGroup.allCases.compactMap { group in
+            let commands = AppCommandCatalog.bindableCommands.filter { $0.group == group }
+            return commands.isEmpty ? nil : (group, commands)
+        }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Form {
-                Section("Application") {
-                    ForEach(Self.appActions, id: \.self) { action in
-                        row(for: action)
+                ForEach(Self.sections, id: \.group) { section in
+                    Section(section.group.title) {
+                        ForEach(section.commands, id: \.self) { command in
+                            row(for: command)
+                        }
                     }
                 }
-                Section("Sessions") {
-                    ForEach(Self.sessionActions, id: \.self) { action in
-                        row(for: action)
+
+                Section {
+                    Toggle("Enable leader key", isOn: $matcher.leaderSettings.isEnabled)
+                    HStack {
+                        Text("Leader chord")
+                        Spacer()
+                        if !isRecordingLeader {
+                            Text(matcher.leaderSettings.chordDisplayString)
+                                .font(.system(.body, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                        }
+                        Button(isRecordingLeader ? "Recording…" : "Record") {
+                            isRecordingLeader ? cancelRecording() : startRecordingLeader()
+                        }
+                        .fixedSize()
                     }
+                    .disabled(!matcher.leaderSettings.isEnabled)
+                    LabeledContent("Show key hints after") {
+                        HStack {
+                            Slider(value: leaderHintDelay, in: 0...1000, step: 50)
+                                .frame(minWidth: 160)
+                            Text(leaderHintDelayLabel)
+                                .font(.system(.body, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                                .frame(minWidth: 80, alignment: .trailing)
+                        }
+                    }
+                    .disabled(!matcher.leaderSettings.isEnabled)
+                } header: {
+                    Text("Leader Key")
+                } footer: {
+                    Text("Spacemacs/Doom-style: press the leader chord, then the keys "
+                        + "the overlay lists — e.g. \(matcher.leaderSettings.chordDisplayString) w v "
+                        + "splits the pane right. ⎋ cancels, ⌫ goes back a level. "
+                        + "A shortcut on the leader chord is unbound.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
 
                 Section {
@@ -73,7 +109,7 @@ struct KeybindingsPreferencesView: View {
                     Text(notice)
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                } else if recordingAction != nil {
+                } else if recordingAction != nil || isRecordingLeader {
                     Text("Press a chord, or ⎋ to cancel.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -97,12 +133,28 @@ struct KeybindingsPreferencesView: View {
         // while the next keystroke anywhere quietly matches normally
         // instead of being recorded.
         .onChange(of: matcher.isCapturing) { isCapturing in
-            if !isCapturing { recordingAction = nil }
+            if !isCapturing {
+                recordingAction = nil
+                isRecordingLeader = false
+            }
         }
     }
 
+    /// The slider edits whole milliseconds; the matcher persists each change.
+    private var leaderHintDelay: Binding<Double> {
+        Binding(
+            get: { Double(matcher.leaderSettings.hintDelayMilliseconds) },
+            set: { matcher.leaderSettings.hintDelayMilliseconds = Int($0.rounded()) }
+        )
+    }
+
+    private var leaderHintDelayLabel: String {
+        let milliseconds = matcher.leaderSettings.clampedHintDelayMilliseconds
+        return milliseconds == 0 ? "Instantly" : "\(milliseconds) ms"
+    }
+
     @ViewBuilder
-    private func row(for action: KeybindingAction) -> some View {
+    private func row(for action: AppCommand) -> some View {
         let isRecording = recordingAction == action
         HStack {
             Text(action.title)
@@ -126,13 +178,34 @@ struct KeybindingsPreferencesView: View {
         }
     }
 
-    private func startRecording(_ action: KeybindingAction) {
+    private func startRecording(_ action: AppCommand) {
         recordingAction = action
-        notice = nil
         let recording = $recordingAction
+        capture(onEnd: { recording.wrappedValue = nil }) { mods, keyCode in
+            matcher.setBinding(mods, keyCode: keyCode, for: action)
+        }
+    }
+
+    private func startRecordingLeader() {
+        recordingAction = nil
+        isRecordingLeader = true
+        let recording = $isRecordingLeader
+        capture(onEnd: { recording.wrappedValue = false }) { mods, keyCode in
+            matcher.setLeaderChord(mods, keyCode: keyCode)
+        }
+    }
+
+    /// Claims the next key through the matcher's monitor. ⎋ cancels; a chord
+    /// with no modifier is refused (it would swallow that key in every
+    /// terminal); otherwise `apply` stores it.
+    private func capture(
+        onEnd: @escaping () -> Void,
+        apply: @escaping (NSEvent.ModifierFlags, UInt16) -> Void
+    ) {
+        notice = nil
         let noticeBinding = $notice
         matcher.captureNext = { event in
-            recording.wrappedValue = nil
+            onEnd()
             let mods = event.modifierFlags.intersection(SessionSwitcherKeyRouter.relevantModifierMask)
             // ⎋ with no modifiers cancels the recording.
             if event.keyCode == 53, mods.isEmpty { return }
@@ -142,10 +215,10 @@ struct KeybindingsPreferencesView: View {
                 noticeBinding.wrappedValue = "A shortcut needs at least one modifier (⌃ ⌥ ⇧ ⌘)."
                 return
             }
-            // `setBinding` normalizes this same mask again -- the
-            // intersection here is only to decide "does this chord have a
-            // modifier at all," not to build the stored mask by hand.
-            matcher.setBinding(mods, keyCode: event.keyCode, for: action)
+            // `setBinding`/`setLeaderChord` normalize this same mask again --
+            // the intersection here is only to decide "does this chord have
+            // a modifier at all," not to build the stored mask by hand.
+            apply(mods, event.keyCode)
             noticeBinding.wrappedValue = nil
         }
     }
@@ -153,5 +226,6 @@ struct KeybindingsPreferencesView: View {
     private func cancelRecording() {
         matcher.captureNext = nil
         recordingAction = nil
+        isRecordingLeader = false
     }
 }

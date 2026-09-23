@@ -95,4 +95,52 @@ final class KeybindingPersistenceTests: XCTestCase {
             "a corrupt passthrough file must survive a launch that recovers with the in-memory default"
         )
     }
+
+    // MARK: Command registry
+
+    @MainActor
+    func test_bindingARegistryAddedCommand_survivesAMatcherRestart() {
+        let first = KeybindingMatcher(root: tempDirectory)
+        first.setBinding(.command, keyCode: 42, for: .splitPaneRight)
+
+        let relaunched = KeybindingMatcher(root: tempDirectory)
+        XCTAssertEqual(relaunched.binding(for: .splitPaneRight)?.keyCode, 42)
+        XCTAssertEqual(relaunched.binding(for: .splitPaneRight)?.modifierMask, .command)
+    }
+
+    @MainActor
+    func test_matcherInit_legacyV7File_loadsAndLeavesBytesUntouched() throws {
+        // Written by a build that predates `AppCommand`; the rename must not
+        // force a rewrite (or change what a rewrite would contain).
+        let bytes = Data(#"""
+        {"version":7,"bindings":[\#
+        {"modifierMask":1048576,"keyCode":11,"action":{"toggleSidebar":{}}},\#
+        {"modifierMask":393216,"keyCode":20,"action":{"selectSession":{"_0":2}}}\#
+        ]}
+        """#.utf8)
+        let store = KeybindingPersistence.store(root: tempDirectory)
+        try bytes.write(to: store.fileURL)
+
+        let matcher = KeybindingMatcher(root: tempDirectory)
+        XCTAssertEqual(matcher.bindings, [
+            Keybinding(modifierMask: .command, keyCode: 11, action: .toggleSidebar),
+            Keybinding(modifierMask: [.control, .shift], keyCode: 20, action: .selectSession(2)),
+        ])
+        XCTAssertEqual(try Data(contentsOf: store.fileURL), bytes)
+    }
+
+    @MainActor
+    func test_matcherInit_fileWithUnknownCommand_usesDefaults_butDoesNotOverwriteFile() throws {
+        // A newer build's file seen by this one: recovered in memory, never
+        // truncated on disk at startup.
+        let bytes = Data(#"""
+        {"version":7,"bindings":[{"modifierMask":1048576,"keyCode":42,"action":{"frobnicate":{}}}]}
+        """#.utf8)
+        let store = KeybindingPersistence.store(root: tempDirectory)
+        try bytes.write(to: store.fileURL)
+
+        let matcher = KeybindingMatcher(root: tempDirectory)
+        XCTAssertEqual(matcher.bindings, Keybinding.defaults)
+        XCTAssertEqual(try Data(contentsOf: store.fileURL), bytes)
+    }
 }

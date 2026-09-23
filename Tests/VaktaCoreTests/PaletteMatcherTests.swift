@@ -17,7 +17,7 @@ final class PaletteMatcherTests: XCTestCase {
             subtitle: subtitle,
             category: category,
             status: .none,
-            kind: .action(id: title)
+            kind: .command(.toggleSidebar)
         )
     }
 

@@ -18,74 +18,7 @@
 
 import AppKit
 
-/// What a chord does when matched. `Codable` (synthesized) so bindings
-/// persist across launches (see `KeybindingPersistence`).
-enum KeybindingAction: Hashable, Codable {
-    /// Select the sidebar session at this 0-based index.
-    case selectSession(Int)
-    /// Collapse/expand the sidebar.
-    case toggleSidebar
-    /// Open the Preferences window.
-    case openPreferences
-    /// Open the ⌘K session switcher (command palette).
-    case openSessionSwitcher
-    /// Quit Vakta.
-    case quit
-    /// Copy the terminal's current selection to the pasteboard (or the
-    /// field editor's selection, when a text field is focused -- see
-    /// `KeybindingActionScope.contextSensitive`).
-    case copy
-    /// Paste the pasteboard's contents into the terminal (or a focused
-    /// text field).
-    case paste
-    /// Standard Edit-menu cut. The terminal surface has no editable text
-    /// to cut, so on the terminal this is a no-op; a focused text field
-    /// cuts normally.
-    case cut
-    /// Select the terminal's entire scrollback (or a focused text field's
-    /// contents).
-    case selectAll
-    /// Close the frontmost window. A normal, user-clearable binding like
-    /// every other action -- some users route this chord to a terminal
-    /// multiplexer running *inside* the session instead (e.g. closing a
-    /// pane), and clear this binding so the keystroke reaches the terminal.
-    case closeWindow
-    /// Grow the terminal's font size (Ghostty's `increase_font_size` binding
-    /// action on the selected session's surface).
-    case increaseFontSize
-    /// Shrink the terminal's font size (`decrease_font_size`).
-    case decreaseFontSize
-    /// Reset the terminal's font size to the configured default
-    /// (`reset_font_size`).
-    case resetFontSize
-    /// Jump to the next session with an unseen attention transition (the
-    /// bell popover's cmux-style "next unread" -- see
-    /// `NextUnreadSessionPlanner`). Defaults to ⌘U; rebindable/clearable
-    /// like every other action.
-    case nextUnreadSession
-
-    /// A human label for the Preferences list.
-    var title: String {
-        switch self {
-        case .selectSession(let index): return "Select Session \(index + 1)"
-        case .toggleSidebar: return "Toggle Sidebar"
-        case .openPreferences: return "Open Preferences"
-        case .openSessionSwitcher: return "Session Switcher"
-        case .quit: return "Quit"
-        case .copy: return "Copy"
-        case .paste: return "Paste"
-        case .cut: return "Cut"
-        case .selectAll: return "Select All"
-        case .closeWindow: return "Close Window"
-        case .increaseFontSize: return "Increase Font Size"
-        case .decreaseFontSize: return "Decrease Font Size"
-        case .resetFontSize: return "Reset Font Size"
-        case .nextUnreadSession: return "Next Unread Session"
-        }
-    }
-}
-
-/// A modifier mask + physical key code bound to a `KeybindingAction`.
+/// A modifier mask + physical key code bound to an `AppCommand`.
 struct Keybinding: Equatable, Codable {
     /// Required modifiers, compared for exact equality (not "at least
     /// these") against the event's modifier flags after masking down to
@@ -105,7 +38,7 @@ struct Keybinding: Equatable, Codable {
     var keyCode: UInt16
 
     /// What this chord does.
-    var action: KeybindingAction
+    var action: AppCommand
 }
 
 extension Keybinding {
@@ -122,7 +55,7 @@ extension Keybinding {
             rawValue: try container.decode(UInt.self, forKey: .modifierMask)
         )
         keyCode = try container.decode(UInt16.self, forKey: .keyCode)
-        action = try container.decode(KeybindingAction.self, forKey: .action)
+        action = try container.decode(AppCommand.self, forKey: .action)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -142,7 +75,7 @@ extension Keybinding {
     /// TODO(verify): these are physical ANSI-layout codes. On a non-ANSI
     /// (e.g. ISO/JIS) keyboard the digit row is laid out the same way in
     /// practice, but this has not been verified on real non-US hardware.
-    private static let digitKeyCodes: [UInt16] = [18, 19, 20, 21, 23, 22, 26, 28, 25] // 1,2,3,4,5,6,7,8,9
+    static let digitKeyCodes: [UInt16] = [18, 19, 20, 21, 23, 22, 26, 28, 25] // 1,2,3,4,5,6,7,8,9
 
     /// `kVK_ANSI_K` -- the "K" in the default ⌘K session-switcher chord.
     static let kKeyCode: UInt16 = 40
@@ -205,12 +138,18 @@ extension Keybinding {
     /// A `⌃⌥⇧⌘`-style rendering of the chord for the Preferences list, e.g.
     /// `⌃⇧1`. Modifier glyphs are in Apple's canonical menu order.
     var displayString: String {
+        Self.displayString(modifierMask: modifierMask, keyCode: keyCode)
+    }
+
+    /// The same rendering for a chord that isn't a `Keybinding` (the leader
+    /// chord).
+    static func displayString(modifierMask: NSEvent.ModifierFlags, keyCode: UInt16) -> String {
         var result = ""
         if modifierMask.contains(.control) { result += "⌃" }
         if modifierMask.contains(.option) { result += "⌥" }
         if modifierMask.contains(.shift) { result += "⇧" }
         if modifierMask.contains(.command) { result += "⌘" }
-        result += Self.keyGlyph(for: keyCode)
+        result += keyGlyph(for: keyCode)
         return result
     }
 

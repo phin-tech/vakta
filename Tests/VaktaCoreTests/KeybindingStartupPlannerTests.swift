@@ -11,7 +11,7 @@ import XCTest
 @testable import Vakta
 
 final class KeybindingStartupPlannerTests: XCTestCase {
-    private func binding(_ key: UInt16, action: KeybindingAction = .toggleSidebar, modifiers: NSEvent.ModifierFlags = .control) -> Keybinding {
+    private func binding(_ key: UInt16, action: AppCommand = .toggleSidebar, modifiers: NSEvent.ModifierFlags = .control) -> Keybinding {
         Keybinding(modifierMask: modifiers, keyCode: key, action: action)
     }
 
@@ -84,8 +84,8 @@ final class KeybindingStartupPlannerTests: XCTestCase {
     }
 
     // vakta copy/paste/cut -- standard ⌘C/⌘V/⌘X defaults, rebindable like
-    // every other `KeybindingAction`. Asserted here by chord (modifiers +
-    // physical key code) rather than by action name: `KeybindingAction`
+    // every other `AppCommand`. Asserted here by chord (modifiers +
+    // physical key code) rather than by action name: `AppCommand`
     // doesn't have `.copy`/`.paste`/`.cut` cases yet (RED), and these three
     // cases alone are enough to prove the chords exist without depending on
     // the still-to-be-added enum surface. kVK_ANSI_C = 8, kVK_ANSI_V = 9,

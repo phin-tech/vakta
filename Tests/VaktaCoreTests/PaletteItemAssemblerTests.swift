@@ -20,7 +20,7 @@ final class PaletteItemAssemblerTests: XCTestCase {
             sessions: [],
             workspaces: [:],
             workspaceStatus: [:],
-            actions: []
+            commands: []
         )
 
         XCTAssertTrue(items.isEmpty)
@@ -34,7 +34,7 @@ final class PaletteItemAssemblerTests: XCTestCase {
             sessions: [entry1, entry2],
             workspaces: [:],
             workspaceStatus: [:],
-            actions: []
+            commands: []
         )
 
         XCTAssertEqual(items.map(\.title), ["alpha", "beta"])
@@ -50,7 +50,7 @@ final class PaletteItemAssemblerTests: XCTestCase {
             sessions: [entry],
             workspaces: [:],
             workspaceStatus: [:],
-            actions: []
+            commands: []
         )
 
         XCTAssertEqual(items.count, 1)
@@ -64,7 +64,7 @@ final class PaletteItemAssemblerTests: XCTestCase {
             sessions: [entry],
             workspaces: [id: [workspace]],
             workspaceStatus: ["w1": .attention],
-            actions: []
+            commands: []
         )
 
         XCTAssertEqual(items.map(\.title), ["alpha", "guildhall"])
@@ -82,7 +82,7 @@ final class PaletteItemAssemblerTests: XCTestCase {
             sessions: [entry],
             workspaces: [id: [workspace]],
             workspaceStatus: [:],
-            actions: []
+            commands: []
         )
 
         XCTAssertEqual(items[1].status, .none)
@@ -98,7 +98,7 @@ final class PaletteItemAssemblerTests: XCTestCase {
             sessions: [entry1, entry2],
             workspaces: [id1: [w1], id2: [w2]],
             workspaceStatus: [:],
-            actions: []
+            commands: []
         )
 
         XCTAssertEqual(items.map(\.title), ["alpha", "one", "beta", "two"])
@@ -126,31 +126,39 @@ final class PaletteItemAssemblerTests: XCTestCase {
 
     func test_assemble_actionsAppearLast_asActionCategory() {
         let (_, entry) = session("alpha")
-        let action = PaletteAction(id: "toggleSidebar", title: "Toggle Sidebar")
-
         let items = PaletteItemAssembler.assemble(
             sessions: [entry],
             workspaces: [:],
             workspaceStatus: [:],
-            actions: [action]
+            commands: [.toggleSidebar, .splitPaneRight]
         )
 
-        XCTAssertEqual(items.map(\.title), ["alpha", "Toggle Sidebar"])
+        XCTAssertEqual(items.map(\.title), ["alpha", "Toggle Sidebar", "Split Pane Right"])
         XCTAssertEqual(items[1].category, .action)
-        XCTAssertEqual(items[1].kind, .action(id: "toggleSidebar"))
+        XCTAssertEqual(items[1].kind, .command(.toggleSidebar))
         XCTAssertEqual(items[1].status, .none)
+        XCTAssertEqual(items[2].kind, .command(.splitPaneRight))
+    }
+
+    func test_assemble_commandRowIDs_keepTheLegacyActionPrefix() {
+        let items = PaletteItemAssembler.assemble(
+            sessions: [],
+            workspaces: [:],
+            workspaceStatus: [:],
+            commands: AppCommandCatalog.paletteCommands
+        )
+        XCTAssertEqual(items.map(\.id), AppCommandCatalog.paletteCommands.map { "action:\($0.stableID)" })
+        XCTAssertEqual(items.first?.id, "action:newSession")
     }
 
     func test_assemble_itemIDs_areUniqueAcrossCategories() {
         let (id, entry) = session("alpha")
         let workspace = Workspace(id: "w1", label: "guildhall", focused: false)
-        let action = PaletteAction(id: "toggleSidebar", title: "Toggle Sidebar")
-
         let items = PaletteItemAssembler.assemble(
             sessions: [entry],
             workspaces: [id: [workspace]],
             workspaceStatus: [:],
-            actions: [action]
+            commands: [.toggleSidebar]
         )
 
         XCTAssertEqual(Set(items.map(\.id)).count, items.count)

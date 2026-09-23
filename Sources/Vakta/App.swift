@@ -79,6 +79,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// host is kept typed (not just `panel.contentView`) so its `rootView`'s
     /// theme colors can be refreshed on reuse -- see `showSessionSwitcher`.
     private var switcherPanel: SessionSwitcherPanel?
+    /// The which-key overlay for leader sequences (see `LeaderHintOverlay`).
+    private var leaderOverlay: LeaderHintOverlay?
+    private var leaderBeginObserver: AnyCancellable?
     private var switcherHostView: NSHostingView<SessionSwitcherView>?
     private let switcherModel = SessionSwitcherModel()
     /// Sessions whose workspaces were queried for the currently-open palette
@@ -182,32 +185,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             sessionStore.hostContainer.select(id)
         }
 
-        keybindingMatcher.install { [weak self] action in
-            guard let self else { return }
-            switch action {
-            case .selectSession(let index): self.sessionStore.selectSession(at: index)
-            case .toggleSidebar: self.sidebarSettings.toggleCollapsed()
-            case .openPreferences: self.preferencesController.show()
-            case .openSessionSwitcher: self.showSessionSwitcher()
-            case .quit: NSApp.terminate(nil)
-            // Dispatched down the real first-responder chain rather than
-            // called directly: `AppTerminalView` (GhosttyTerminal) already
-            // overrides `copy(_:)`/`paste(_:)` as NSResponder actions, and a
-            // focused text field's own field editor implements all three
-            // natively -- one dispatch serves both without a seam.
-            case .copy: NSApp.sendAction(#selector(NSText.copy(_:)), to: nil, from: nil)
-            case .paste: NSApp.sendAction(#selector(NSText.paste(_:)), to: nil, from: nil)
-            case .cut: NSApp.sendAction(#selector(NSText.cut(_:)), to: nil, from: nil)
-            case .selectAll: NSApp.sendAction(#selector(NSText.selectAll(_:)), to: nil, from: nil)
-            // Closes whichever window is actually key (main window or
-            // Preferences), same as clicking its red button.
-            case .closeWindow: NSApp.sendAction(#selector(NSWindow.performClose(_:)), to: nil, from: nil)
-            case .increaseFontSize: self.sessionStore.performBindingActionOnSelectedSession("increase_font_size:1")
-            case .decreaseFontSize: self.sessionStore.performBindingActionOnSelectedSession("decrease_font_size:1")
-            case .resetFontSize: self.sessionStore.performBindingActionOnSelectedSession("reset_font_size")
-            case .nextUnreadSession: self.sessionStore.goToNextUnreadSession()
-            }
+        keybindingMatcher.commandContextProvider = { [weak self] in
+            self?.currentCommandContext() ?? CommandContext(supportsSelectedSessionActions: false)
         }
+        keybindingMatcher.install { [weak self] command in
+            self?.perform(command)
+        }
+        let overlay = LeaderHintOverlay(
+            matcher: keybindingMatcher,
+            contextProvider: { [weak self] in
+                self?.currentCommandContext() ?? CommandContext(supportsSelectedSessionActions: false)
+            },
+            themeProvider: { [weak self] in
+                let background = self?.sessionStore.terminalBackgroundColor ?? .windowBackgroundColor
+                return LeaderHintTheme(
+                    background: Color(nsColor: background),
+                    accent: Color(nsColor: self?.sessionStore.terminalAccentColor ?? .controlAccentColor),
+                    isDark: background.isDark
+                )
+            },
+            parentWindowProvider: { [weak self] in self?.window },
+            // Redraw when a workspace fetch lands. Hopped to the next main
+            // turn: `@Published` emits in willSet, and the redraw rereads
+            // the store through `currentCommandContext()`.
+            contentChanged: sessionStore.$workspaces
+                .map { _ in () }
+                .receive(on: DispatchQueue.main)
+                .eraseToAnyPublisher()
+        )
+        overlay.start()
+        leaderOverlay = overlay
+        leaderBeginObserver = keybindingMatcher.$leaderPath
+            .map { $0 != nil }
+            .removeDuplicates()
+            .filter { $0 }
+            .sink { [weak self] _ in self?.refreshWorkspacesForLeader() }
 
         // Installed after `keybindingMatcher`'s own monitor: both watch
         // `.keyDown`, and this one must never fire for a key an app
@@ -291,6 +303,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_: NSApplication) -> Bool {
         true
+    }
+
+    func applicationDidResignActive(_: Notification) {
+        // A leader sequence left pending while switching away would silently
+        // swallow the first keys typed on return.
+        guard stores != nil else { return }
+        keybindingMatcher.cancelLeader()
     }
 
     func applicationDidBecomeActive(_: Notification) {
@@ -808,52 +827,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         showSessionSwitcher()
     }
 
-    /// The palette's static, always-available actions -- resolved to a call
-    /// below in `performPaletteAction`, not carried on the item itself.
-    private static let paletteActions: [PaletteAction] = [
-        PaletteAction(id: "newSession", title: "New Session"),
-        PaletteAction(id: "toggleSidebar", title: "Toggle Sidebar"),
-        PaletteAction(id: "toggleFileSidebar", title: "Toggle File Sidebar"),
-        PaletteAction(id: "openPreferences", title: "Open Preferences"),
-        PaletteAction(id: "openInEditor", title: "Open in Editor"),
-        PaletteAction(id: "splitPaneRight", title: "Split Pane Right"),
-        PaletteAction(id: "splitPaneDown", title: "Split Pane Down"),
-        PaletteAction(id: "zoomPane", title: "Zoom Pane"),
-        PaletteAction(id: "closePane", title: "Close Pane"),
-        PaletteAction(id: "renamePane", title: "Rename Pane…"),
-        PaletteAction(id: "closeWorkspace", title: "Close Workspace"),
-        PaletteAction(id: "newWorkspace", title: "New Workspace"),
-        PaletteAction(id: "stopSession", title: "Stop Session"),
-        PaletteAction(id: "editHerdrConfig", title: "Edit Herdr Config…"),
-        PaletteAction(id: "reloadHerdrConfig", title: "Reload Herdr Config"),
-        PaletteAction(id: "increaseFontSize", title: "Increase Font Size"),
-        PaletteAction(id: "decreaseFontSize", title: "Decrease Font Size"),
-        PaletteAction(id: "resetFontSize", title: "Reset Font Size")
-    ]
-
     /// Mirrors `SidebarView.supportsWorkspaces` -- whether querying
     /// `session`'s workspaces makes sense at all.
     private static func supportsWorkspaces(_ session: Session) -> Bool {
         LaunchTargetResolver.supportsWorkspaces(session.profile, sessionName: session.sessionName)
     }
 
-    /// The ⌘K action ids that mutate a multiplexer layout (see
-    /// `MultiplexerAction`). They only make sense for a session whose backend
-    /// vends them, so they are filtered from the palette by
-    /// `LaunchTargetResolver.supportsActions` -- the sidebar's equivalent menu
-    /// already only exists on workspace rows, which require `supportsWorkspaces`.
-    private static let multiplexerActionIDs: Set<String> = [
-        "splitPaneRight", "splitPaneDown", "zoomPane", "closePane", "renamePane",
-        "closeWorkspace", "newWorkspace", "stopSession",
-    ]
-
-    /// Whether the selected session's backend can perform the mutating
-    /// multiplexer actions -- the ⌘K capability gate for `multiplexerActionIDs`.
-    private func selectedSessionSupportsActions() -> Bool {
+    /// The live snapshot `CommandAvailability` decides against: whether the
+    /// selected session's backend can perform the mutating multiplexer
+    /// commands, and which sessions `selectSession(i)` can reach.
+    private func currentCommandContext() -> CommandContext {
+        let sessionTitles = sessionStore.sessions.map(\.displayTitle)
         guard let id = sessionStore.selectedID,
               let session = sessionStore.sessions.first(where: { $0.id == id })
-        else { return false }
-        return LaunchTargetResolver.supportsActions(session.profile, sessionName: session.sessionName)
+        else { return CommandContext(supportsSelectedSessionActions: false, sessionTitles: sessionTitles) }
+        let workspaces = Self.supportsWorkspaces(session) ? sessionStore.workspaces[id] ?? [] : []
+        return CommandContext(
+            supportsSelectedSessionActions: LaunchTargetResolver.supportsActions(session.profile, sessionName: session.sessionName),
+            sessionTitles: sessionTitles,
+            workspaceTitles: workspaces.map(\.label),
+            focusedWorkspaceIndex: workspaces.firstIndex(where: \.focused)
+        )
+    }
+
+    /// Starting a leader sequence refreshes the selected session's workspace
+    /// cache, so `TAB` lists current names (the cache otherwise only fills
+    /// on sidebar disclosure or ⌘K).
+    private func refreshWorkspacesForLeader() {
+        guard let id = sessionStore.selectedID,
+              let session = sessionStore.sessions.first(where: { $0.id == id }),
+              Self.supportsWorkspaces(session)
+        else { return }
+        sessionStore.fetchWorkspaces(for: id)
     }
 
     /// Opens (or refocuses) the command palette: sessions, workspaces, and
@@ -864,18 +869,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let sessions = sessionStore.sessions.map {
             PaletteItemAssembler.SessionEntry(id: $0.id, title: $0.displayTitle, status: sessionStore.agentStatus[$0.id] ?? .none)
         }
-        // Filter the mutating multiplexer actions out unless the selected
-        // session's backend supports them -- the ⌘K equivalent of the sidebar
-        // menu living only on workspace rows.
-        let actionsSupported = selectedSessionSupportsActions()
-        let actions = Self.paletteActions.filter { action in
-            actionsSupported || !Self.multiplexerActionIDs.contains(action.id)
+        // Hide commands the selected session can't act on -- the ⌘K
+        // equivalent of the sidebar menu living only on workspace rows.
+        let context = currentCommandContext()
+        let commands = AppCommandCatalog.paletteCommands.filter {
+            CommandAvailability.isAvailable($0, in: context)
         }
         let items = PaletteItemAssembler.assemble(
             sessions: sessions,
             workspaces: [:],
             workspaceStatus: sessionStore.paneStatusByWorkspaceID,
-            actions: actions
+            commands: commands
         )
         let generation = switcherModel.reset(items: items)
         switcherModel.onNavigation = nil
@@ -1051,7 +1055,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             sessions: [entry],
             workspaces: [sessionID: workspaces],
             workspaceStatus: sessionStore.paneStatusByWorkspaceID,
-            actions: []
+            commands: []
         ).filter { $0.category == .workspace }
     }
 
@@ -1082,36 +1086,62 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .focusPane(let sessionID, let workspaceID, let paneID):
             sessionStore.focusPane(paneID, workspaceID: workspaceID, in: sessionID)
             activateSession(sessionID)
-        case .action(let id):
-            performPaletteAction(id)
+        case .command(let command):
+            perform(command)
         }
     }
 
-    /// Resolves a palette action row (see `paletteActions`) to the same call
-    /// its menu-item/shortcut equivalent makes -- independent of whether
-    /// that chord is currently bound to anything.
-    private func performPaletteAction(_ id: String) {
-        switch id {
-        case "newSession": sessionStore.createSession()
-        case "toggleSidebar": toggleSidebar()
-        case "toggleFileSidebar": fileSidebarPreferences.isVisible.toggle()
-        case "openPreferences": showPreferences()
-        case "openInEditor": openInEditor()
-        case "splitPaneRight": performWorkspacePaneAction { .splitPane(paneID: $0, direction: .right) }
-        case "splitPaneDown": performWorkspacePaneAction { .splitPane(paneID: $0, direction: .down) }
-        case "zoomPane": performWorkspacePaneAction { .zoomPane(paneID: $0) }
-        case "closePane": performWorkspacePaneAction { .closePane(paneID: $0) }
-        case "renamePane": renameFocusedPane()
-        case "closeWorkspace": performFocusedWorkspaceAction { .closeWorkspace(workspaceID: $0) }
-        case "newWorkspace":
+    /// The one dispatcher for every `AppCommand`, whether it came from a
+    /// chord (`keybindingMatcher`) or a palette row. A command the current
+    /// context can't act on is a silent no-op: palette rows can outlive a
+    /// selection change, and a bound chord is consumed regardless so its
+    /// meaning never depends on which session is selected.
+    private func perform(_ command: AppCommand) {
+        guard CommandAvailability.isAvailable(command, in: currentCommandContext()) else { return }
+        switch command {
+        case .selectSession(let index): sessionStore.selectSession(at: index)
+        case .toggleSidebar: toggleSidebar()
+        case .openPreferences: showPreferences()
+        case .openSessionSwitcher: showSessionSwitcher()
+        case .quit: NSApp.terminate(nil)
+        // Dispatched down the real first-responder chain rather than
+        // called directly: `AppTerminalView` (GhosttyTerminal) already
+        // overrides `copy(_:)`/`paste(_:)` as NSResponder actions, and a
+        // focused text field's own field editor implements all three
+        // natively -- one dispatch serves both without a seam.
+        case .copy: NSApp.sendAction(#selector(NSText.copy(_:)), to: nil, from: nil)
+        case .paste: NSApp.sendAction(#selector(NSText.paste(_:)), to: nil, from: nil)
+        case .cut: NSApp.sendAction(#selector(NSText.cut(_:)), to: nil, from: nil)
+        case .selectAll: NSApp.sendAction(#selector(NSText.selectAll(_:)), to: nil, from: nil)
+        // Closes whichever window is actually key (main window or
+        // Preferences), same as clicking its red button.
+        case .closeWindow: NSApp.sendAction(#selector(NSWindow.performClose(_:)), to: nil, from: nil)
+        case .increaseFontSize: increaseFontSize()
+        case .decreaseFontSize: decreaseFontSize()
+        case .resetFontSize: resetFontSize()
+        case .nextUnreadSession: sessionStore.goToNextUnreadSession()
+        case .newSession: sessionStore.createSession()
+        case .toggleFileSidebar: fileSidebarPreferences.isVisible.toggle()
+        case .openInEditor: openInEditor()
+        case .splitPaneRight: performWorkspacePaneAction { .splitPane(paneID: $0, direction: .right) }
+        case .splitPaneDown: performWorkspacePaneAction { .splitPane(paneID: $0, direction: .down) }
+        case .zoomPane: performWorkspacePaneAction { .zoomPane(paneID: $0) }
+        case .closePane: performWorkspacePaneAction { .closePane(paneID: $0) }
+        case .renamePane: renameFocusedPane()
+        case .closeWorkspace: performFocusedWorkspaceAction { .closeWorkspace(workspaceID: $0) }
+        case .newWorkspace:
             if let id = sessionStore.selectedID { sessionStore.performAction(.createWorkspace(label: nil), in: id) }
-        case "stopSession": confirmStopSelectedSession()
-        case "editHerdrConfig": preferencesController.show(section: .herdr)
-        case "reloadHerdrConfig": reloadHerdrConfig()
-        case "increaseFontSize": increaseFontSize()
-        case "decreaseFontSize": decreaseFontSize()
-        case "resetFontSize": resetFontSize()
-        default: break
+        case .stopSession: confirmStopSelectedSession()
+        case .editHerdrConfig: preferencesController.show(section: .herdr)
+        case .reloadHerdrConfig: reloadHerdrConfig()
+        case .focusWorkspace(let index):
+            // Resolved against the same cached list the availability check
+            // (and the which-key row) used.
+            guard let id = sessionStore.selectedID,
+                  let workspaces = sessionStore.workspaces[id],
+                  workspaces.indices.contains(index)
+            else { return }
+            sessionStore.focusWorkspace(workspaces[index].id, in: id)
         }
     }
 

@@ -87,7 +87,7 @@ enum KeybindingStartupPlanner {
     private static func addDefaultIfFree(
         _ bindings: inout [Keybinding],
         chord keyCode: UInt16,
-        action: KeybindingAction
+        action: AppCommand
     ) {
         let actionBound = bindings.contains { $0.action == action }
         let chordTaken = bindings.contains { $0.modifierMask == [.command] && $0.keyCode == keyCode }
