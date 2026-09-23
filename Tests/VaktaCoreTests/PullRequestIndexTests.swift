@@ -93,6 +93,32 @@ final class PullRequestIndexTests: XCTestCase {
         XCTAssertTrue(try index(json, limit: 3).isComplete)
     }
 
+    // MARK: check details (roux `check_details` fallbacks)
+
+    func test_parse_checkDetails_nameURLAndStatePerRow() throws {
+        let json = #"""
+        [{"headRefName":"b","headRepositoryOwner":{"login":"o"},"number":1,"url":"u","statusCheckRollup":[
+          {"name":"build","workflowName":"CI","status":"COMPLETED","conclusion":"FAILURE","detailsUrl":"https://ci/1"},
+          {"context":"deploy","state":"SUCCESS","targetUrl":"https://deploy/2"},
+          {"workflowName":"Nightly","status":"IN_PROGRESS"},
+          {"name":"  ","context":"","status":"COMPLETED","conclusion":"SKIPPED","detailsUrl":" "}
+        ]}]
+        """#
+
+        let checks = try XCTUnwrap(try index(json).pullRequests.first).checkRuns
+        XCTAssertEqual(checks, [
+            PullRequestCheck(name: "build", state: .failing, url: "https://ci/1"),
+            PullRequestCheck(name: "deploy", state: .passing, url: "https://deploy/2"),
+            PullRequestCheck(name: "Nightly", state: .pending, url: nil),
+            PullRequestCheck(name: "Unnamed check", state: .passing, url: nil),
+        ])
+    }
+
+    func test_parse_noRollup_hasNoCheckRuns() throws {
+        let json = #"[{"headRefName":"b","headRepositoryOwner":{"login":"o"},"number":1,"url":"u"}]"#
+        XCTAssertEqual(try index(json).pullRequests.first?.checkRuns, [])
+    }
+
     // MARK: matching
 
     func test_pullRequest_matchesBranchAndHeadOwner() throws {

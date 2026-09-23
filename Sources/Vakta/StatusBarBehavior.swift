@@ -29,6 +29,9 @@ struct StatusBarAutoHideState: Equatable {
     var hideAt: Date?
     /// A peek keeps the bar revealed until this time.
     var peekUntil: Date?
+    /// Something attached to the bar (the checks popover) is open; the bar
+    /// stays revealed whatever the pointer does.
+    var isHeld = false
 }
 
 enum StatusBarAutoHide {
@@ -73,6 +76,19 @@ enum StatusBarAutoHide {
         return next
     }
 
+    /// The checks popover opened or closed. It's a separate window, so the
+    /// pointer leaving the hover strip for it must not hide the bar; once
+    /// released, the normal hide delay applies unless the pointer is back
+    /// over the bar. Holding never reveals a hidden bar.
+    static func setHeld(_ state: StatusBarAutoHideState, _ held: Bool, at date: Date) -> StatusBarAutoHideState {
+        var next = state
+        next.isHeld = held && state.isRevealed
+        if !held, state.isRevealed, !state.isPointerInside {
+            next.hideAt = date.addingTimeInterval(hideDelay)
+        }
+        return next
+    }
+
     static func tick(_ state: StatusBarAutoHideState, at date: Date) -> StatusBarAutoHideState {
         var next = state
         // Compared against the same deadline `nextDeadline` reports, not a
@@ -82,7 +98,7 @@ enum StatusBarAutoHide {
             next.isRevealed = true
             next.dwellStartedAt = nil
         }
-        if next.isRevealed, !next.isPointerInside,
+        if next.isRevealed, !next.isPointerInside, !next.isHeld,
            (next.hideAt.map { $0 <= date } ?? true),
            (next.peekUntil.map { $0 <= date } ?? true) {
             next.isRevealed = false
@@ -95,7 +111,7 @@ enum StatusBarAutoHide {
     /// When `tick` next has something to decide; nil when nothing is pending.
     static func nextDeadline(_ state: StatusBarAutoHideState) -> Date? {
         if let started = state.dwellStartedAt { return started.addingTimeInterval(dwell) }
-        guard state.isRevealed, !state.isPointerInside else { return nil }
+        guard state.isRevealed, !state.isPointerInside, !state.isHeld else { return nil }
         return [state.hideAt, state.peekUntil].compactMap { $0 }.max()
     }
 }

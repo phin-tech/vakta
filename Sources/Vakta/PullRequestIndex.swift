@@ -29,11 +29,50 @@ enum PullRequestReview: Equatable {
 }
 
 /// One row of gh's `statusCheckRollup`. gh mixes two shapes: workflow check
-/// runs (`status` + `conclusion`) and commit-status contexts (`state`).
+/// runs (`name`, `status` + `conclusion`, `detailsUrl`) and commit-status
+/// contexts (`context`, `state`, `targetUrl`).
 struct PullRequestCheckRow: Equatable {
     var status: String?
     var conclusion: String?
     var state: String?
+    var name: String? = nil
+    var context: String? = nil
+    var workflowName: String? = nil
+    var detailsURL: String? = nil
+    var targetURL: String? = nil
+}
+
+/// One check as the status bar's list shows it.
+struct PullRequestCheck: Equatable {
+    enum State: Equatable {
+        case passing
+        case failing
+        case pending
+    }
+
+    let name: String
+    let state: State
+    let url: String?
+
+    /// roux's `check_details` fallbacks: the first non-blank of `name`,
+    /// `context`, `workflowName`; of `detailsUrl`, `targetUrl`.
+    init(row: PullRequestCheckRow) {
+        name = Self.firstNonBlank(row.name, row.context, row.workflowName) ?? "Unnamed check"
+        state = PullRequestChecks.state(of: row)
+        url = Self.firstNonBlank(row.detailsURL, row.targetURL)
+    }
+
+    init(name: String, state: State, url: String?) {
+        self.name = name
+        self.state = state
+        self.url = url
+    }
+
+    private static func firstNonBlank(_ values: String?...) -> String? {
+        values.lazy
+            .compactMap { $0?.trimmingCharacters(in: .whitespaces) }
+            .first { !$0.isEmpty }
+    }
 }
 
 struct PullRequestChecks: Equatable {
@@ -62,7 +101,7 @@ struct PullRequestChecks: Equatable {
     static func summarize(_ rows: [PullRequestCheckRow]) -> PullRequestChecks {
         var checks = PullRequestChecks(passing: 0, failing: 0, pending: 0)
         for row in rows {
-            switch classify(row) {
+            switch state(of: row) {
             case .passing: checks.passing += 1
             case .failing: checks.failing += 1
             case .pending: checks.pending += 1
@@ -71,11 +110,9 @@ struct PullRequestChecks: Equatable {
         return checks
     }
 
-    private enum RowClass { case passing, failing, pending }
-
     /// Unknown values count as pending -- better to under-promise than to
     /// flash green while a check is still running.
-    private static func classify(_ row: PullRequestCheckRow) -> RowClass {
+    static func state(of row: PullRequestCheckRow) -> PullRequestCheck.State {
         if let status = row.status {
             // A check run is settled only once COMPLETED; before that its
             // conclusion is empty.
@@ -105,6 +142,8 @@ struct PullRequestStatus: Equatable {
     let headOwner: String
     let checks: PullRequestChecks
     let review: PullRequestReview?
+    /// Every check, in gh's order (see `PullRequestCheck`).
+    var checkRuns: [PullRequestCheck] = []
 }
 
 struct PullRequestIndex: Equatable {
@@ -143,6 +182,19 @@ struct PullRequestIndex: Equatable {
             let status: String?
             let conclusion: String?
             let state: String?
+            let name: String?
+            let context: String?
+            let workflowName: String?
+            let detailsUrl: String?
+            let targetUrl: String?
+
+            var row: PullRequestCheckRow {
+                PullRequestCheckRow(
+                    status: status, conclusion: conclusion, state: state,
+                    name: name, context: context, workflowName: workflowName,
+                    detailsURL: detailsUrl, targetURL: targetUrl
+                )
+            }
         }
 
         let number: Int
@@ -155,17 +207,17 @@ struct PullRequestIndex: Equatable {
         let reviewDecision: String?
 
         var status: PullRequestStatus {
-            PullRequestStatus(
+            let rows = (statusCheckRollup ?? []).map(\.row)
+            return PullRequestStatus(
                 number: number,
                 url: url,
                 title: title ?? "",
                 isDraft: isDraft ?? false,
                 headBranch: headRefName,
                 headOwner: headRepositoryOwner.login,
-                checks: .summarize((statusCheckRollup ?? []).map {
-                    PullRequestCheckRow(status: $0.status, conclusion: $0.conclusion, state: $0.state)
-                }),
-                review: PullRequestReview(gitHubDecision: reviewDecision)
+                checks: .summarize(rows),
+                review: PullRequestReview(gitHubDecision: reviewDecision),
+                checkRuns: rows.map(PullRequestCheck.init(row:))
             )
         }
     }

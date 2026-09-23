@@ -87,6 +87,26 @@ final class StatusBarTests: XCTestCase {
         ))
     }
 
+    func test_content_checksAreOrderedFailingPendingPassingThenByName() {
+        var withChecks = pr(checks: PullRequestChecks(passing: 2, failing: 1, pending: 1))
+        withChecks.checkRuns = [
+            PullRequestCheck(name: "zeta", state: .passing, url: nil),
+            PullRequestCheck(name: "Lint", state: .pending, url: nil),
+            PullRequestCheck(name: "alpha", state: .passing, url: nil),
+            PullRequestCheck(name: "build", state: .failing, url: "https://ci/1"),
+        ]
+
+        let pullRequest = try? XCTUnwrap(StatusBarPresentation.content(focused: focused(withChecks), workspaceSummaries: [:]).pullRequest)
+
+        XCTAssertEqual(pullRequest?.checks.map(\.name), ["build", "Lint", "alpha", "zeta"])
+        XCTAssertEqual(pullRequest?.checksLabel, "2/4")
+    }
+
+    func test_checksLabel_hiddenWithoutChecks() {
+        let pullRequest = StatusBarPresentation.content(focused: focused(pr()), workspaceSummaries: [:]).pullRequest
+        XCTAssertNil(pullRequest?.checksLabel)
+    }
+
     func test_glyph_worstOfChecksAndReview() {
         let failing = PullRequestChecks(passing: 1, failing: 1, pending: 0)
         let pending = PullRequestChecks(passing: 1, failing: 0, pending: 1)

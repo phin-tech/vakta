@@ -121,6 +121,14 @@ struct StatusBarPullRequest: Equatable {
     let title: String
     let isDraft: Bool
     let glyph: StatusBarGlyph
+    /// Every check for the hover list: failing, pending, passing, then by name.
+    var checks: [PullRequestCheck] = []
+    var checkCounts = PullRequestChecks(passing: 0, failing: 0, pending: 0)
+
+    /// `passing/total` next to the glyph; nil when the PR has no checks.
+    var checksLabel: String? {
+        checkCounts.total > 0 ? "\(checkCounts.passing)/\(checkCounts.total)" : nil
+    }
 }
 
 struct StatusBarContent: Equatable {
@@ -151,11 +159,29 @@ enum StatusBarPresentation {
                     url: pullRequest.url,
                     title: pullRequest.title,
                     isDraft: pullRequest.isDraft,
-                    glyph: glyph(for: pullRequest)
+                    glyph: glyph(for: pullRequest),
+                    checks: orderedForList(pullRequest.checkRuns),
+                    checkCounts: pullRequest.checks
                 )
             },
             attentionElsewhere: max(0, total - (focusedNeedsAttention ? 1 : 0))
         )
+    }
+
+    /// Failing first, then pending, then passing; alphabetical within each.
+    static func orderedForList(_ checks: [PullRequestCheck]) -> [PullRequestCheck] {
+        func rank(_ state: PullRequestCheck.State) -> Int {
+            switch state {
+            case .failing: return 0
+            case .pending: return 1
+            case .passing: return 2
+            }
+        }
+        return checks.sorted {
+            rank($0.state) != rank($1.state)
+                ? rank($0.state) < rank($1.state)
+                : $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+        }
     }
 
     /// Worst first: failing checks, changes requested, pending checks, then

@@ -90,6 +90,36 @@ final class StatusBarBehaviorTests: XCTestCase {
         XCTAssertFalse(state.isRevealed)
     }
 
+    // MARK: hold (the checks popover is open)
+
+    func test_hold_keepsTheBarRevealedAfterThePointerLeaves_untilReleased() {
+        var state = ticked(moved(StatusBarAutoHideState(), .hotZone, 0), 0.3)
+        state = StatusBarAutoHide.setHeld(state, true, at: at(1))
+        state = moved(state, .outside, 1.1)
+        state = ticked(state, 30)
+        XCTAssertTrue(state.isRevealed, "the popover window is outside the hover strip")
+        XCTAssertNil(StatusBarAutoHide.nextDeadline(state))
+
+        state = StatusBarAutoHide.setHeld(state, false, at: at(30))
+        XCTAssertEqual(StatusBarAutoHide.nextDeadline(state), at(30 + StatusBarAutoHide.hideDelay))
+        state = ticked(state, 30 + StatusBarAutoHide.hideDelay)
+        XCTAssertFalse(state.isRevealed)
+    }
+
+    func test_releaseWhilePointerIsOverTheBar_staysRevealed() {
+        var state = ticked(moved(StatusBarAutoHideState(), .hotZone, 0), 0.3)
+        state = StatusBarAutoHide.setHeld(state, true, at: at(1))
+        state = moved(state, .bar, 2)
+        state = StatusBarAutoHide.setHeld(state, false, at: at(3))
+        state = ticked(state, 10)
+        XCTAssertTrue(state.isRevealed)
+    }
+
+    func test_hold_neverRevealsAHiddenBar() {
+        let state = ticked(StatusBarAutoHide.setHeld(StatusBarAutoHideState(), true, at: at(0)), 5)
+        XCTAssertFalse(state.isRevealed)
+    }
+
     // MARK: summon ("Show Status Bar Briefly")
 
     func test_summon_revealsForTheSummonDuration() {

@@ -343,6 +343,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let url = URL(string: url) else { return }
             NSWorkspace.shared.open(url)
         }
+        statusBarModel.checksPopoverChanged = { [weak self] open in
+            guard let self else { return }
+            self.statusBarAutoHideState = StatusBarAutoHide.setHeld(self.statusBarAutoHideState, open, at: Date())
+            self.updateStatusBarAutoHide()
+        }
         statusBarVisibilityObserver = statusBarPreferences.$visibility.sink { [weak self] visibility in
             self?.sessionStore.isPullRequestStatusEnabled = visibility.needsPullRequestStatus
         }
