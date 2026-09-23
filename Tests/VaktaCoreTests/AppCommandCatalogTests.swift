@@ -33,10 +33,16 @@ final class AppCommandCatalogTests: XCTestCase {
         ("resetFontSize", "Reset Font Size"),
     ]
 
-    func test_paletteCommands_matchTheLegacyStaticRows_inOrder_withSameIDsAndTitles() {
-        let rows = AppCommandCatalog.paletteCommands.map { (id: $0.stableID, title: $0.title) }
+    func test_paletteCommands_startWithTheLegacyStaticRows_inOrder_withSameIDsAndTitles() {
+        let rows = AppCommandCatalog.paletteCommands.prefix(legacyPaletteRows.count).map { (id: $0.stableID, title: $0.title) }
         XCTAssertEqual(rows.map(\.id), legacyPaletteRows.map(\.id))
         XCTAssertEqual(rows.map(\.title), legacyPaletteRows.map(\.title))
+    }
+
+    func test_paletteCommands_endWithTheOnboardingRows() {
+        let rows = AppCommandCatalog.paletteCommands.dropFirst(legacyPaletteRows.count).map { (id: $0.stableID, title: $0.title) }
+        XCTAssertEqual(rows.map(\.id), ["showWelcomeTour", "showWhatsNew"])
+        XCTAssertEqual(rows.map(\.title), ["Show Welcome Tour", "What's New in Vakta"])
     }
 
     func test_chordOnlyCommands_keepTheirExistingTitles() {
@@ -67,6 +73,7 @@ final class AppCommandCatalogTests: XCTestCase {
             .splitPaneRight, .splitPaneDown, .zoomPane, .closePane, .renamePane,
             .closeWorkspace, .newWorkspace, .stopSession,
             .editHerdrConfig, .reloadHerdrConfig,
+            .showWelcomeTour, .showWhatsNew,
         ]
         let bindable = AppCommandCatalog.bindableCommands
 
@@ -133,7 +140,7 @@ final class CommandAvailabilityTests: XCTestCase {
         let context = CommandContext(supportsSelectedSessionActions: false)
         let visible = AppCommandCatalog.paletteCommands.filter { CommandAvailability.isAvailable($0, in: context) }
         XCTAssertEqual(visible, otherPaletteCommands)
-        XCTAssertEqual(visible.count, 10)
+        XCTAssertEqual(visible.count, 12)
     }
 
     func test_selectSession_availableOnlyWhenASessionExistsAtThatIndex() {

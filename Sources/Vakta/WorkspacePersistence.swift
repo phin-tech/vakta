@@ -57,6 +57,41 @@ enum SessionRecordBuilder {
     }
 }
 
+/// The workspace to save from the live sessions. Pure extraction of
+/// `SessionStore.saveWorkspace`: transient sessions (the tour's installer)
+/// are never persisted -- a restart must not rerun an install or report an
+/// unknown profile -- and a transient selection isn't recorded. Records
+/// unresolved at the last restore follow the live ones.
+enum WorkspacePayloadBuilder {
+    struct LiveSession {
+        var profileID: Profile.ID
+        var sessionName: String
+        var customName: String?
+        var workingDirectory: String?
+        var isTransient: Bool
+    }
+
+    static func payload(
+        sessions: [LiveSession],
+        selectedSessionName: String?,
+        unresolvedRecords: [SessionRecord],
+        profiles: [Profile]
+    ) -> WorkspacePayload {
+        let persisted = sessions.filter { !$0.isTransient }
+        let records = persisted.map {
+            SessionRecordBuilder.record(
+                profileID: $0.profileID,
+                sessionName: $0.sessionName,
+                customName: $0.customName,
+                workingDirectory: $0.workingDirectory,
+                profiles: profiles
+            )
+        }
+        let selection = persisted.contains { $0.sessionName == selectedSessionName } ? selectedSessionName : nil
+        return WorkspacePayload(records: records + unresolvedRecords, selectedSessionName: selection)
+    }
+}
+
 /// The on-disk shape: the open-session records plus which one was selected.
 /// A file written before `selectedSessionName` existed is a bare
 /// `[SessionRecord]` array.

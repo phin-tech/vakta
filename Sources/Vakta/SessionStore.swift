@@ -226,7 +226,7 @@ final class SessionStore: ObservableObject {
     /// `finishLaunch`. Sessions created before it lands (the restored
     /// workspace, or one the user manually creates in that window) use the
     /// fallback; there is no retroactive fixup for already-spawned children.
-    private var resolvedPATH: String
+    private(set) var resolvedPATH: String
 
     private let root: URL
 
@@ -692,15 +692,17 @@ final class SessionStore: ObservableObject {
         profile: Profile? = nil,
         sessionName: String? = nil,
         customName: String? = nil,
-        workingDirectory: String? = nil
+        workingDirectory: String? = nil,
+        isTransient: Bool = false
     ) -> Session {
         var profile = profile ?? defaultProfile
         if let workingDirectory {
             profile.workingDirectory = workingDirectory
         }
-        if let commandOverride, !commandOverride.isEmpty {
+        if !isTransient, let commandOverride, !commandOverride.isEmpty {
             // Smoke-test override: bypass the multiplexer entirely (no args,
-            // no scrub prefix).
+            // no scrub prefix). A transient session's command is its whole
+            // purpose, so it is never overridden.
             profile.command = commandOverride
             profile.arguments = ""
             profile.scrubbedEnvironmentKeys = []
@@ -720,7 +722,8 @@ final class SessionStore: ObservableObject {
             controller: controller,
             profile: profile,
             sessionName: sessionName ?? Session.makeSessionName(),
-            customName: customName
+            customName: customName,
+            isTransient: isTransient
         )
 
         // `terminalDidClose` (-> `onClose`) is the wrapper's surfacing of
@@ -833,13 +836,13 @@ final class SessionStore: ObservableObject {
     /// rename), so the next launch reopens and re-attaches to them.
     private func saveWorkspace() {
         guard !isRestoringWorkspace else { return }
-        let records = sessions.map { session in
-            SessionRecordBuilder.record(
+        let live = sessions.map { session in
+            WorkspacePayloadBuilder.LiveSession(
                 profileID: session.profile.id,
                 sessionName: session.sessionName,
                 customName: session.customName,
                 workingDirectory: session.profile.workingDirectory,
-                profiles: profiles
+                isTransient: session.isTransient
             )
         }
         // Records whose profile was missing at the last restore aren't in
@@ -849,7 +852,12 @@ final class SessionStore: ObservableObject {
         // for good instead of preserving them for a future recovery choice.
         let selectedSessionName = sessions.first { $0.id == selectedID }?.sessionName
         WorkspacePersistence.save(
-            WorkspacePayload(records: records + unresolvedWorkspaceRecords, selectedSessionName: selectedSessionName),
+            WorkspacePayloadBuilder.payload(
+                sessions: live,
+                selectedSessionName: selectedSessionName,
+                unresolvedRecords: unresolvedWorkspaceRecords,
+                profiles: profiles
+            ),
             root: root
         )
     }

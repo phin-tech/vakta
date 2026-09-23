@@ -84,6 +84,10 @@ enum AppCommand: Hashable, Codable {
     /// Focus the selected session's workspace (herdr workspace / tmux window)
     /// at this 0-based position in its workspace list.
     case focusWorkspace(Int)
+    /// Reopen the first-launch welcome tour.
+    case showWelcomeTour
+    /// Show every release note up to the running version.
+    case showWhatsNew
 
     /// The one label shared by the palette, Preferences and (later)
     /// which-key.
@@ -117,6 +121,8 @@ enum AppCommand: Hashable, Codable {
         case .editHerdrConfig: return "Edit Herdr Config…"
         case .reloadHerdrConfig: return "Reload Herdr Config"
         case .focusWorkspace(let index): return "Focus Workspace \(index + 1)"
+        case .showWelcomeTour: return "Show Welcome Tour"
+        case .showWhatsNew: return "What's New in Vakta"
         }
     }
 
@@ -153,6 +159,8 @@ enum AppCommand: Hashable, Codable {
         case .editHerdrConfig: return "editHerdrConfig"
         case .reloadHerdrConfig: return "reloadHerdrConfig"
         case .focusWorkspace(let index): return "focusWorkspace.\(index)"
+        case .showWelcomeTour: return "showWelcomeTour"
+        case .showWhatsNew: return "showWhatsNew"
         }
     }
 
@@ -170,7 +178,8 @@ enum AppCommand: Hashable, Codable {
         case .toggleSidebar, .openPreferences, .openSessionSwitcher, .quit,
              .copy, .paste, .cut, .selectAll, .closeWindow,
              .increaseFontSize, .decreaseFontSize, .resetFontSize, .nextUnreadSession,
-             .newSession, .toggleFileSidebar, .openInEditor, .editHerdrConfig, .reloadHerdrConfig:
+             .newSession, .toggleFileSidebar, .openInEditor, .editHerdrConfig, .reloadHerdrConfig,
+             .showWelcomeTour, .showWhatsNew:
             return .none
         }
     }
@@ -179,7 +188,8 @@ enum AppCommand: Hashable, Codable {
     var group: AppCommandGroup {
         switch self {
         case .openSessionSwitcher, .openPreferences, .toggleSidebar, .toggleFileSidebar,
-             .openInEditor, .quit, .closeWindow, .copy, .paste, .cut, .selectAll:
+             .openInEditor, .quit, .closeWindow, .copy, .paste, .cut, .selectAll,
+             .showWelcomeTour, .showWhatsNew:
             return .application
         case .selectSession, .newSession, .nextUnreadSession, .stopSession:
             return .sessions
@@ -237,6 +247,7 @@ enum AppCommandCatalog {
         .closeWorkspace, .newWorkspace, .stopSession,
         .editHerdrConfig, .reloadHerdrConfig,
         .increaseFontSize, .decreaseFontSize, .resetFontSize,
+        .showWelcomeTour, .showWhatsNew,
     ]
 
     /// Every command Preferences lets the user bind, in display order within
@@ -257,6 +268,7 @@ enum AppCommandCatalog {
         + [
             .increaseFontSize, .decreaseFontSize, .resetFontSize,
             .editHerdrConfig, .reloadHerdrConfig,
+            .showWelcomeTour, .showWhatsNew,
         ]
 }
 

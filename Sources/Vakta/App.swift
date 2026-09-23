@@ -44,6 +44,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// before that guard passes.
     private var stores: Stores!
     private lazy var preferencesController = PreferencesWindowController(stores: stores)
+    private lazy var onboardingController = OnboardingWindowController(parentWindowProvider: { [weak self] in self?.window })
+    /// The tour's herdr/tmux install step. Checks the same resolved PATH
+    /// sessions get; Install opens a transient session running the command.
+    private lazy var multiplexerSetup = MultiplexerSetupModel(
+        pathProvider: { [weak self] in self?.sessionStore.resolvedPATH ?? ShellEnvironment.fallbackPATH() },
+        install: { [weak self] tool, command in
+            guard let self else { return }
+            let profile = MultiplexerSetupPlanner.installerProfile(for: tool, installCommand: command, id: UUID())
+            self.sessionStore.createSession(profile: profile, isTransient: true)
+        }
+    )
 
     // Thin forwarders so the rest of `AppDelegate` reads each store directly.
     private var sessionStore: SessionStore { stores.sessionStore }
@@ -163,6 +174,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSApp.terminate(nil)
             return
         }
+        // Before `Stores` seeds its default files: onboarding tells a fresh
+        // install from an upgrade by whether any settings file already exists.
+        let onboarding = OnboardingLaunch.evaluate(
+            root: root,
+            currentVersion: OnboardingLaunch.bundleVersion,
+            releaseNotes: WhatsNewCatalog.releaseNotes
+        )
         stores = Stores(root: root, resolvedPATH: resolvedPATH)
 
         // Apply the saved UI-chrome appearance before the window appears, so
@@ -270,6 +288,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         fileSidebarObserver = fileSidebarPreferences.$isVisible.sink { [weak self] visible in
             self?.applyFileSidebarVisibility(visible)
         }
+
+        presentLaunchOnboarding(onboarding, root: root)
+    }
+
+    /// Shows this launch's tour or What's New over the main window, and
+    /// records it as seen once closed (quitting first shows it again).
+    private func presentLaunchOnboarding(_ presentation: OnboardingPresentation, root: URL) {
+        let acknowledge = { OnboardingLaunch.acknowledge(root: root, currentVersion: OnboardingLaunch.bundleVersion) }
+        switch presentation {
+        case .none: return
+        case .tutorial: onboardingController.show(.tutorial(tutorialSteps(), setup: multiplexerSetup), onClose: acknowledge)
+        case .whatsNew(let notes): onboardingController.show(.whatsNew(notes), onClose: acknowledge)
+        }
+    }
+
+    /// The tour with the user's current shortcuts and leader sequences.
+    private func tutorialSteps() -> [TutorialStep] {
+        TutorialContent.steps(
+            bindings: keybindingMatcher.bindings,
+            leader: keybindingMatcher.leaderSettings,
+            leaderSequences: paletteLeaderSequences()
+        )
     }
 
     /// Shows or hides the right file sidebar pane, sizing it to the persisted
@@ -632,12 +672,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         viewMenuItem.submenu = viewMenu
         mainMenu.addItem(viewMenuItem)
 
-        // A placeholder: assigning `NSApp.helpMenu` is what makes AppKit add
-        // its built-in "search menu items" field (⇧⌘/) to the menu bar, on
-        // top of whatever real content lands here later.
+        // Assigning `NSApp.helpMenu` is what makes AppKit add its built-in
+        // "search menu items" field (⇧⌘/) above these items.
         let helpMenuItem = NSMenuItem()
         let helpMenu = NSMenu(title: "Help")
-        helpMenu.addItem(withTitle: "Vakta Help", action: nil, keyEquivalent: "")
+        helpMenu.addItem(commandMenuItem("Welcome Tour", .showWelcomeTour))
+        helpMenu.addItem(commandMenuItem("What's New in Vakta", .showWhatsNew))
         helpMenuItem.submenu = helpMenu
         mainMenu.addItem(helpMenuItem)
         NSApp.helpMenu = helpMenu
@@ -1104,6 +1144,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .stopSession: confirmStopSelectedSession()
         case .editHerdrConfig: preferencesController.show(section: .herdr)
         case .reloadHerdrConfig: reloadHerdrConfig()
+        case .showWelcomeTour: onboardingController.show(.tutorial(tutorialSteps(), setup: multiplexerSetup))
+        case .showWhatsNew:
+            onboardingController.show(.whatsNew(OnboardingPlanner.releaseHistory(
+                currentVersion: OnboardingLaunch.bundleVersion, releaseNotes: WhatsNewCatalog.releaseNotes)))
         case .focusWorkspace(let index):
             // Resolved against the same cached list the availability check
             // (and the which-key row) used.

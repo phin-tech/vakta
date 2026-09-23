@@ -34,7 +34,8 @@ extension AppCommand {
              .newSession, .toggleFileSidebar, .openInEditor,
              .splitPaneRight, .splitPaneDown, .zoomPane, .closePane, .renamePane,
              .closeWorkspace, .newWorkspace, .stopSession,
-             .editHerdrConfig, .reloadHerdrConfig, .focusWorkspace:
+             .editHerdrConfig, .reloadHerdrConfig, .focusWorkspace,
+             .showWelcomeTour, .showWhatsNew:
             return .contextSensitive
         }
     }

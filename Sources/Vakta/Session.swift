@@ -49,16 +49,22 @@ final class Session: Identifiable, ObservableObject {
     /// observe it for the row label.
     let viewState: TerminalViewState
 
+    /// A one-off session (the tour's installer) that is never saved to the
+    /// workspace, so a restart doesn't relaunch it.
+    let isTransient: Bool
+
     init(
         controller: TerminalController,
         profile: Profile,
         sessionName: String,
-        customName: String? = nil
+        customName: String? = nil,
+        isTransient: Bool = false
     ) {
         self.controller = controller
         self.profile = profile
         self.sessionName = sessionName
         self.customName = customName
+        self.isTransient = isTransient
         self.options = profile.makeSurfaceOptions(sessionName: sessionName)
         self.viewState = TerminalViewState(controller: controller)
     }
