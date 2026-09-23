@@ -23,9 +23,10 @@ struct StatusBarView: View {
 
     @ObservedObject var model: StatusBarViewModel
 
-    /// The checks popover opens after the pointer rests on the count, and
-    /// stays open while it's over the count or the popover itself.
+    /// The checks popover opens after the pointer rests on the PR block, and
+    /// stays open while it's over the block or the popover itself.
     @State private var showsChecks = false
+    /// The pointer is over the PR block (glyph, number, count).
     @State private var isOverChecksLabel = false
     @State private var isOverChecksList = false
     @State private var checksHoverWork: DispatchWorkItem?
@@ -44,37 +45,54 @@ struct StatusBarView: View {
                 if content.branch != nil {
                     Text("·").foregroundStyle(.tertiary)
                 }
-                Button {
-                    model.openURL(pullRequest.url)
-                } label: {
-                    HStack(spacing: 3) {
-                        Image(systemName: Self.symbol(for: pullRequest.glyph))
-                            .foregroundStyle(Self.color(for: pullRequest.glyph))
-                        Text("#\(pullRequest.number)")
-                            .foregroundStyle(pullRequest.isDraft ? .secondary : .primary)
+                // The whole PR block -- glyph, number, check count -- is the
+                // hover target for the checks list; clicking the number
+                // still opens the PR.
+                HStack(spacing: 4) {
+                    Button {
+                        model.openURL(pullRequest.url)
+                    } label: {
+                        HStack(spacing: 3) {
+                            Image(systemName: Self.symbol(for: pullRequest.glyph))
+                                .foregroundStyle(Self.color(for: pullRequest.glyph))
+                            Text("#\(pullRequest.number)")
+                                .foregroundStyle(pullRequest.isDraft ? .secondary : .primary)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    // With checks, the list names the PR; a tooltip would
+                    // stack on top of it.
+                    .help(pullRequest.checksLabel == nil ? Self.help(for: pullRequest) : "")
+                    .accessibilityLabel(Self.help(for: pullRequest))
+                    if let label = pullRequest.checksLabel {
+                        Text(label)
+                            .foregroundStyle(.secondary)
+                            .onTapGesture { showsChecks.toggle() }
+                            .accessibilityLabel("\(label) checks passing")
+                            .accessibilityAddTraits(.isButton)
                     }
                 }
-                .buttonStyle(.plain)
-                .help(Self.help(for: pullRequest))
-                .accessibilityLabel(Self.help(for: pullRequest))
-                if let label = pullRequest.checksLabel {
-                    Text(label)
-                        .foregroundStyle(.secondary)
-                        .onHover { isOverChecksLabel = $0; checksHoverChanged() }
-                        .onTapGesture { showsChecks.toggle() }
-                        .accessibilityLabel("\(label) checks passing")
-                        .accessibilityAddTraits(.isButton)
-                        .popover(isPresented: $showsChecks, arrowEdge: .top) {
-                            StatusBarChecksList(pullRequest: pullRequest, openURL: model.openURL)
-                                .onHover { isOverChecksList = $0; checksHoverChanged() }
-                        }
-                        .onChange(of: showsChecks) { model.checksPopoverChanged($0) }
-                        // The label can vanish with the popover open (focus
-                        // moved to a pane without checks); release the hold.
-                        .onDisappear {
-                            if showsChecks { showsChecks = false }
-                            model.checksPopoverChanged(false)
-                        }
+                .contentShape(Rectangle())
+                .onHover { hovering in
+                    guard pullRequest.checksLabel != nil else { return }
+                    isOverChecksLabel = hovering
+                    checksHoverChanged()
+                }
+                .popover(isPresented: $showsChecks, arrowEdge: .top) {
+                    StatusBarChecksList(pullRequest: pullRequest, openURL: model.openURL)
+                        .onHover { isOverChecksList = $0; checksHoverChanged() }
+                }
+                .onChange(of: showsChecks) { model.checksPopoverChanged($0) }
+                .onChange(of: pullRequest.checksLabel == nil) { noChecks in
+                    // Checks can disappear with the list open.
+                    if noChecks { isOverChecksLabel = false; showsChecks = false }
+                }
+                // The block can vanish with the list open (focus moved to a
+                // pane without a PR); release the hold.
+                .onDisappear {
+                    isOverChecksLabel = false
+                    if showsChecks { showsChecks = false }
+                    model.checksPopoverChanged(false)
                 }
             }
             Spacer(minLength: 8)

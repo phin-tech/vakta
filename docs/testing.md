@@ -191,8 +191,9 @@ configuration. Record the macOS/toolchain/app revision and which steps were chec
     (when undocked), and Never (after a one-off lookup); pressing it again
     hides it; hovering holds it up. Light and dark terminal themes keep the
     text legible, and the Auto-hide overlay is opaque over terminal text.
-    A PR with checks shows `passing/total` after its glyph; resting on it
-    opens a list of every check (failing, pending, passing, by name) that
+    A PR with checks shows `passing/total` after its glyph; resting
+    anywhere on the PR block (glyph, number, count) opens a list of every
+    check (failing, pending, passing, by name) that
     stays open while hovered, and a row opens its details page. In
     Auto-hide the bar stays up while the list is open and hides normally
     after; focusing a pane without checks closes the list.
