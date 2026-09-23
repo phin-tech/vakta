@@ -236,7 +236,23 @@ final class LaunchTargetTests: XCTestCase {
         let target = MultiplexerTarget(backend: .tmux, executable: "tmux", tmuxSocketPath: nil, environment: [:])
         XCTAssertEqual(
             target.paneListArgv(sessionName: "foo", workspaceID: "@3"),
-            ["tmux", "list-panes", "-t", "foo:@3", "-F", "#{pane_id}|#{window_id}|#{pane_title}|#{pane_active}"]
+            ["tmux", "-u", "list-panes", "-t", "foo:@3", "-F", "#{pane_id}\u{1f}#{window_id}\u{1f}#{pane_active}\u{1f}#{pane_current_path}\u{1f}#{pane_title}"]
+        )
+    }
+
+    func test_sessionPaneListArgv_herdr_listsEveryWorkspace() {
+        let target = MultiplexerTarget(backend: .herdr, executable: "herdr", tmuxSocketPath: nil, environment: [:])
+        XCTAssertEqual(
+            target.sessionPaneListArgv(sessionName: "foo"),
+            ["herdr", "--session", "foo", "pane", "list"]
+        )
+    }
+
+    func test_sessionPaneListArgv_tmux_listsEveryWindowWithSocket() {
+        let target = MultiplexerTarget(backend: .tmux, executable: "tmux", tmuxSocketPath: "/tmp/custom", environment: [:])
+        XCTAssertEqual(
+            target.sessionPaneListArgv(sessionName: "foo"),
+            ["tmux", "-S", "/tmp/custom", "-u", "list-panes", "-s", "-t", "foo", "-F", "#{pane_id}\u{1f}#{window_id}\u{1f}#{&&:#{pane_active},#{window_active}}\u{1f}#{pane_current_path}\u{1f}#{pane_title}"]
         )
     }
 

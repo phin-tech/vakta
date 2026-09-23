@@ -126,18 +126,44 @@ struct MultiplexerTarget: Equatable {
         }
     }
 
+    /// The `-F` format for tmux pane listings, parsed by `PaneQuery.parse`:
+    /// pane id, window id, active flag, current path, title, separated by
+    /// `\u{1f}` (title last). Pane listings pass `-u`: confirmed live against
+    /// tmux 3.7b that without a UTF-8 locale -- which `ProcessRunner`'s
+    /// PATH/HOME-only environment never has -- tmux rewrites both the
+    /// separator and non-ASCII path bytes to `_` (`…/café` became `…/caf_`).
+    static let tmuxPaneFormat = tmuxPaneFormat(activeFlag: "#{pane_active}")
+
+    /// `tmuxPaneFormat` for a session-wide listing: the focus flag is set
+    /// only for the active window's active pane, so exactly one pane is
+    /// focused per session -- as herdr reports -- rather than one per window.
+    static let tmuxSessionPaneFormat = tmuxPaneFormat(activeFlag: "#{&&:#{pane_active},#{window_active}}")
+
+    private static func tmuxPaneFormat(activeFlag: String) -> String {
+        ["#{pane_id}", "#{window_id}", activeFlag, "#{pane_current_path}", "#{pane_title}"].joined(separator: "\u{1f}")
+    }
+
     /// The argv to list the panes in `workspaceID`, or `nil` for a backend
-    /// with no equivalent. Herdr returns JSON; tmux returns one pipe-separated
-    /// record per pane for `PaneQuery.parse`.
+    /// with no equivalent. Herdr returns JSON; tmux returns one record per
+    /// pane in `tmuxPaneFormat` for `PaneQuery.parse`.
     func paneListArgv(sessionName: String, workspaceID: String) -> [String]? {
         switch backend {
         case .herdr:
             return [executable, "--session", sessionName, "pane", "list", "--workspace", workspaceID]
         case .tmux:
-            return tmuxArgv([
-                "list-panes", "-t", "\(sessionName):\(workspaceID)", "-F",
-                "#{pane_id}|#{window_id}|#{pane_title}|#{pane_active}"
-            ])
+            return tmuxArgv(["-u", "list-panes", "-t", "\(sessionName):\(workspaceID)", "-F", Self.tmuxPaneFormat])
+        }
+    }
+
+    /// The argv to list every pane in `sessionName` across all of its
+    /// workspaces, in the same output shape as `paneListArgv`; at most one
+    /// pane -- the session's focused one -- reports `focused`.
+    func sessionPaneListArgv(sessionName: String) -> [String]? {
+        switch backend {
+        case .herdr:
+            return [executable, "--session", sessionName, "pane", "list"]
+        case .tmux:
+            return tmuxArgv(["-u", "list-panes", "-s", "-t", sessionName, "-F", Self.tmuxSessionPaneFormat])
         }
     }
 
