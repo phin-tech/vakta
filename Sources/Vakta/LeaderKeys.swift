@@ -71,6 +71,11 @@ extension LeaderNode {
         return paths
     }
 
+    var isGroup: Bool {
+        if case .group = self { return true }
+        return false
+    }
+
     var title: String {
         switch self {
         case .group(let title, _): return title
@@ -202,7 +207,7 @@ enum LeaderHintAssembler {
                     keyCode: entry.keyCode,
                     key: glyph(for: entry.keyCode),
                     title: title(for: entry.node, in: context),
-                    isGroup: { if case .group = entry.node { return true } else { return false } }(),
+                    isGroup: entry.node.isGroup,
                     isCurrent: entry.node == .command(.focusWorkspace(context.focusedWorkspaceIndex ?? -1))
                 )
             }

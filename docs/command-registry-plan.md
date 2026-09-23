@@ -1,6 +1,6 @@
 # Command registry plan
 
-Status: implemented through GREEN (2026-09-23); REFACTOR pending. Prerequisite for leader-key command discovery
+Status: implemented (2026-09-23). Prerequisite for leader-key command discovery
 (Spacemacs/Doom style), which will ship behind a Preferences flag, default off.
 
 ## Problem
@@ -54,7 +54,7 @@ into a command.
     was renamed "Command Palette" (from "Session Switcher").
   - `stableID`: a string (`"splitPaneRight"`, `"selectSession.3"`) for palette
     row ids now and a human-editable leader-tree config later.
-  - `scope`: the existing `KeybindingActionScope` (`global` for quit and close
+  - `scope`: the existing `AppCommandScope` (`global` for quit and close
     window, `contextSensitive` for everything else, including all new cases).
   - `paletteRequirement`: `.none | .multiplexerActions`. This preserves the
     current row visibility: all eight actions in `multiplexerActionIDs`,
@@ -97,8 +97,9 @@ into a command.
 - `KeybindingsPreferencesView` renders `AppCommandCatalog.bindableCommands`
   grouped by `group`. New commands ship unbound, and `Keybinding.defaults` is
   unchanged.
-- Menu items with direct selectors (font size, sidebar) may stay as they are.
-  Routing them through `perform` is optional cleanup, not part of this slice.
+- Menu items for commands (Preferences…, Switch Session…, Open in Editor,
+  Toggle Sidebar, the font sizes) are built by `commandMenuItem(_:_:)` and
+  run through `perform`, keeping their own menu titles. (REFACTOR phase.)
 
 ### Chord on an unavailable command
 

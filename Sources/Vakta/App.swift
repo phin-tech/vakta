@@ -186,7 +186,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         keybindingMatcher.commandContextProvider = { [weak self] in
-            self?.currentCommandContext() ?? CommandContext(supportsSelectedSessionActions: false)
+            self?.currentCommandContext() ?? .empty
         }
         keybindingMatcher.install { [weak self] command in
             self?.perform(command)
@@ -194,7 +194,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let overlay = LeaderHintOverlay(
             matcher: keybindingMatcher,
             contextProvider: { [weak self] in
-                self?.currentCommandContext() ?? CommandContext(supportsSelectedSessionActions: false)
+                self?.currentCommandContext() ?? .empty
             },
             themeProvider: { [weak self] in
                 let background = self?.sessionStore.terminalBackgroundColor ?? .windowBackgroundColor
@@ -347,20 +347,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         splitView.window?.viewsNeedDisplay = true
     }
 
-    @objc private func toggleSidebar() {
-        sidebarSettings.toggleCollapsed()
+    /// A menu item that runs `command` through `perform(_:)`, the same path
+    /// its chord, leader sequence and ⌘K row take. No key equivalent: menu
+    /// items never carry one (docs/architecture.md's "Keybindings routed
+    /// through the matcher, not menu key equivalents" invariant).
+    private func commandMenuItem(_ title: String, _ command: AppCommand) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: #selector(performMenuCommand(_:)), keyEquivalent: "")
+        item.target = self
+        item.representedObject = command
+        return item
     }
 
-    @objc private func increaseFontSize() {
-        sessionStore.performBindingActionOnSelectedSession("increase_font_size:1")
-    }
-
-    @objc private func decreaseFontSize() {
-        sessionStore.performBindingActionOnSelectedSession("decrease_font_size:1")
-    }
-
-    @objc private func resetFontSize() {
-        sessionStore.performBindingActionOnSelectedSession("reset_font_size")
+    @objc private func performMenuCommand(_ sender: NSMenuItem) {
+        guard let command = sender.representedObject as? AppCommand else { return }
+        perform(command)
     }
 
     /// Re-applies the terminal theme's background to the AppKit sidebar/terminal
@@ -371,10 +371,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         sidebarHostView?.appearance = NSAppearance(named: color.isDark ? .darkAqua : .aqua)
         fileSidebarContainerView?.layer?.backgroundColor = color.cgColor
         fileSidebarHostView?.appearance = NSAppearance(named: color.isDark ? .darkAqua : .aqua)
-    }
-
-    @objc private func showPreferences() {
-        preferencesController.show()
     }
 
     private func makeWindow() -> NSWindow {
@@ -538,13 +534,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // mouse here, and the user can bind it (and Toggle Sidebar) to a chord
         // inside the pane -- that goes through `KeybindingMatcher`, which by
         // design sees keys before the menu ever could.
-        let preferencesItem = NSMenuItem(
-            title: "Preferences…",
-            action: #selector(showPreferences),
-            keyEquivalent: ""
-        )
-        preferencesItem.target = self
-        appMenu.addItem(preferencesItem)
+        appMenu.addItem(commandMenuItem("Preferences…", .openPreferences))
         appMenu.addItem(.separator())
         // Standard selectors sent to `nil`/`NSApp` -- AppKit resolves and
         // enables/disables these itself, same as every other Mac app. No
@@ -618,24 +608,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // through the matcher, not menu key equivalents" invariant; the chord
         // is handled earlier.
         sessionMenu.addItem(.separator())
-        let switcherItem = NSMenuItem(
-            title: "Switch Session…",
-            action: #selector(showSessionSwitcherFromMenu),
-            keyEquivalent: ""
-        )
-        switcherItem.target = self
-        sessionMenu.addItem(switcherItem)
+        sessionMenu.addItem(commandMenuItem("Switch Session…", .openSessionSwitcher))
 
         // No keyEquivalent, per this method's doc comment; a rebindable
         // shortcut would go through `KeybindingMatcher`, not here.
         sessionMenu.addItem(.separator())
-        let openInEditorItem = NSMenuItem(
-            title: "Open in Editor",
-            action: #selector(openInEditor),
-            keyEquivalent: ""
-        )
-        openInEditorItem.target = self
-        sessionMenu.addItem(openInEditorItem)
+        sessionMenu.addItem(commandMenuItem("Open in Editor", .openInEditor))
 
         sessionMenuItem.submenu = sessionMenu
         mainMenu.addItem(sessionMenuItem)
@@ -646,23 +624,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // (docs/architecture.md's "Keybindings routed through the matcher, not menu
         // key equivalents" invariant). The sidebar's own button and the
         // Ctrl+Shift+num chords are the keyboard-free / rebindable paths.
-        let toggleItem = NSMenuItem(
-            title: "Toggle Sidebar",
-            action: #selector(toggleSidebar),
-            keyEquivalent: ""
-        )
-        toggleItem.target = self
-        viewMenu.addItem(toggleItem)
+        viewMenu.addItem(commandMenuItem("Toggle Sidebar", .toggleSidebar))
         viewMenu.addItem(.separator())
-        let increaseFontItem = NSMenuItem(title: "Increase Font Size", action: #selector(increaseFontSize), keyEquivalent: "")
-        increaseFontItem.target = self
-        viewMenu.addItem(increaseFontItem)
-        let decreaseFontItem = NSMenuItem(title: "Decrease Font Size", action: #selector(decreaseFontSize), keyEquivalent: "")
-        decreaseFontItem.target = self
-        viewMenu.addItem(decreaseFontItem)
-        let resetFontItem = NSMenuItem(title: "Reset Font Size", action: #selector(resetFontSize), keyEquivalent: "")
-        resetFontItem.target = self
-        viewMenu.addItem(resetFontItem)
+        viewMenu.addItem(commandMenuItem("Increase Font Size", .increaseFontSize))
+        viewMenu.addItem(commandMenuItem("Decrease Font Size", .decreaseFontSize))
+        viewMenu.addItem(commandMenuItem("Reset Font Size", .resetFontSize))
         viewMenuItem.submenu = viewMenu
         mainMenu.addItem(viewMenuItem)
 
@@ -822,10 +788,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     // MARK: Session switcher (⌘K)
-
-    @objc private func showSessionSwitcherFromMenu() {
-        showSessionSwitcher()
-    }
 
     /// Mirrors `SidebarView.supportsWorkspaces` -- whether querying
     /// `session`'s workspaces makes sense at all.
@@ -1108,8 +1070,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard CommandAvailability.isAvailable(command, in: currentCommandContext()) else { return }
         switch command {
         case .selectSession(let index): sessionStore.selectSession(at: index)
-        case .toggleSidebar: toggleSidebar()
-        case .openPreferences: showPreferences()
+        case .toggleSidebar: sidebarSettings.toggleCollapsed()
+        case .openPreferences: preferencesController.show()
         case .openSessionSwitcher: showSessionSwitcher()
         case .quit: NSApp.terminate(nil)
         // Dispatched down the real first-responder chain rather than
@@ -1124,9 +1086,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Closes whichever window is actually key (main window or
         // Preferences), same as clicking its red button.
         case .closeWindow: NSApp.sendAction(#selector(NSWindow.performClose(_:)), to: nil, from: nil)
-        case .increaseFontSize: increaseFontSize()
-        case .decreaseFontSize: decreaseFontSize()
-        case .resetFontSize: resetFontSize()
+        case .increaseFontSize: sessionStore.performBindingActionOnSelectedSession("increase_font_size:1")
+        case .decreaseFontSize: sessionStore.performBindingActionOnSelectedSession("decrease_font_size:1")
+        case .resetFontSize: sessionStore.performBindingActionOnSelectedSession("reset_font_size")
         case .nextUnreadSession: sessionStore.goToNextUnreadSession()
         case .newSession: sessionStore.createSession()
         case .toggleFileSidebar: fileSidebarPreferences.isVisible.toggle()
@@ -1237,7 +1199,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// (herdr/tmux active-pane query, falling back through OSC-7/profile
     /// launch directory) and launches it in the preferred editor. Every
     /// failure outcome surfaces to the user rather than a silent no-op.
-    @objc private func openInEditor() {
+    private func openInEditor() {
         guard let id = sessionStore.selectedID else { return }
         let installed = EditorLaunchAdapter.installedEditors()
         sessionStore.resolveOpenInEditor(

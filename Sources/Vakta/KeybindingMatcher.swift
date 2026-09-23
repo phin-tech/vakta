@@ -87,7 +87,7 @@ final class KeybindingMatcher: ObservableObject {
 
     /// The live availability snapshot a leader step decides against (the
     /// selected session's capabilities). Supplied by the app delegate.
-    var commandContextProvider: () -> CommandContext = { CommandContext(supportsSelectedSessionActions: false) }
+    var commandContextProvider: () -> CommandContext = { .empty }
 
     /// Abandons a pending leader sequence (Esc in the overlay, app
     /// deactivation).

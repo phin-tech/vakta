@@ -12,7 +12,7 @@ import AppKit
 
 /// Whether an action should fire everywhere (even while a text field owns
 /// first responder) or only when nothing is actively editing text.
-enum KeybindingActionScope {
+enum AppCommandScope {
     /// Always fires. Reserved for actions a user must always be able to
     /// reach, however they got into whatever state they're in.
     case global
@@ -26,7 +26,7 @@ enum KeybindingActionScope {
 }
 
 extension AppCommand {
-    var scope: KeybindingActionScope {
+    var scope: AppCommandScope {
         switch self {
         case .quit, .closeWindow: return .global
         case .selectSession, .toggleSidebar, .openPreferences, .openSessionSwitcher, .copy, .paste, .cut, .selectAll,

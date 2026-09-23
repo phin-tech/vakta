@@ -30,7 +30,7 @@ enum AppCommand: Hashable, Codable {
     case quit
     /// Copy the terminal's current selection to the pasteboard (or the
     /// field editor's selection, when a text field is focused -- see
-    /// `KeybindingActionScope.contextSensitive`).
+    /// `AppCommandScope.contextSensitive`).
     case copy
     /// Paste the pasteboard's contents into the terminal (or a focused
     /// text field).
@@ -273,6 +273,10 @@ struct CommandContext: Equatable {
     var workspaceTitles: [String] = []
     /// Which of `workspaceTitles` is focused, if known.
     var focusedWorkspaceIndex: Int?
+
+    /// Nothing selected, nothing open: every command with a requirement is
+    /// unavailable.
+    static let empty = CommandContext(supportsSelectedSessionActions: false)
 }
 
 enum CommandAvailability {
