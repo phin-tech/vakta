@@ -365,6 +365,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // re-fires for an already-selected session (see
         // `SessionStore.clearUnreadForSelectedSessionIfAppActive`).
         sessionStore.clearUnreadForSelectedSessionIfAppActive()
+        // Returning to the app is the moment a just-pushed PR or finished CI
+        // run is most likely to matter; refetch the focused repository now.
+        sessionStore.refreshPullRequestStatus(forceFocused: true)
     }
 
     /// Moves the divider between the full panel and the icon rail. Done without
