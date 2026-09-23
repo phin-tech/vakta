@@ -32,6 +32,7 @@ extension AppCommand {
         case .selectSession, .toggleSidebar, .openPreferences, .openSessionSwitcher, .copy, .paste, .cut, .selectAll,
              .increaseFontSize, .decreaseFontSize, .resetFontSize, .nextUnreadSession,
              .newSession, .toggleFileSidebar, .toggleFileSidebarChanges, .openInEditor,
+             .showStatusBarBriefly, .cycleStatusBar, .openPullRequest,
              .splitPaneRight, .splitPaneDown, .zoomPane, .closePane, .renamePane,
              .closeWorkspace, .newWorkspace, .stopSession,
              .editHerdrConfig, .reloadHerdrConfig, .focusWorkspace,

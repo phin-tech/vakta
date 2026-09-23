@@ -147,6 +147,45 @@ final class SessionStore: ObservableObject {
     /// event client's `onTrigger` also calls `pollAgentStatus()` early,
     /// debounced via `pendingEventTriggeredPoll`, for near-instant updates.
     private var statusTimer: Timer?
+
+    /// PR status for every pane of every multiplexer session (the status
+    /// bar's data). Refreshed on its own slower timer -- each cycle lists
+    /// every session's panes -- plus on selection change, session removal,
+    /// and (forced for the focused repository) when the app becomes active.
+    let pullRequestStatus = PullRequestStatusStore(
+        listPanes: { session, environment in
+            PaneQuery.panes(
+                sessionName: session.sessionName,
+                target: session.target,
+                path: environment["PATH"] ?? ShellEnvironment.fallbackPATH()
+            )
+        },
+        resolveCheckout: { directory, environment in
+            RepoCheckoutQuery.query(directory: directory, environment: environment)
+        },
+        listPullRequests: { repository, environment in
+            PullRequestListQuery.query(
+                repository: repository.ghRepository,
+                environment: environment,
+                limit: 100,
+                timeout: 15
+            )
+        }
+    )
+    private var pullRequestTimer: Timer?
+    /// False while the status bar is set to Never: no pane listing, git, or
+    /// gh runs at all.
+    var isPullRequestStatusEnabled = true {
+        didSet {
+            guard isPullRequestStatusEnabled != oldValue else { return }
+            if isPullRequestStatusEnabled {
+                refreshPullRequestStatus()
+            } else {
+                pullRequestStatus.refresh(sessions: [], focusedSessionID: nil, forceFocused: false)
+            }
+        }
+    }
+    private static let pullRequestRefreshInterval: TimeInterval = 20
     /// At most one agent-status poll, and separately at most one discovery
     /// refresh, in flight at a time -- see `SingleFlightGate`.
     private let agentStatusPollGate = SingleFlightGate()
@@ -424,6 +463,7 @@ final class SessionStore: ObservableObject {
 
         refreshDiscovery()
         startStatusPolling()
+        startPullRequestPolling()
     }
 
     // MARK: Terminal font + theme
@@ -481,6 +521,38 @@ final class SessionStore: ObservableObject {
             MainActor.assumeIsolated { self?.pollAgentStatus() }
         }
         statusTimer = timer
+    }
+
+    private func startPullRequestPolling() {
+        refreshPullRequestStatus()
+        pullRequestTimer = Timer.scheduledTimer(withTimeInterval: Self.pullRequestRefreshInterval, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refreshPullRequestStatus() }
+        }
+    }
+
+    /// Requests a PR status cycle over every multiplexer session that can be
+    /// queried locally (the same set as global pane search). `forceFocused`
+    /// refetches the selected session's focused repository regardless of
+    /// age -- used when the app becomes active, so a PR pushed from
+    /// elsewhere shows without waiting for the TTL.
+    /// `evenIfDisabled` runs one cycle while the status bar is set to Never
+    /// -- "Show Status Bar Briefly" needs something to show.
+    func refreshPullRequestStatus(forceFocused: Bool = false, evenIfDisabled: Bool = false) {
+        // While disabled, the timer does nothing -- data a one-off
+        // `evenIfDisabled` cycle fetched stays until the next one.
+        guard isPullRequestStatusEnabled || evenIfDisabled else { return }
+        let snapshots = sessions.compactMap { session -> PullRequestSessionSnapshot? in
+            guard case .multiplexer(let target) = LaunchTargetResolver.resolve(session.profile),
+                  Self.supportsGlobalPaneSearch(session)
+            else { return nil }
+            return PullRequestSessionSnapshot(id: session.id, sessionName: session.sessionName, target: target)
+        }
+        pullRequestStatus.refresh(
+            sessions: snapshots,
+            focusedSessionID: selectedID,
+            forceFocused: forceFocused,
+            environment: ["PATH": resolvedPATH, "HOME": NSHomeDirectory()]
+        )
     }
 
     /// Queries `herdr agent list` per herdr session (off the main thread) and
@@ -946,6 +1018,7 @@ final class SessionStore: ObservableObject {
             }
         }
         saveWorkspace()
+        refreshPullRequestStatus()
     }
 
     /// Selecting a session does NOT by itself clear any of its unread panes:
@@ -961,6 +1034,7 @@ final class SessionStore: ObservableObject {
         hostContainer.select(id)
         saveWorkspace()
         refreshFileSidebarRoot()
+        refreshPullRequestStatus()
     }
 
     /// Resolves the selected session's focused-pane working directory off the
@@ -1482,6 +1556,7 @@ final class SessionStore: ObservableObject {
     /// the restorable workspace.
     deinit {
         statusTimer?.invalidate()
+        pullRequestTimer?.invalidate()
         isShuttingDown = true
     }
 }

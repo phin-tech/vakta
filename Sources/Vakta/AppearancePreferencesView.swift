@@ -12,6 +12,7 @@ struct AppearancePreferencesView: View {
     @EnvironmentObject private var sidebarSettings: SidebarSettingsStore
     @EnvironmentObject private var herdrPreferences: HerdrPreferencesStore
     @EnvironmentObject private var fileSidebarPreferences: FileSidebarPreferencesStore
+    @EnvironmentObject private var statusBarPreferences: StatusBarPreferencesStore
 
     var body: some View {
         Form {
@@ -96,6 +97,23 @@ struct AppearancePreferencesView: View {
             } footer: {
                 Text("A right-hand pane showing an expandable file tree of the selected "
                     + "session's focused-pane working directory. Double-click a file to open it.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section {
+                Picker("Show status bar", selection: $statusBarPreferences.visibility) {
+                    ForEach(StatusBarVisibility.allCases, id: \.self) { visibility in
+                        Text(visibility.title).tag(visibility)
+                    }
+                }
+            } header: {
+                Text("Status bar")
+            } footer: {
+                Text("A thin bar under the terminal with the focused pane's branch and its GitHub "
+                    + "pull request (checks and review), via the gh CLI. Automatic shows it only "
+                    + "when there is something to show; Auto-hide reveals it when the pointer "
+                    + "rests at the terminal's bottom edge; Never also stops the lookups.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

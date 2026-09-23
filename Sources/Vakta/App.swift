@@ -66,6 +66,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var workspaceRefreshMonitor: WorkspaceRefreshMonitor { stores.workspaceRefreshMonitor }
     private var editorPreferences: EditorPreferencesStore { stores.editorPreferences }
     private var fileSidebarPreferences: FileSidebarPreferencesStore { stores.fileSidebarPreferences }
+    private var statusBarPreferences: StatusBarPreferencesStore { stores.statusBarPreferences }
 
     /// The AppKit sidebar/terminal chrome whose colors follow the terminal
     /// theme; re-applied when it changes (SwiftUI parts update themselves).
@@ -79,6 +80,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var fileSidebarContainerView: NSView?
     private var fileSidebarHostView: NSView?
     private var fileSidebarObserver: AnyCancellable?
+
+    /// The status bar under the terminal (see `StatusBarView`): its host,
+    /// the model it renders, and the subscription that recomputes its
+    /// content and docked state from the PR status and preference stores.
+    private var statusBarHostView: NSView?
+    private let statusBarModel = StatusBarViewModel()
+    private var statusBarObserver: AnyCancellable?
+    private var statusBarVisibilityObserver: AnyCancellable?
+    private var statusBarPopoverObserver: AnyCancellable?
+    private var isStatusBarDocked = false
+    private var statusBarVisibility: StatusBarVisibility = .auto
+    private var statusBarDockState = StatusBarDockState()
+    private var statusBarDockTimer: DispatchWorkItem?
+    private var statusBarAutoHideState = StatusBarAutoHideState()
+    private var statusBarAutoHideTimer: DispatchWorkItem?
+    /// The last content shown for `statusBarContentSessionID`, the baseline
+    /// for `StatusBarPeekPolicy` (reset when the selection changes, so
+    /// switching sessions never peeks).
+    private var lastStatusBarContent: StatusBarContent?
+    private var statusBarContentSessionID: Session.ID?
 
     /// Menu-bar status item summarizing agent activity across all sessions, and
     /// the subscription that keeps its icon live.
@@ -289,6 +310,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.applyFileSidebarVisibility(visible)
         }
 
+        observeStatusBar()
+
         presentLaunchOnboarding(onboarding, root: root)
     }
 
@@ -310,6 +333,164 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             leader: keybindingMatcher.leaderSettings,
             leaderSequences: paletteLeaderSequences()
         )
+    }
+
+    /// Recomputes the status bar from the selected session's PR state and the
+    /// visibility preference, docking/undocking it under the terminal. The
+    /// "Never" setting turns PR lookups off entirely (no pane, git, or gh
+    /// runs).
+    private func observeStatusBar() {
+        statusBarModel.openURL = { url in
+            guard let url = URL(string: url) else { return }
+            NSWorkspace.shared.open(url)
+        }
+        statusBarPopoverObserver = statusBarModel.$isAnyPopoverOpen.removeDuplicates().sink { [weak self] open in
+            guard let self else { return }
+            self.statusBarAutoHideState = StatusBarAutoHide.setHeld(self.statusBarAutoHideState, open, at: Date())
+            self.updateStatusBarAutoHide()
+        }
+        statusBarVisibilityObserver = statusBarPreferences.$visibility.sink { [weak self] visibility in
+            self?.sessionStore.isPullRequestStatusEnabled = visibility.needsPullRequestStatus
+        }
+        let pullRequestStatus = sessionStore.pullRequestStatus
+        let workspaceState = Publishers.CombineLatest3(
+            pullRequestStatus.$workspaceSummaries,
+            pullRequestStatus.$workspacePullRequests,
+            pullRequestStatus.$focusedWorkspace
+        )
+        statusBarObserver = Publishers.CombineLatest4(
+            statusBarPreferences.$visibility,
+            sessionStore.$selectedID,
+            pullRequestStatus.$focused,
+            workspaceState
+        )
+        .sink { [weak self] visibility, selectedID, focused, workspaceState in
+            guard let self else { return }
+            let (summaries, lists, focusedWorkspace) = workspaceState
+            let workspaceID = selectedID.flatMap { focusedWorkspace[$0] }
+            let content = StatusBarPresentation.content(
+                focused: selectedID.flatMap { focused[$0] },
+                workspaceSummaries: selectedID.flatMap { summaries[$0] } ?? [:],
+                workspacePullRequests: selectedID.flatMap { id in workspaceID.flatMap { lists[id]?[$0] } } ?? []
+            )
+            let previous = selectedID == self.statusBarContentSessionID ? self.lastStatusBarContent : nil
+            self.lastStatusBarContent = content
+            self.statusBarContentSessionID = selectedID
+            if self.statusBarModel.content != content { self.statusBarModel.content = content }
+
+            if visibility != self.statusBarVisibility {
+                self.statusBarVisibility = visibility
+                self.statusBarAutoHideState = StatusBarAutoHideState()
+            }
+            self.updateStatusBarDock(wantsDock: StatusBarPresentation.isDocked(visibility, content: content))
+            if visibility == .autoHide, StatusBarPeekPolicy.shouldPeek(from: previous, to: content) {
+                self.statusBarAutoHideState = StatusBarAutoHide.peek(self.statusBarAutoHideState, at: Date())
+            }
+            self.updateStatusBarAutoHide()
+        }
+    }
+
+    /// Runs `StatusBarDockPlanner` now and again at its next deadline (the
+    /// Automatic-mode undock delay).
+    private func updateStatusBarDock(wantsDock: Bool) {
+        statusBarDockTimer?.cancel()
+        statusBarDockState = StatusBarDockPlanner.update(
+            statusBarDockState,
+            wantsDock: wantsDock,
+            visibility: statusBarVisibility,
+            at: Date()
+        )
+        applyStatusBarDocked(statusBarDockState.isDocked)
+        guard let deadline = StatusBarDockPlanner.nextDeadline(statusBarDockState) else { return }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.updateStatusBarDock(wantsDock: StatusBarPresentation.isDocked(self.statusBarVisibility, content: self.statusBarModel.content))
+        }
+        statusBarDockTimer = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + max(0, deadline.timeIntervalSinceNow), execute: work)
+    }
+
+    /// Pointer zone reports from the hover strip; ignored outside Auto-hide.
+    private func statusBarPointerMoved(_ pointer: StatusBarPointer) {
+        guard statusBarVisibility == .autoHide else { return }
+        statusBarAutoHideState = StatusBarAutoHide.pointerMoved(statusBarAutoHideState, to: pointer, at: Date())
+        updateStatusBarAutoHide()
+    }
+
+    /// "Show Status Bar Briefly": overlays the bar for a while in any mode
+    /// where it isn't docked (pressed again, hides it). In Never, one lookup
+    /// runs so there is something to show.
+    private func toggleStatusBarBriefly() {
+        if statusBarVisibility == .hide {
+            sessionStore.refreshPullRequestStatus(forceFocused: true, evenIfDisabled: true)
+        }
+        statusBarAutoHideState = StatusBarAutoHide.toggleSummon(statusBarAutoHideState, at: Date())
+        updateStatusBarAutoHide()
+    }
+
+    /// Advances the overlay state machine (hover in Auto-hide, peeks, and
+    /// "Show Status Bar Briefly" in any mode), shows/hides the overlay, and
+    /// schedules the next tick. The overlay never reveals an empty bar.
+    private func updateStatusBarAutoHide() {
+        statusBarAutoHideTimer?.cancel()
+        statusBarAutoHideState = StatusBarAutoHide.tick(statusBarAutoHideState, at: Date())
+        setStatusBarOverlayVisible(statusBarAutoHideState.isRevealed && !statusBarModel.content.isEmpty)
+        guard let deadline = StatusBarAutoHide.nextDeadline(statusBarAutoHideState) else { return }
+        let work = DispatchWorkItem { [weak self] in self?.updateStatusBarAutoHide() }
+        statusBarAutoHideTimer = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + max(0, deadline.timeIntervalSinceNow), execute: work)
+    }
+
+    /// Fades the Auto-hide overlay in or out over the terminal's bottom edge;
+    /// the terminal's frame is untouched. A docked bar is left alone.
+    private func setStatusBarOverlayVisible(_ visible: Bool) {
+        guard !isStatusBarDocked, let host = statusBarHostView else { return }
+        if visible {
+            guard host.isHidden || host.alphaValue < 1 else { return }
+            host.alphaValue = host.isHidden ? 0 : host.alphaValue
+            host.isHidden = false
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.15
+                host.animator().alphaValue = 1
+            }
+        } else {
+            guard !host.isHidden else { return }
+            NSAnimationContext.runAnimationGroup({ context in
+                context.duration = 0.15
+                host.animator().alphaValue = 0
+            }, completionHandler: { [weak self, weak host] in
+                guard let self, let host, !self.isStatusBarDocked,
+                      !self.statusBarAutoHideState.isRevealed else { return }
+                host.isHidden = true
+            })
+        }
+    }
+
+    /// Docks the bar at the bottom of the terminal wrapper, shortening the
+    /// terminal host by the bar's height (the host keeps its identity; only
+    /// its frame changes), or removes it. Only a change of docked state
+    /// touches the terminal's frame.
+    private func applyStatusBarDocked(_ docked: Bool) {
+        guard docked != isStatusBarDocked, let host = statusBarHostView else { return }
+        isStatusBarDocked = docked
+        let terminal = sessionStore.hostContainer
+        let height = StatusBarView.height
+        host.isHidden = !docked
+        host.alphaValue = 1
+        var frame = terminal.frame
+        if docked {
+            frame.origin.y += height
+            frame.size.height -= height
+        } else {
+            frame.origin.y -= height
+            frame.size.height += height
+        }
+        terminal.frame = frame
+    }
+
+    private func openFocusedPullRequest() {
+        guard let url = statusBarModel.content.pullRequest?.url else { return }
+        statusBarModel.openURL(url)
     }
 
     /// Shows or hides the right file sidebar pane, sizing it to the persisted
@@ -365,6 +546,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // re-fires for an already-selected session (see
         // `SessionStore.clearUnreadForSelectedSessionIfAppActive`).
         sessionStore.clearUnreadForSelectedSessionIfAppActive()
+        // Returning to the app is the moment a just-pushed PR or finished CI
+        // run is most likely to matter; refetch the focused repository now.
+        sessionStore.refreshPullRequestStatus(forceFocused: true)
     }
 
     /// Moves the divider between the full panel and the icon rail. Done without
@@ -411,6 +595,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         sidebarHostView?.appearance = NSAppearance(named: color.isDark ? .darkAqua : .aqua)
         fileSidebarContainerView?.layer?.backgroundColor = color.cgColor
         fileSidebarHostView?.appearance = NSAppearance(named: color.isDark ? .darkAqua : .aqua)
+        statusBarHostView?.appearance = NSAppearance(named: color.isDark ? .darkAqua : .aqua)
+        statusBarHostView?.layer?.backgroundColor = color.cgColor
     }
 
     private func makeWindow() -> NSWindow {
@@ -494,6 +680,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Flexible width/height; fixed left gap, top band, and bottom.
         terminalContainer.autoresizingMask = [.width, .height]
         terminalWrapper.addSubview(terminalContainer)
+
+        // The status bar: pinned to the wrapper's bottom edge under the
+        // terminal column, hidden until `applyStatusBarDocked` docks it.
+        let statusBarHost = NSHostingView(rootView: StatusBarView(model: statusBarModel))
+        statusBarHost.appearance = NSAppearance(named: sessionStore.terminalBackgroundColor.isDark ? .darkAqua : .aqua)
+        // Opaque: in Auto-hide the bar overlays live terminal text.
+        statusBarHost.wantsLayer = true
+        statusBarHost.layer?.backgroundColor = sessionStore.terminalBackgroundColor.cgColor
+        statusBarHost.frame = NSRect(x: terminalGap, y: 0, width: 860 - terminalGap, height: StatusBarView.height)
+        statusBarHost.autoresizingMask = [.width, .maxYMargin]
+        statusBarHost.isHidden = true
+        terminalWrapper.addSubview(statusBarHost)
+        statusBarHostView = statusBarHost
+
+        // Auto-hide's hover strip: above everything in the terminal column's
+        // bottom band, reporting pointer zones only -- it never takes clicks
+        // or mouse events from the terminal (see `StatusBarHoverStrip`).
+        let hoverStrip = StatusBarHoverStrip(frame: NSRect(x: terminalGap, y: 0, width: 860 - terminalGap, height: StatusBarView.height))
+        hoverStrip.autoresizingMask = [.width, .maxYMargin]
+        hoverStrip.onPointer = { [weak self] pointer in self?.statusBarPointerMoved(pointer) }
+        terminalWrapper.addSubview(hoverStrip)
 
         // The right-hand file sidebar: a third pane hosting `FileSidebarView`.
         // Painted the terminal background like the left sidebar so the three
@@ -1135,6 +1342,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .toggleFileSidebarChanges:
             fileSidebarPreferences.apply(FileSidebarModePlanner.togglingChanges(fileSidebarPreferences.preferences))
         case .openInEditor: openInEditor()
+        case .showStatusBarBriefly: toggleStatusBarBriefly()
+        case .cycleStatusBar: statusBarPreferences.cycle()
+        case .openPullRequest: openFocusedPullRequest()
         case .splitPaneRight: performWorkspacePaneAction { .splitPane(paneID: $0, direction: .right) }
         case .splitPaneDown: performWorkspacePaneAction { .splitPane(paneID: $0, direction: .down) }
         case .zoomPane: performWorkspacePaneAction { .zoomPane(paneID: $0) }

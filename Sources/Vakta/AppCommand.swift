@@ -69,6 +69,13 @@ enum AppCommand: Hashable, Codable {
     case toggleFileSidebarChanges
     /// Open the focused pane's working directory in the preferred editor.
     case openInEditor
+    /// Reveal the status bar for a while in any mode (again: hide it).
+    case showStatusBarBriefly
+    /// Step the status bar through Automatic → Auto-hide → Always → Never.
+    case cycleStatusBar
+    /// Open the selected session's focused-pane PR in the browser; a no-op
+    /// when that pane's branch has no open PR.
+    case openPullRequest
     // The mutating multiplexer commands (see `MultiplexerAction`). They act
     // on the selected session's focused workspace/pane and require a backend
     // that vends them -- see `CommandAvailability`.
@@ -114,6 +121,9 @@ enum AppCommand: Hashable, Codable {
         case .toggleFileSidebar: return "Toggle File Sidebar"
         case .toggleFileSidebarChanges: return "Toggle File Sidebar Git Changes"
         case .openInEditor: return "Open in Editor"
+        case .showStatusBarBriefly: return "Show Status Bar Briefly"
+        case .cycleStatusBar: return "Cycle Status Bar Visibility"
+        case .openPullRequest: return "Open Pull Request"
         case .splitPaneRight: return "Split Pane Right"
         case .splitPaneDown: return "Split Pane Down"
         case .zoomPane: return "Zoom Pane"
@@ -153,6 +163,9 @@ enum AppCommand: Hashable, Codable {
         case .toggleFileSidebar: return "toggleFileSidebar"
         case .toggleFileSidebarChanges: return "toggleFileSidebarChanges"
         case .openInEditor: return "openInEditor"
+        case .showStatusBarBriefly: return "showStatusBarBriefly"
+        case .cycleStatusBar: return "cycleStatusBar"
+        case .openPullRequest: return "openPullRequest"
         case .splitPaneRight: return "splitPaneRight"
         case .splitPaneDown: return "splitPaneDown"
         case .zoomPane: return "zoomPane"
@@ -184,6 +197,7 @@ enum AppCommand: Hashable, Codable {
              .copy, .paste, .cut, .selectAll, .closeWindow,
              .increaseFontSize, .decreaseFontSize, .resetFontSize, .nextUnreadSession,
              .newSession, .toggleFileSidebar, .toggleFileSidebarChanges, .openInEditor,
+             .showStatusBarBriefly, .cycleStatusBar, .openPullRequest,
              .editHerdrConfig, .reloadHerdrConfig,
              .showWelcomeTour, .showWhatsNew:
             return .none
@@ -195,7 +209,7 @@ enum AppCommand: Hashable, Codable {
         switch self {
         case .openSessionSwitcher, .openPreferences, .toggleSidebar, .toggleFileSidebar,
              .toggleFileSidebarChanges, .openInEditor, .quit, .closeWindow, .copy, .paste, .cut, .selectAll,
-             .showWelcomeTour, .showWhatsNew:
+             .showWelcomeTour, .showWhatsNew, .showStatusBarBriefly, .cycleStatusBar, .openPullRequest:
             return .application
         case .selectSession, .newSession, .nextUnreadSession, .stopSession:
             return .sessions
@@ -255,6 +269,7 @@ enum AppCommandCatalog {
         .increaseFontSize, .decreaseFontSize, .resetFontSize,
         .toggleFileSidebarChanges,
         .showWelcomeTour, .showWhatsNew,
+        .showStatusBarBriefly, .cycleStatusBar, .openPullRequest,
     ]
 
     /// Every command Preferences lets the user bind, in display order within
@@ -263,7 +278,7 @@ enum AppCommandCatalog {
     /// matches, it just has no Preferences row.
     static let bindableCommands: [AppCommand] = [
         .openSessionSwitcher, .openPreferences, .toggleSidebar, .toggleFileSidebar, .toggleFileSidebarChanges,
-        .openInEditor, .quit, .closeWindow, .copy, .paste, .cut, .selectAll,
+        .openInEditor, .showStatusBarBriefly, .cycleStatusBar, .openPullRequest, .quit, .closeWindow, .copy, .paste, .cut, .selectAll,
     ]
         + (0..<9).map { AppCommand.selectSession($0) }
         + [

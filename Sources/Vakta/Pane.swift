@@ -13,6 +13,13 @@ struct Pane: Equatable {
     let label: String
     let focused: Bool
     let status: AgentStatus
+    /// The workspace containing the pane (herdr `workspace_id`, tmux window
+    /// id), so a session-wide listing can still be grouped per workspace.
+    var workspaceID: String? = nil
+    /// The pane's current directory: herdr's foreground process directory
+    /// when reported (e.g. inside vim), else the shell's; tmux's
+    /// `pane_current_path`. `nil` when the backend reports none.
+    var workingDirectory: String? = nil
 }
 
 enum PaneQuery {
@@ -25,7 +32,26 @@ enum PaneQuery {
         path: String,
         isCancelled: @escaping () -> Bool = { false }
     ) -> [Pane]? {
-        guard let argv = target.paneListArgv(sessionName: sessionName, workspaceID: workspaceID),
+        run(target.paneListArgv(sessionName: sessionName, workspaceID: workspaceID), target: target, path: path, isCancelled: isCancelled)
+    }
+
+    /// Queries every pane in `sessionName`, across all of its workspaces.
+    static func panes(
+        sessionName: String,
+        target: MultiplexerTarget,
+        path: String,
+        isCancelled: @escaping () -> Bool = { false }
+    ) -> [Pane]? {
+        run(target.sessionPaneListArgv(sessionName: sessionName), target: target, path: path, isCancelled: isCancelled)
+    }
+
+    private static func run(
+        _ argv: [String]?,
+        target: MultiplexerTarget,
+        path: String,
+        isCancelled: @escaping () -> Bool
+    ) -> [Pane]? {
+        guard let argv,
               let output = ProcessRunner.run(
                   argv,
                   path: path,
@@ -72,38 +98,45 @@ enum PaneQuery {
                 tabID: pane.tabID ?? "",
                 label: label,
                 focused: pane.focused ?? false,
-                status: status
+                status: status,
+                workspaceID: pane.workspaceID,
+                workingDirectory: nonEmpty(pane.foregroundCwd) ?? nonEmpty(pane.cwd)
             )
         }
     }
 
-    /// Format: pane id, window/tab id, title, active flag. The first two
-    /// delimiters identify the pane and tab; the final delimiter identifies
-    /// focus, so a `|` inside a pane title remains data.
+    /// Format: `MultiplexerTarget.tmuxPaneFormat` -- pane id, window id,
+    /// active flag, current path, title, `\u{1f}`-separated. The title is
+    /// last and the split is bounded, so a title containing the separator
+    /// stays intact; tmux is run with `-u` so neither the separator nor a
+    /// non-ASCII path is rewritten to `_`.
     private static func parseTmux(_ output: String) -> [Pane] {
         output.split(separator: "\n", omittingEmptySubsequences: true).compactMap { line in
-            guard let first = line.firstIndex(of: "|"),
-                  let second = line[line.index(after: first)...].firstIndex(of: "|"),
-                  let last = line.lastIndex(of: "|"),
-                  second < last
-            else { return nil }
+            let fields = line.split(separator: "\u{1f}", maxSplits: 4, omittingEmptySubsequences: false)
+            guard fields.count == 5 else { return nil }
 
-            let id = String(line[..<first])
-            let tabStart = line.index(after: first)
-            let tabID = String(line[tabStart..<second])
-            let labelStart = line.index(after: second)
-            let label = String(line[labelStart..<last])
-            let active = line[line.index(after: last)...]
-            guard !id.isEmpty, !tabID.isEmpty, active == "0" || active == "1" else { return nil }
+            let id = String(fields[0])
+            let windowID = String(fields[1])
+            let active = fields[2]
+            let path = String(fields[3])
+            let label = String(fields[4])
+            guard !id.isEmpty, !windowID.isEmpty, active == "0" || active == "1" else { return nil }
 
             return Pane(
                 id: id,
-                tabID: tabID,
+                tabID: windowID,
                 label: label.isEmpty ? id : label,
                 focused: active == "1",
-                status: .none
+                status: .none,
+                workspaceID: windowID,
+                workingDirectory: path.isEmpty ? nil : path
             )
         }
+    }
+
+    private static func nonEmpty(_ value: String?) -> String? {
+        guard let value, !value.isEmpty else { return nil }
+        return value
     }
 
     private struct Response: Decodable {
@@ -129,6 +162,9 @@ enum PaneQuery {
             let terminalTitle: String?
             let terminalTitleStripped: String?
             let focused: Bool?
+            let workspaceID: String?
+            let cwd: String?
+            let foregroundCwd: String?
 
             private enum CodingKeys: String, CodingKey {
                 case agent
@@ -139,6 +175,9 @@ enum PaneQuery {
                 case terminalTitle = "terminal_title"
                 case terminalTitleStripped = "terminal_title_stripped"
                 case focused
+                case workspaceID = "workspace_id"
+                case cwd
+                case foregroundCwd = "foreground_cwd"
             }
         }
     }
