@@ -55,6 +55,22 @@ extension LeaderNode {
         }
     }
 
+    /// Each command's key path from here, first occurrence winning -- the
+    /// sequence ⌘K shows and searches for a command.
+    func commandPaths() -> [AppCommand: [UInt16]] {
+        var paths: [AppCommand: [UInt16]] = [:]
+        func walk(_ node: LeaderNode, _ path: [UInt16]) {
+            switch node {
+            case .command(let command):
+                if paths[command] == nil { paths[command] = path }
+            case .group(_, let children):
+                for child in children { walk(child.node, path + [child.keyCode]) }
+            }
+        }
+        walk(self, [])
+        return paths
+    }
+
     var title: String {
         switch self {
         case .group(let title, _): return title
@@ -219,6 +235,11 @@ enum LeaderHintAssembler {
     /// The breadcrumb for the overlay header, e.g. `⌘/ w`.
     static func breadcrumb(leaderChord: String, path: [UInt16]) -> String {
         ([leaderChord] + path.map(glyph(for:))).joined(separator: " ")
+    }
+
+    /// A key path as typed after the leader, e.g. `o f` or `TAB n`.
+    static func sequence(for path: [UInt16]) -> String {
+        path.map(glyph(for:)).joined(separator: " ")
     }
 }
 

@@ -381,6 +381,12 @@ struct SessionSwitcherView: View {
                     .lineLimit(1)
             }
             Spacer()
+            if let sequence = item.leaderSequence {
+                Text(sequence)
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel("Leader keys \(sequence)")
+            }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 7)

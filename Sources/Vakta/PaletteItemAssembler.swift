@@ -31,11 +31,14 @@ enum PaletteItemAssembler {
     ///     workspace id; missing entries fall back to `.none`.
     ///   - commands: the static command rows (already availability-filtered),
     ///     appended last.
+    ///   - leaderSequences: each command's leader-key sequence, if any (empty
+    ///     while leader keys are off).
     static func assemble(
         sessions: [SessionEntry],
         workspaces: [UUID: [Workspace]],
         workspaceStatus: [String: AgentStatus],
-        commands: [AppCommand]
+        commands: [AppCommand],
+        leaderSequences: [AppCommand: String] = [:]
     ) -> [PaletteItem] {
         var items: [PaletteItem] = []
 
@@ -67,7 +70,8 @@ enum PaletteItemAssembler {
                 subtitle: nil,
                 category: .action,
                 status: .none,
-                kind: .command(command)
+                kind: .command(command),
+                leaderSequence: leaderSequences[command]
             ))
         }
 

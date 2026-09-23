@@ -850,6 +850,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
     }
 
+    /// Each command's leader sequence for the ⌘K rows, or none while leader
+    /// keys are off (a sequence you can't type would only mislead).
+    private func paletteLeaderSequences() -> [AppCommand: String] {
+        guard keybindingMatcher.leaderSettings.isEnabled else { return [:] }
+        return keybindingMatcher.leaderRoot.commandPaths().mapValues(LeaderHintAssembler.sequence(for:))
+    }
+
     /// Starting a leader sequence refreshes the selected session's workspace
     /// cache, so `TAB` lists current names (the cache otherwise only fills
     /// on sidebar disclosure or ⌘K).
@@ -879,7 +886,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             sessions: sessions,
             workspaces: [:],
             workspaceStatus: sessionStore.paneStatusByWorkspaceID,
-            commands: commands
+            commands: commands,
+            leaderSequences: paletteLeaderSequences()
         )
         let generation = switcherModel.reset(items: items)
         switcherModel.onNavigation = nil

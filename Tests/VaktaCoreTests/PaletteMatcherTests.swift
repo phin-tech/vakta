@@ -21,6 +21,56 @@ final class PaletteMatcherTests: XCTestCase {
         )
     }
 
+    private func command(_ title: String, sequence: String?) -> PaletteItem {
+        PaletteItem(
+            id: "action:\(title)",
+            title: title,
+            subtitle: nil,
+            category: .action,
+            status: .none,
+            kind: .command(.toggleFileSidebar),
+            leaderSequence: sequence
+        )
+    }
+
+    // MARK: Leader sequences
+
+    func test_matches_leaderSequence_findsACommandWhoseTitleDoesNotMatch() {
+        let items = [command("Toggle File Sidebar", sequence: "o f"), command("New Session", sequence: "s n")]
+        XCTAssertEqual(PaletteMatcher.matches(query: "of", in: items).map(\.title), ["Toggle File Sidebar"])
+    }
+
+    func test_matches_leaderSequence_ignoresSpacesAndCase() {
+        let items = [command("Toggle File Sidebar", sequence: "o f")]
+        XCTAssertEqual(PaletteMatcher.matches(query: "O F", in: items).count, 1)
+        XCTAssertEqual(PaletteMatcher.matches(query: " of ", in: items).count, 1)
+    }
+
+    func test_matches_namedKeysInASequence_matchTheirSpelledName() {
+        let items = [command("New Workspace", sequence: "TAB n")]
+        XCTAssertEqual(PaletteMatcher.matches(query: "tabn", in: items).count, 1)
+        XCTAssertEqual(PaletteMatcher.matches(query: "tab n", in: items).count, 1)
+    }
+
+    func test_matches_exactSequenceMatch_ranksAheadOfTitleMatches() {
+        let items = [command("Proof Reader", sequence: nil), command("Toggle File Sidebar", sequence: "o f")]
+        XCTAssertEqual(
+            PaletteMatcher.matches(query: "of", in: items).map(\.title),
+            ["Toggle File Sidebar", "Proof Reader"]
+        )
+    }
+
+    func test_matches_partialSequence_isNotASequenceMatch() {
+        let items = [command("Split Right", sequence: "w v")]
+        XCTAssertTrue(PaletteMatcher.matches(query: "w", in: items).isEmpty)
+    }
+
+    func test_matches_rowsWithoutSequence_matchOnTitleAsBefore() {
+        let items = [command("Split Right", sequence: nil)]
+        XCTAssertTrue(PaletteMatcher.matches(query: "wv", in: items).isEmpty)
+        XCTAssertEqual(PaletteMatcher.matches(query: "split", in: items).count, 1)
+    }
+
     func test_matches_emptyQuery_returnsAllItemsInOrder() {
         let items = [item("alpha"), item("beta")]
 

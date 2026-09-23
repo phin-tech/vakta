@@ -163,4 +163,22 @@ final class PaletteItemAssemblerTests: XCTestCase {
 
         XCTAssertEqual(Set(items.map(\.id)).count, items.count)
     }
+
+    func test_assemble_attachesLeaderSequences_toCommandRowsThatHaveOne() {
+        let items = PaletteItemAssembler.assemble(
+            sessions: [],
+            workspaces: [:],
+            workspaceStatus: [:],
+            commands: [.toggleFileSidebar, .newSession],
+            leaderSequences: [.toggleFileSidebar: "o f"]
+        )
+        XCTAssertEqual(items.map(\.leaderSequence), ["o f", nil])
+    }
+
+    func test_assemble_withoutLeaderSequences_leavesRowsWithoutOne() {
+        let items = PaletteItemAssembler.assemble(
+            sessions: [], workspaces: [:], workspaceStatus: [:], commands: [.toggleFileSidebar]
+        )
+        XCTAssertNil(items[0].leaderSequence)
+    }
 }

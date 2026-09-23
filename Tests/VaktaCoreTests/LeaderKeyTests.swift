@@ -27,6 +27,8 @@ private enum Key {
     static let comma: UInt16 = 43
     static let one: UInt16 = 18
     static let two: UInt16 = 19
+    static let o: UInt16 = 31
+    static let f: UInt16 = 3
     static let three: UInt16 = 20
 }
 
@@ -79,6 +81,20 @@ final class LeaderTreeTests: XCTestCase {
         XCTAssertEqual(root.node(at: [Key.tab, Key.n]), .command(.newWorkspace))
         XCTAssertEqual(root.node(at: [Key.tab, Key.one]), .command(.focusWorkspace(0)))
         XCTAssertEqual(root.node(at: [Key.q, Key.q]), .command(.quit))
+    }
+
+    func test_commandPaths_mapEachLeafToItsKeySequence() {
+        let paths = LeaderTree.defaultRoot.commandPaths()
+        XCTAssertEqual(paths[.toggleFileSidebar], [Key.o, Key.f])
+        XCTAssertEqual(paths[.splitPaneRight], [Key.w, Key.v])
+        XCTAssertEqual(paths[.selectSession(0)], [Key.s, Key.one])
+        XCTAssertEqual(paths[.openSessionSwitcher], [Key.space])
+        XCTAssertNil(paths[.copy], "not in the tree")
+    }
+
+    func test_sequenceDisplay_joinsGlyphsWithSpaces() {
+        XCTAssertEqual(LeaderHintAssembler.sequence(for: [Key.o, Key.f]), "o f")
+        XCTAssertEqual(LeaderHintAssembler.sequence(for: [Key.tab, Key.n]), "TAB n")
     }
 
     func test_nodeAtPath_emptyPathIsRoot_unknownPathIsNil() {

@@ -79,4 +79,7 @@ struct PaletteItem: Identifiable, Equatable {
     let category: PaletteCategory
     let status: AgentStatus
     let kind: PaletteItemKind
+    /// A command row's leader-key sequence (`"o f"`), when leader keys are
+    /// on: shown on the row and searchable (`PaletteMatcher`).
+    var leaderSequence: String? = nil
 }
