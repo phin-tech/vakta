@@ -44,4 +44,38 @@ final class FileSidebarPreferencesCodecTests: XCTestCase {
     func test_nonFiniteWidth_clampsToDefault() {
         XCTAssertEqual(FileSidebarPreferences(width: .nan).clampedWidth, 260)
     }
+
+    func test_missingMode_defaultsToFiles() throws {
+        XCTAssertEqual(try decode(#"{"isVisible": true, "width": 300}"#).mode, .files)
+    }
+
+    func test_unknownMode_fallsBackToFiles_keepingTheOtherFields() throws {
+        let prefs = try decode(#"{"isVisible": true, "width": 300, "mode": "blame"}"#)
+        XCTAssertEqual(prefs, FileSidebarPreferences(isVisible: true, width: 300, mode: .files))
+    }
+
+    func test_changesMode_roundTrips() throws {
+        let original = FileSidebarPreferences(isVisible: true, width: 300, mode: .changes)
+        let data = try JSONEncoder().encode(original)
+        XCTAssertEqual(try JSONDecoder().decode(FileSidebarPreferences.self, from: data), original)
+    }
+}
+
+final class FileSidebarModePlannerTests: XCTestCase {
+    func test_hiddenSidebar_opensInChanges_whateverItsLastMode() {
+        for mode in [FileSidebarMode.files, .changes] {
+            let next = FileSidebarModePlanner.togglingChanges(FileSidebarPreferences(isVisible: false, width: 300, mode: mode))
+            XCTAssertEqual(next, FileSidebarPreferences(isVisible: true, width: 300, mode: .changes), "\(mode)")
+        }
+    }
+
+    func test_visibleFiles_switchesToChanges() {
+        let next = FileSidebarModePlanner.togglingChanges(FileSidebarPreferences(isVisible: true, width: 300, mode: .files))
+        XCTAssertEqual(next, FileSidebarPreferences(isVisible: true, width: 300, mode: .changes))
+    }
+
+    func test_visibleChanges_switchesBackToFiles_andStaysVisible() {
+        let next = FileSidebarModePlanner.togglingChanges(FileSidebarPreferences(isVisible: true, width: 300, mode: .changes))
+        XCTAssertEqual(next, FileSidebarPreferences(isVisible: true, width: 300, mode: .files))
+    }
 }

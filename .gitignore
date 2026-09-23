@@ -2,6 +2,7 @@
 .swiftpm/
 .index-build/
 DerivedData/
+build/
 *.xcodeproj
 *.xcworkspace
 .DS_Store

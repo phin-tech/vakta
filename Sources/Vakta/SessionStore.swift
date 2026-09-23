@@ -135,6 +135,12 @@ final class SessionStore: ObservableObject {
     /// session is selected.
     @Published private(set) var fileSidebarRoot: String?
 
+    /// Fires after every `refreshFileSidebarRoot` completion, whether or not
+    /// the root moved -- the Changes view re-runs git on it (a file edited in
+    /// the terminal changes git status without moving the root). A subject,
+    /// not `@Published`, so it doesn't re-render observers on every input.
+    let fileSidebarRefreshed = PassthroughSubject<Void, Never>()
+
     /// Fallback repeating poll for `agentStatus` -- stays active unchanged
     /// even once `herdrEventClients` exist (defense in depth: a bug in the
     /// socket path never regresses status updates below this cadence). Each
@@ -967,6 +973,7 @@ final class SessionStore: ObservableObject {
     func refreshFileSidebarRoot() {
         guard let id = selectedID, let session = sessions.first(where: { $0.id == id }) else {
             fileSidebarRoot = nil
+            fileSidebarRefreshed.send()
             return
         }
         let terminalReportedWorkingDirectory = session.viewState.workingDirectory
@@ -1002,6 +1009,7 @@ final class SessionStore: ObservableObject {
                 // would still fire `@Published` and rebuild the tree, collapsing
                 // whatever the user expanded.
                 if self.fileSidebarRoot != root { self.fileSidebarRoot = root }
+                self.fileSidebarRefreshed.send()
             }
         }
     }

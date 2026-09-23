@@ -1132,6 +1132,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .nextUnreadSession: sessionStore.goToNextUnreadSession()
         case .newSession: sessionStore.createSession()
         case .toggleFileSidebar: fileSidebarPreferences.isVisible.toggle()
+        case .toggleFileSidebarChanges:
+            fileSidebarPreferences.apply(FileSidebarModePlanner.togglingChanges(fileSidebarPreferences.preferences))
         case .openInEditor: openInEditor()
         case .splitPaneRight: performWorkspacePaneAction { .splitPane(paneID: $0, direction: .right) }
         case .splitPaneDown: performWorkspacePaneAction { .splitPane(paneID: $0, direction: .down) }

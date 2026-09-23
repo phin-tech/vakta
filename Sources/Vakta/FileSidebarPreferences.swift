@@ -10,9 +10,17 @@
 
 import Foundation
 
+/// What the file sidebar lists: the whole directory tree, or only the files
+/// with git changes.
+enum FileSidebarMode: String, Codable {
+    case files
+    case changes
+}
+
 struct FileSidebarPreferences: Equatable {
     var isVisible: Bool = false
     var width: Double = 260
+    var mode: FileSidebarMode = .files
 
     /// The width clamped to a sane on-screen range at the point of use, so a
     /// corrupt or extreme persisted value can't produce an unusable pane.
@@ -29,12 +37,32 @@ extension FileSidebarPreferences: Codable {
     private enum CodingKeys: String, CodingKey {
         case isVisible
         case width
+        case mode
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         isVisible = try container.decodeIfPresent(Bool.self, forKey: .isVisible) ?? false
         width = try container.decodeIfPresent(Double.self, forKey: .width) ?? 260
+        // An unknown mode (a newer build's) is a view preference, not data
+        // worth rejecting the file over: fall back to the tree.
+        mode = (try? container.decodeIfPresent(FileSidebarMode.self, forKey: .mode)) ?? .files
+    }
+}
+
+enum FileSidebarModePlanner {
+    /// The "Toggle File Sidebar Git Changes" command: a hidden sidebar opens
+    /// straight into Changes; a visible one flips between Files and Changes
+    /// and stays open (Toggle File Sidebar is what hides it).
+    static func togglingChanges(_ preferences: FileSidebarPreferences) -> FileSidebarPreferences {
+        var next = preferences
+        if !preferences.isVisible {
+            next.isVisible = true
+            next.mode = .changes
+        } else {
+            next.mode = preferences.mode == .changes ? .files : .changes
+        }
+        return next
     }
 }
 
@@ -61,11 +89,16 @@ enum FileSidebarPreferencesPersistence {
 final class FileSidebarPreferencesStore: ObservableObject {
     @Published var isVisible: Bool { didSet { persist() } }
     @Published var width: Double { didSet { persist() } }
+    @Published var mode: FileSidebarMode { didSet { persist() } }
+
+    var preferences: FileSidebarPreferences {
+        FileSidebarPreferences(isVisible: isVisible, width: width, mode: mode)
+    }
 
     /// `width` clamped to the on-screen range for laying out the pane.
-    var clampedWidth: Double {
-        FileSidebarPreferences(isVisible: isVisible, width: width).clampedWidth
-    }
+    var clampedWidth: Double { preferences.clampedWidth }
+
+    private var isApplying = false
 
     private let root: URL
 
@@ -80,16 +113,26 @@ final class FileSidebarPreferencesStore: ObservableObject {
         }
         isVisible = loaded.isVisible
         width = loaded.width
+        mode = loaded.mode
 
         if case .missing = outcome {
             FileSidebarPreferencesPersistence.save(loaded, root: root)
         }
     }
 
+    /// Sets every field from `preferences`, saving once at the end rather
+    /// than once per changed field.
+    func apply(_ preferences: FileSidebarPreferences) {
+        isApplying = true
+        if mode != preferences.mode { mode = preferences.mode }
+        if width != preferences.width { width = preferences.width }
+        if isVisible != preferences.isVisible { isVisible = preferences.isVisible }
+        isApplying = false
+        persist()
+    }
+
     private func persist() {
-        FileSidebarPreferencesPersistence.save(
-            FileSidebarPreferences(isVisible: isVisible, width: width),
-            root: root
-        )
+        guard !isApplying else { return }
+        FileSidebarPreferencesPersistence.save(preferences, root: root)
     }
 }

@@ -15,6 +15,7 @@ private enum Key {
     static let a: UInt16 = 0
     static let s: UInt16 = 1
     static let d: UInt16 = 2
+    static let g: UInt16 = 5
     static let v: UInt16 = 9
     static let q: UInt16 = 12
     static let w: UInt16 = 13
@@ -86,6 +87,7 @@ final class LeaderTreeTests: XCTestCase {
     func test_commandPaths_mapEachLeafToItsKeySequence() {
         let paths = LeaderTree.defaultRoot.commandPaths()
         XCTAssertEqual(paths[.toggleFileSidebar], [Key.o, Key.f])
+        XCTAssertEqual(paths[.toggleFileSidebarChanges], [Key.o, Key.g])
         XCTAssertEqual(paths[.splitPaneRight], [Key.w, Key.v])
         XCTAssertEqual(paths[.selectSession(0)], [Key.s, Key.one])
         XCTAssertEqual(paths[.openSessionSwitcher], [Key.space])

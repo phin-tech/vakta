@@ -31,7 +31,7 @@ extension AppCommand {
         case .quit, .closeWindow: return .global
         case .selectSession, .toggleSidebar, .openPreferences, .openSessionSwitcher, .copy, .paste, .cut, .selectAll,
              .increaseFontSize, .decreaseFontSize, .resetFontSize, .nextUnreadSession,
-             .newSession, .toggleFileSidebar, .openInEditor,
+             .newSession, .toggleFileSidebar, .toggleFileSidebarChanges, .openInEditor,
              .splitPaneRight, .splitPaneDown, .zoomPane, .closePane, .renamePane,
              .closeWorkspace, .newWorkspace, .stopSession,
              .editHerdrConfig, .reloadHerdrConfig, .focusWorkspace,

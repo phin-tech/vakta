@@ -39,10 +39,10 @@ final class AppCommandCatalogTests: XCTestCase {
         XCTAssertEqual(rows.map(\.title), legacyPaletteRows.map(\.title))
     }
 
-    func test_paletteCommands_endWithTheOnboardingRows() {
+    func test_paletteCommands_endWithTheGitChangesAndOnboardingRows() {
         let rows = AppCommandCatalog.paletteCommands.dropFirst(legacyPaletteRows.count).map { (id: $0.stableID, title: $0.title) }
-        XCTAssertEqual(rows.map(\.id), ["showWelcomeTour", "showWhatsNew"])
-        XCTAssertEqual(rows.map(\.title), ["Show Welcome Tour", "What's New in Vakta"])
+        XCTAssertEqual(rows.map(\.id), ["toggleFileSidebarChanges", "showWelcomeTour", "showWhatsNew"])
+        XCTAssertEqual(rows.map(\.title), ["Toggle File Sidebar Git Changes", "Show Welcome Tour", "What's New in Vakta"])
     }
 
     func test_chordOnlyCommands_keepTheirExistingTitles() {
@@ -69,7 +69,7 @@ final class AppCommandCatalogTests: XCTestCase {
         ]
         let workspaceSlots: [AppCommand] = (0..<9).map { .focusWorkspace($0) }
         let paletteOnly: [AppCommand] = [
-            .newSession, .toggleFileSidebar, .openInEditor,
+            .newSession, .toggleFileSidebar, .toggleFileSidebarChanges, .openInEditor,
             .splitPaneRight, .splitPaneDown, .zoomPane, .closePane, .renamePane,
             .closeWorkspace, .newWorkspace, .stopSession,
             .editHerdrConfig, .reloadHerdrConfig,
@@ -140,7 +140,7 @@ final class CommandAvailabilityTests: XCTestCase {
         let context = CommandContext(supportsSelectedSessionActions: false)
         let visible = AppCommandCatalog.paletteCommands.filter { CommandAvailability.isAvailable($0, in: context) }
         XCTAssertEqual(visible, otherPaletteCommands)
-        XCTAssertEqual(visible.count, 12)
+        XCTAssertEqual(visible.count, 13)
     }
 
     func test_selectSession_availableOnlyWhenASessionExistsAtThatIndex() {
