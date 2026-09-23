@@ -173,6 +173,18 @@ final class SessionStore: ObservableObject {
         }
     )
     private var pullRequestTimer: Timer?
+    /// False while the status bar is set to Never: no pane listing, git, or
+    /// gh runs at all.
+    var isPullRequestStatusEnabled = true {
+        didSet {
+            guard isPullRequestStatusEnabled != oldValue else { return }
+            if isPullRequestStatusEnabled {
+                refreshPullRequestStatus()
+            } else {
+                pullRequestStatus.refresh(sessions: [], focusedSessionID: nil, forceFocused: false)
+            }
+        }
+    }
     private static let pullRequestRefreshInterval: TimeInterval = 20
     /// At most one agent-status poll, and separately at most one discovery
     /// refresh, in flight at a time -- see `SingleFlightGate`.
@@ -523,7 +535,12 @@ final class SessionStore: ObservableObject {
     /// refetches the selected session's focused repository regardless of
     /// age -- used when the app becomes active, so a PR pushed from
     /// elsewhere shows without waiting for the TTL.
-    func refreshPullRequestStatus(forceFocused: Bool = false) {
+    /// `evenIfDisabled` runs one cycle while the status bar is set to Never
+    /// -- "Show Status Bar Briefly" needs something to show.
+    func refreshPullRequestStatus(forceFocused: Bool = false, evenIfDisabled: Bool = false) {
+        // While disabled, the timer does nothing -- data a one-off
+        // `evenIfDisabled` cycle fetched stays until the next one.
+        guard isPullRequestStatusEnabled || evenIfDisabled else { return }
         let snapshots = sessions.compactMap { session -> PullRequestSessionSnapshot? in
             guard case .multiplexer(let target) = LaunchTargetResolver.resolve(session.profile),
                   Self.supportsGlobalPaneSearch(session)

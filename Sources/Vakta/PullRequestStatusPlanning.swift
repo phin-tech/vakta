@@ -81,12 +81,19 @@ struct FocusedPullRequestState: Equatable {
     let pullRequest: PullRequestStatus?
 }
 
+extension PullRequestStatus {
+    var needsAttention: Bool { checks.state == .failing || review == .changesRequested }
+}
+
 struct PullRequestSummary: Equatable {
     var pullRequestCount: Int
     var failingChecks: Int
     var changesRequested: Int
+    /// Distinct PRs with failing checks or changes requested (a PR with
+    /// both counts once).
+    var needingAttention: Int
 
-    var needsAttention: Bool { failingChecks > 0 || changesRequested > 0 }
+    var needsAttention: Bool { needingAttention > 0 }
 }
 
 enum PullRequestStatusProjection {
@@ -124,7 +131,8 @@ enum PullRequestStatusProjection {
             return PullRequestSummary(
                 pullRequestCount: pullRequests.count,
                 failingChecks: pullRequests.filter { $0.checks.state == .failing }.count,
-                changesRequested: pullRequests.filter { $0.review == .changesRequested }.count
+                changesRequested: pullRequests.filter { $0.review == .changesRequested }.count,
+                needingAttention: pullRequests.filter(\.needsAttention).count
             )
         }
     }

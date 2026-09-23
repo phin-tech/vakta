@@ -179,10 +179,20 @@ final class PullRequestStatusPlanningTests: XCTestCase {
         let summaries = PullRequestStatusProjection.workspaceSummaries(panes: panes, statuses: statuses)
 
         XCTAssertEqual(summaries, [
-            "w1": PullRequestSummary(pullRequestCount: 2, failingChecks: 1, changesRequested: 1),
-            "w2": PullRequestSummary(pullRequestCount: 1, failingChecks: 0, changesRequested: 0),
+            "w1": PullRequestSummary(pullRequestCount: 2, failingChecks: 1, changesRequested: 1, needingAttention: 2),
+            "w2": PullRequestSummary(pullRequestCount: 1, failingChecks: 0, changesRequested: 0, needingAttention: 0),
         ])
         XCTAssertTrue(summaries["w1"]?.needsAttention == true)
         XCTAssertTrue(summaries["w2"]?.needsAttention == false)
+    }
+
+    func test_workspaceSummaries_pullRequestFailingWithChangesRequested_needsAttentionOnce() {
+        let panes = [Pane(id: "p1", tabID: "t", label: "", focused: false, status: .none, workspaceID: "w1", workingDirectory: "/a")]
+        let both = pr(1, branch: "a", checks: PullRequestChecks(passing: 0, failing: 1, pending: 0), review: .changesRequested)
+
+        XCTAssertEqual(
+            PullRequestStatusProjection.workspaceSummaries(panes: panes, statuses: ["p1": both])["w1"],
+            PullRequestSummary(pullRequestCount: 1, failingChecks: 1, changesRequested: 1, needingAttention: 1)
+        )
     }
 }

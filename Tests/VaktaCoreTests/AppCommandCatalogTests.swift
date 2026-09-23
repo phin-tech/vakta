@@ -39,10 +39,16 @@ final class AppCommandCatalogTests: XCTestCase {
         XCTAssertEqual(rows.map(\.title), legacyPaletteRows.map(\.title))
     }
 
-    func test_paletteCommands_endWithTheGitChangesAndOnboardingRows() {
+    func test_paletteCommands_endWithTheGitChangesOnboardingAndStatusBarRows() {
         let rows = AppCommandCatalog.paletteCommands.dropFirst(legacyPaletteRows.count).map { (id: $0.stableID, title: $0.title) }
-        XCTAssertEqual(rows.map(\.id), ["toggleFileSidebarChanges", "showWelcomeTour", "showWhatsNew"])
-        XCTAssertEqual(rows.map(\.title), ["Toggle File Sidebar Git Changes", "Show Welcome Tour", "What's New in Vakta"])
+        XCTAssertEqual(rows.map(\.id), [
+            "toggleFileSidebarChanges", "showWelcomeTour", "showWhatsNew",
+            "showStatusBarBriefly", "cycleStatusBar", "openPullRequest",
+        ])
+        XCTAssertEqual(rows.map(\.title), [
+            "Toggle File Sidebar Git Changes", "Show Welcome Tour", "What's New in Vakta",
+            "Show Status Bar Briefly", "Cycle Status Bar Visibility", "Open Pull Request",
+        ])
     }
 
     func test_chordOnlyCommands_keepTheirExistingTitles() {
@@ -74,6 +80,7 @@ final class AppCommandCatalogTests: XCTestCase {
             .closeWorkspace, .newWorkspace, .stopSession,
             .editHerdrConfig, .reloadHerdrConfig,
             .showWelcomeTour, .showWhatsNew,
+            .showStatusBarBriefly, .cycleStatusBar, .openPullRequest,
         ]
         let bindable = AppCommandCatalog.bindableCommands
 
@@ -140,7 +147,7 @@ final class CommandAvailabilityTests: XCTestCase {
         let context = CommandContext(supportsSelectedSessionActions: false)
         let visible = AppCommandCatalog.paletteCommands.filter { CommandAvailability.isAvailable($0, in: context) }
         XCTAssertEqual(visible, otherPaletteCommands)
-        XCTAssertEqual(visible.count, 13)
+        XCTAssertEqual(visible.count, 16)
     }
 
     func test_selectSession_availableOnlyWhenASessionExistsAtThatIndex() {

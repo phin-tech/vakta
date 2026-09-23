@@ -136,7 +136,7 @@ final class PullRequestStatusStoreTests: XCTestCase {
 
         XCTAssertEqual(store.focused[sessionID]?.target.branch, "feature")
         XCTAssertEqual(store.focused[sessionID]?.pullRequest?.number, 7)
-        XCTAssertEqual(store.workspaceSummaries[sessionID]?["w1"], PullRequestSummary(pullRequestCount: 1, failingChecks: 1, changesRequested: 0))
+        XCTAssertEqual(store.workspaceSummaries[sessionID]?["w1"], PullRequestSummary(pullRequestCount: 1, failingChecks: 1, changesRequested: 0, needingAttention: 1))
     }
 
     func test_focusedPaneWithoutPullRequest_publishesBranchOnly() {
