@@ -13,23 +13,28 @@ import SwiftUI
 final class StatusBarViewModel: ObservableObject {
     @Published var content = StatusBarContent(branch: nil, pullRequest: nil, attentionElsewhere: 0)
     var openURL: (String) -> Void = { _ in }
-    /// The checks popover opened (true) or closed; Auto-hide holds the bar
-    /// revealed while it's open.
-    var checksPopoverChanged: (Bool) -> Void = { _ in }
+    /// True while any of the bar's popovers is open; Auto-hide holds the bar
+    /// revealed meanwhile. Tracked per popover, so moving from one list to
+    /// the other can't release the hold with a late close.
+    @Published private(set) var isAnyPopoverOpen = false
+    private var openPopovers: Set<StatusBarPopover> = []
+
+    func setPopover(_ popover: StatusBarPopover, open: Bool) {
+        if open { openPopovers.insert(popover) } else { openPopovers.remove(popover) }
+        let anyOpen = !openPopovers.isEmpty
+        if anyOpen != isAnyPopoverOpen { isAnyPopoverOpen = anyOpen }
+    }
+}
+
+enum StatusBarPopover: Hashable {
+    case checks
+    case workspace
 }
 
 struct StatusBarView: View {
     static let height: CGFloat = 22
 
     @ObservedObject var model: StatusBarViewModel
-
-    /// The checks popover opens after the pointer rests on the PR block, and
-    /// stays open while it's over the block or the popover itself.
-    @State private var showsChecks = false
-    /// The pointer is over the PR block (glyph, number, count).
-    @State private var isOverChecksLabel = false
-    @State private var isOverChecksList = false
-    @State private var checksHoverWork: DispatchWorkItem?
 
     var body: some View {
         let content = model.content
@@ -67,35 +72,33 @@ struct StatusBarView: View {
                     if let label = pullRequest.checksLabel {
                         Text(label)
                             .foregroundStyle(.secondary)
-                            .onTapGesture { showsChecks.toggle() }
                             .accessibilityLabel("\(label) checks passing")
-                            .accessibilityAddTraits(.isButton)
                     }
                 }
-                .contentShape(Rectangle())
-                .onHover { hovering in
-                    guard pullRequest.checksLabel != nil else { return }
-                    isOverChecksLabel = hovering
-                    checksHoverChanged()
-                }
-                .popover(isPresented: $showsChecks, arrowEdge: .top) {
+                .hoverPopover(
+                    isEnabled: pullRequest.checksLabel != nil,
+                    onOpenChange: { model.setPopover(.checks, open: $0) }
+                ) {
                     StatusBarChecksList(pullRequest: pullRequest, openURL: model.openURL)
-                        .onHover { isOverChecksList = $0; checksHoverChanged() }
-                }
-                .onChange(of: showsChecks) { model.checksPopoverChanged($0) }
-                .onChange(of: pullRequest.checksLabel == nil) { noChecks in
-                    // Checks can disappear with the list open.
-                    if noChecks { isOverChecksLabel = false; showsChecks = false }
-                }
-                // The block can vanish with the list open (focus moved to a
-                // pane without a PR); release the hold.
-                .onDisappear {
-                    isOverChecksLabel = false
-                    if showsChecks { showsChecks = false }
-                    model.checksPopoverChanged(false)
                 }
             }
             Spacer(minLength: 8)
+            if content.showsWorkspacePullRequests, let glyph = content.workspaceGlyph {
+                HStack(spacing: 3) {
+                    Image(systemName: Self.symbol(for: glyph))
+                        .foregroundStyle(Self.color(for: glyph))
+                    Text(content.workspaceLabel)
+                        .foregroundStyle(.secondary)
+                }
+                .accessibilityLabel("\(content.workspaceLabel) in this workspace")
+                .hoverPopover(isEnabled: true, onOpenChange: { model.setPopover(.workspace, open: $0) }) {
+                    StatusBarWorkspaceList(
+                        pullRequests: content.workspacePullRequests,
+                        focusedURL: content.pullRequest?.url,
+                        openURL: model.openURL
+                    )
+                }
+            }
             if content.attentionElsewhere > 0 {
                 Label("\(content.attentionElsewhere)", systemImage: "exclamationmark.triangle.fill")
                     .labelStyle(.titleAndIcon)
@@ -113,16 +116,7 @@ struct StatusBarView: View {
         }
     }
 
-    private func checksHoverChanged() {
-        checksHoverWork?.cancel()
-        let wanted = isOverChecksLabel || isOverChecksList
-        guard wanted != showsChecks else { return }
-        let work = DispatchWorkItem { showsChecks = isOverChecksLabel || isOverChecksList }
-        checksHoverWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + (wanted ? 0.3 : 0.35), execute: work)
-    }
-
-    private static func symbol(for glyph: StatusBarGlyph) -> String {
+    static func symbol(for glyph: StatusBarGlyph) -> String {
         switch glyph {
         case .failing: return "xmark.circle.fill"
         case .changesRequested: return "exclamationmark.bubble.fill"
@@ -132,7 +126,7 @@ struct StatusBarView: View {
         }
     }
 
-    private static func color(for glyph: StatusBarGlyph) -> Color {
+    static func color(for glyph: StatusBarGlyph) -> Color {
         switch glyph {
         case .failing, .changesRequested: return .red
         case .pending: return .yellow
@@ -152,6 +146,126 @@ struct StatusBarView: View {
         }
         let draft = pullRequest.isDraft ? "Draft · " : ""
         return "\(draft)#\(pullRequest.number) \(pullRequest.title) — \(state). Click to open."
+    }
+}
+
+/// Opens `popover` once the pointer rests on the content, and keeps it open
+/// while the pointer is over the content or the popover (a separate window).
+/// `onOpenChange` reports every open/close, including a close forced by the
+/// content disappearing or being disabled with the popover open.
+private struct HoverPopover<Popover: View>: ViewModifier {
+    let isEnabled: Bool
+    let onOpenChange: (Bool) -> Void
+    let popover: () -> Popover
+
+    @State private var isShown = false
+    @State private var isOverContent = false
+    @State private var isOverPopover = false
+    @State private var pending: DispatchWorkItem?
+
+    func body(content: Content) -> some View {
+        content
+            .contentShape(Rectangle())
+            .onHover { isOverContent = $0 && isEnabled; hoverChanged() }
+            .popover(isPresented: $isShown, arrowEdge: .top) {
+                popover().onHover { isOverPopover = $0; hoverChanged() }
+            }
+            .onChange(of: isShown) { onOpenChange($0) }
+            .onChange(of: isEnabled) { enabled in
+                guard !enabled else { return }
+                isOverContent = false
+                isShown = false
+            }
+            .onDisappear {
+                pending?.cancel()
+                isOverContent = false
+                isOverPopover = false
+                if isShown { isShown = false }
+                onOpenChange(false)
+            }
+    }
+
+    private func hoverChanged() {
+        pending?.cancel()
+        let wanted = isOverContent || isOverPopover
+        guard wanted != isShown else { return }
+        let work = DispatchWorkItem { isShown = isOverContent || isOverPopover }
+        pending = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + (wanted ? 0.3 : 0.35), execute: work)
+    }
+}
+
+private extension View {
+    func hoverPopover<Popover: View>(
+        isEnabled: Bool,
+        onOpenChange: @escaping (Bool) -> Void,
+        @ViewBuilder popover: @escaping () -> Popover
+    ) -> some View {
+        modifier(HoverPopover(isEnabled: isEnabled, onOpenChange: onOpenChange, popover: popover))
+    }
+}
+
+/// Every PR in the focused pane's workspace, worst first; the focused PR is
+/// highlighted, and a row opens its PR.
+struct StatusBarWorkspaceList: View {
+    let pullRequests: [StatusBarPullRequest]
+    let focusedURL: String?
+    let openURL: (String) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("This workspace · \(pullRequests.count == 1 ? "1 PR" : "\(pullRequests.count) PRs")")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.secondary)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(pullRequests, id: \.url) { row($0) }
+                }
+            }
+            .frame(maxHeight: 320)
+        }
+        .padding(10)
+        .frame(width: 340)
+    }
+
+    private func row(_ pullRequest: StatusBarPullRequest) -> some View {
+        Button {
+            openURL(pullRequest.url)
+        } label: {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Image(systemName: StatusBarView.symbol(for: pullRequest.glyph))
+                    .foregroundStyle(StatusBarView.color(for: pullRequest.glyph))
+                Text("#\(pullRequest.number)")
+                    .monospacedDigit()
+                    .foregroundStyle(pullRequest.isDraft ? .secondary : .primary)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(pullRequest.title)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    Text(pullRequest.branch)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                Spacer(minLength: 4)
+                if let label = pullRequest.checksLabel {
+                    Text(label)
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .font(.system(size: 12))
+            .padding(.vertical, 3)
+            .padding(.horizontal, 4)
+            .background(
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(pullRequest.url == focusedURL ? Color.accentColor.opacity(0.15) : .clear)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(pullRequest.url == focusedURL ? "Focused pane's PR — open #\(pullRequest.number)" : "Open #\(pullRequest.number)")
     }
 }
 

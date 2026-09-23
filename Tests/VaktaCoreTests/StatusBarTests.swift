@@ -83,7 +83,8 @@ final class StatusBarTests: XCTestCase {
             url: "https://github.com/o/r/pull/12",
             title: "Title 12",
             isDraft: true,
-            glyph: .noChecks
+            glyph: .noChecks,
+            branch: "feat/x"
         ))
     }
 
@@ -138,6 +139,60 @@ final class StatusBarTests: XCTestCase {
         let summaries = ["w1": PullRequestSummary(pullRequestCount: 1, failingChecks: 1, changesRequested: 0, needingAttention: 1)]
 
         XCTAssertFalse(StatusBarPresentation.content(focused: nil, workspaceSummaries: summaries).isEmpty)
+    }
+
+    // MARK: workspace list
+
+    private func workspacePR(_ number: Int, branch: String, checks: PullRequestChecks = PullRequestChecks(passing: 1, failing: 0, pending: 0), review: PullRequestReview? = nil) -> PullRequestStatus {
+        PullRequestStatus(
+            number: number, url: "https://github.com/o/r/pull/\(number)", title: "T\(number)", isDraft: false,
+            headBranch: branch, headOwner: "o", checks: checks, review: review
+        )
+    }
+
+    func test_workspaceList_worstFirstThenNumber_withBranchAndChecks() {
+        let failing = PullRequestChecks(passing: 1, failing: 1, pending: 0)
+        let pending = PullRequestChecks(passing: 0, failing: 0, pending: 1)
+        let list = [
+            workspacePR(5, branch: "e"),
+            workspacePR(8, branch: "h", checks: pending),
+            workspacePR(3, branch: "c", checks: failing),
+            workspacePR(1, branch: "a"),
+            workspacePR(2, branch: "b", review: .changesRequested),
+        ]
+
+        let content = StatusBarPresentation.content(focused: nil, workspaceSummaries: [:], workspacePullRequests: list)
+
+        XCTAssertEqual(content.workspacePullRequests.map(\.number), [3, 2, 8, 1, 5])
+        XCTAssertEqual(content.workspacePullRequests.first?.branch, "c")
+        XCTAssertEqual(content.workspacePullRequests.first?.checksLabel, "1/2")
+        XCTAssertEqual(content.workspaceGlyph, .failing)
+        XCTAssertEqual(content.workspaceLabel, "5 PRs")
+        XCTAssertTrue(content.showsWorkspacePullRequests)
+        XCTAssertFalse(content.isEmpty)
+    }
+
+    func test_workspaceList_hiddenWhenItOnlyRepeatsTheFocusedPullRequest() {
+        let only = workspacePR(12, branch: "feat/x")
+        var focusedPR = pr(12)
+        focusedPR.checkRuns = []
+
+        let repeatOnly = StatusBarPresentation.content(focused: focused(focusedPR), workspaceSummaries: [:], workspacePullRequests: [only])
+        XCTAssertFalse(repeatOnly.showsWorkspacePullRequests)
+
+        let withOther = StatusBarPresentation.content(
+            focused: focused(focusedPR), workspaceSummaries: [:],
+            workspacePullRequests: [only, workspacePR(4, branch: "d")]
+        )
+        XCTAssertTrue(withOther.showsWorkspacePullRequests)
+        XCTAssertEqual(withOther.workspaceLabel, "2 PRs")
+
+        XCTAssertFalse(StatusBarPresentation.content(focused: nil, workspaceSummaries: [:], workspacePullRequests: []).showsWorkspacePullRequests)
+    }
+
+    func test_workspaceLabel_singular() {
+        let content = StatusBarPresentation.content(focused: nil, workspaceSummaries: [:], workspacePullRequests: [workspacePR(4, branch: "d")])
+        XCTAssertEqual(content.workspaceLabel, "1 PR")
     }
 
     // MARK: docked presence

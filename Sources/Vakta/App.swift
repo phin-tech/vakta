@@ -88,6 +88,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let statusBarModel = StatusBarViewModel()
     private var statusBarObserver: AnyCancellable?
     private var statusBarVisibilityObserver: AnyCancellable?
+    private var statusBarPopoverObserver: AnyCancellable?
     private var isStatusBarDocked = false
     private var statusBarVisibility: StatusBarVisibility = .auto
     private var statusBarDockState = StatusBarDockState()
@@ -343,7 +344,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let url = URL(string: url) else { return }
             NSWorkspace.shared.open(url)
         }
-        statusBarModel.checksPopoverChanged = { [weak self] open in
+        statusBarPopoverObserver = statusBarModel.$isAnyPopoverOpen.removeDuplicates().sink { [weak self] open in
             guard let self else { return }
             self.statusBarAutoHideState = StatusBarAutoHide.setHeld(self.statusBarAutoHideState, open, at: Date())
             self.updateStatusBarAutoHide()
@@ -352,17 +353,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.sessionStore.isPullRequestStatusEnabled = visibility.needsPullRequestStatus
         }
         let pullRequestStatus = sessionStore.pullRequestStatus
+        let workspaceState = Publishers.CombineLatest3(
+            pullRequestStatus.$workspaceSummaries,
+            pullRequestStatus.$workspacePullRequests,
+            pullRequestStatus.$focusedWorkspace
+        )
         statusBarObserver = Publishers.CombineLatest4(
             statusBarPreferences.$visibility,
             sessionStore.$selectedID,
             pullRequestStatus.$focused,
-            pullRequestStatus.$workspaceSummaries
+            workspaceState
         )
-        .sink { [weak self] visibility, selectedID, focused, summaries in
+        .sink { [weak self] visibility, selectedID, focused, workspaceState in
             guard let self else { return }
+            let (summaries, lists, focusedWorkspace) = workspaceState
+            let workspaceID = selectedID.flatMap { focusedWorkspace[$0] }
             let content = StatusBarPresentation.content(
                 focused: selectedID.flatMap { focused[$0] },
-                workspaceSummaries: selectedID.flatMap { summaries[$0] } ?? [:]
+                workspaceSummaries: selectedID.flatMap { summaries[$0] } ?? [:],
+                workspacePullRequests: selectedID.flatMap { id in workspaceID.flatMap { lists[id]?[$0] } } ?? []
             )
             let previous = selectedID == self.statusBarContentSessionID ? self.lastStatusBarContent : nil
             self.lastStatusBarContent = content

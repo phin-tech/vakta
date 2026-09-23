@@ -186,6 +186,31 @@ final class PullRequestStatusPlanningTests: XCTestCase {
         XCTAssertTrue(summaries["w2"]?.needsAttention == false)
     }
 
+    func test_workspacePullRequests_distinctPerWorkspace_byNumber() {
+        let panes = [
+            Pane(id: "p1", tabID: "t", label: "", focused: false, status: .none, workspaceID: "w1", workingDirectory: "/a"),
+            Pane(id: "p2", tabID: "t", label: "", focused: false, status: .none, workspaceID: "w1", workingDirectory: "/a"),
+            Pane(id: "p3", tabID: "t", label: "", focused: false, status: .none, workspaceID: "w1", workingDirectory: "/b"),
+            Pane(id: "p4", tabID: "t", label: "", focused: false, status: .none, workspaceID: "w2", workingDirectory: "/c"),
+            Pane(id: "p5", tabID: "t", label: "", focused: false, status: .none, workspaceID: nil, workingDirectory: "/d"),
+            Pane(id: "p6", tabID: "t", label: "", focused: false, status: .none, workspaceID: "w3", workingDirectory: "/plain"),
+        ]
+        let statuses = ["p1": pr(9, branch: "a"), "p2": pr(9, branch: "a"), "p3": pr(2, branch: "b"), "p4": pr(3, branch: "c"), "p5": pr(4, branch: "d")]
+
+        let lists = PullRequestStatusProjection.workspacePullRequests(panes: panes, statuses: statuses)
+
+        XCTAssertEqual(lists.mapValues { $0.map(\.number) }, ["w1": [2, 9], "w2": [3]])
+    }
+
+    func test_focusedWorkspaceID_isTheFocusedPanesWorkspace() {
+        let panes = [
+            Pane(id: "p1", tabID: "t", label: "", focused: false, status: .none, workspaceID: "w1", workingDirectory: "/a"),
+            Pane(id: "p2", tabID: "t", label: "", focused: true, status: .none, workspaceID: "w2", workingDirectory: nil),
+        ]
+        XCTAssertEqual(PullRequestStatusProjection.focusedWorkspaceID(panes: panes), "w2")
+        XCTAssertNil(PullRequestStatusProjection.focusedWorkspaceID(panes: [panes[0]]))
+    }
+
     func test_workspaceSummaries_pullRequestFailingWithChangesRequested_needsAttentionOnce() {
         let panes = [Pane(id: "p1", tabID: "t", label: "", focused: false, status: .none, workspaceID: "w1", workingDirectory: "/a")]
         let both = pr(1, branch: "a", checks: PullRequestChecks(passing: 0, failing: 1, pending: 0), review: .changesRequested)

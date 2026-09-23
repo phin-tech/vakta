@@ -139,6 +139,24 @@ final class PullRequestStatusStoreTests: XCTestCase {
         XCTAssertEqual(store.workspaceSummaries[sessionID]?["w1"], PullRequestSummary(pullRequestCount: 1, failingChecks: 1, changesRequested: 0, needingAttention: 1))
     }
 
+    func test_publishesWorkspacePullRequestsAndFocusedWorkspace_evenWhenFocusedPaneHasNoRepository() {
+        world.panes[sessionID] = [
+            pane("p1", "/plain", focused: true, workspace: "w1"),
+            pane("p2", "/r", workspace: "w1"),
+            pane("p3", "/other", workspace: "w2"),
+        ]
+        world.checkouts = ["/r": checkout("/r", "feature"), "/other": checkout("/other", "topic", remote: other)]
+        serve([pr(7, branch: "feature")])
+        serve([pr(3, branch: "topic")], for: other)
+
+        cycle()
+
+        XCTAssertEqual(store.focusedWorkspace[sessionID], "w1")
+        XCTAssertEqual(store.workspacePullRequests[sessionID]?["w1"]?.map(\.number), [7])
+        XCTAssertEqual(store.workspacePullRequests[sessionID]?["w2"]?.map(\.number), [3])
+        XCTAssertNil(store.focused[sessionID])
+    }
+
     func test_focusedPaneWithoutPullRequest_publishesBranchOnly() {
         world.panes[sessionID] = [pane("p1", "/r", focused: true)]
         world.checkouts = ["/r": checkout("/r", "main")]
@@ -175,6 +193,8 @@ final class PullRequestStatusStoreTests: XCTestCase {
 
         XCTAssertNil(store.focused[sessionID])
         XCTAssertNil(store.workspaceSummaries[sessionID])
+        XCTAssertNil(store.workspacePullRequests[sessionID])
+        XCTAssertNil(store.focusedWorkspace[sessionID])
     }
 
     func test_failingFetch_keepsPreviousStatusVisible() {

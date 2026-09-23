@@ -121,6 +121,7 @@ struct StatusBarPullRequest: Equatable {
     let title: String
     let isDraft: Bool
     let glyph: StatusBarGlyph
+    var branch: String = ""
     /// Every check for the hover list: failing, pending, passing, then by name.
     var checks: [PullRequestCheck] = []
     var checkCounts = PullRequestChecks(passing: 0, failing: 0, pending: 0)
@@ -137,35 +138,72 @@ struct StatusBarContent: Equatable {
     /// Other PRs in the selected session with failing checks or changes
     /// requested; 0 hides the indicator.
     var attentionElsewhere: Int
+    /// Every PR in the focused pane's workspace: worst first, then number.
+    var workspacePullRequests: [StatusBarPullRequest] = []
 
-    var isEmpty: Bool { branch == nil && pullRequest == nil && attentionElsewhere == 0 }
+    var isEmpty: Bool {
+        branch == nil && pullRequest == nil && attentionElsewhere == 0 && workspacePullRequests.isEmpty
+    }
+
+    /// The workspace block shows only when it adds something: a PR besides
+    /// the focused one.
+    var showsWorkspacePullRequests: Bool {
+        workspacePullRequests.contains { $0.url != pullRequest?.url }
+    }
+
+    var workspaceGlyph: StatusBarGlyph? {
+        workspacePullRequests.map(\.glyph).min { StatusBarPresentation.severity($0) < StatusBarPresentation.severity($1) }
+    }
+
+    var workspaceLabel: String {
+        workspacePullRequests.count == 1 ? "1 PR" : "\(workspacePullRequests.count) PRs"
+    }
 }
 
 enum StatusBarPresentation {
     /// `workspaceSummaries` are the selected session's. A PR open in panes
     /// of several workspaces is counted once per workspace -- an accepted
     /// overcount for a rare layout.
+    /// `workspacePullRequests` are the focused pane's workspace's.
     static func content(
         focused: FocusedPullRequestState?,
-        workspaceSummaries: [String: PullRequestSummary]
+        workspaceSummaries: [String: PullRequestSummary],
+        workspacePullRequests: [PullRequestStatus] = []
     ) -> StatusBarContent {
         let total = workspaceSummaries.values.reduce(0) { $0 + $1.needingAttention }
         let focusedNeedsAttention = focused?.pullRequest?.needsAttention == true
         return StatusBarContent(
             branch: focused?.target.branch,
-            pullRequest: focused?.pullRequest.map { pullRequest in
-                StatusBarPullRequest(
-                    number: pullRequest.number,
-                    url: pullRequest.url,
-                    title: pullRequest.title,
-                    isDraft: pullRequest.isDraft,
-                    glyph: glyph(for: pullRequest),
-                    checks: orderedForList(pullRequest.checkRuns),
-                    checkCounts: pullRequest.checks
-                )
-            },
-            attentionElsewhere: max(0, total - (focusedNeedsAttention ? 1 : 0))
+            pullRequest: focused?.pullRequest.map(barPullRequest),
+            attentionElsewhere: max(0, total - (focusedNeedsAttention ? 1 : 0)),
+            workspacePullRequests: workspacePullRequests.map(barPullRequest).sorted {
+                severity($0.glyph) != severity($1.glyph) ? severity($0.glyph) < severity($1.glyph) : $0.number < $1.number
+            }
         )
+    }
+
+    static func barPullRequest(_ pullRequest: PullRequestStatus) -> StatusBarPullRequest {
+        StatusBarPullRequest(
+            number: pullRequest.number,
+            url: pullRequest.url,
+            title: pullRequest.title,
+            isDraft: pullRequest.isDraft,
+            glyph: glyph(for: pullRequest),
+            branch: pullRequest.headBranch,
+            checks: orderedForList(pullRequest.checkRuns),
+            checkCounts: pullRequest.checks
+        )
+    }
+
+    /// Lower is worse -- the order `glyph(for:)` checks in.
+    static func severity(_ glyph: StatusBarGlyph) -> Int {
+        switch glyph {
+        case .failing: return 0
+        case .changesRequested: return 1
+        case .pending: return 2
+        case .passing: return 3
+        case .noChecks: return 4
+        }
     }
 
     /// Failing first, then pending, then passing; alphabetical within each.

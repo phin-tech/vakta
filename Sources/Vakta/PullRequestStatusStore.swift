@@ -26,6 +26,10 @@ final class PullRequestStatusStore: ObservableObject {
     @Published private(set) var focused: [Session.ID: FocusedPullRequestState] = [:]
     /// Per session, per workspace id: counts over distinct PRs.
     @Published private(set) var workspaceSummaries: [Session.ID: [String: PullRequestSummary]] = [:]
+    /// Per session, per workspace id: its distinct PRs, by number.
+    @Published private(set) var workspacePullRequests: [Session.ID: [String: [PullRequestStatus]]] = [:]
+    /// Per session: the focused pane's workspace id.
+    @Published private(set) var focusedWorkspace: [Session.ID: String] = [:]
 
     private struct Request {
         var sessions: [PullRequestSessionSnapshot]
@@ -116,6 +120,12 @@ final class PullRequestStatusStore: ObservableObject {
         }
         if workspaceSummaries.keys.contains(where: { !live.contains($0) }) {
             workspaceSummaries = workspaceSummaries.filter { live.contains($0.key) }
+        }
+        if workspacePullRequests.keys.contains(where: { !live.contains($0) }) {
+            workspacePullRequests = workspacePullRequests.filter { live.contains($0.key) }
+        }
+        if focusedWorkspace.keys.contains(where: { !live.contains($0) }) {
+            focusedWorkspace = focusedWorkspace.filter { live.contains($0.key) }
         }
     }
 
@@ -209,14 +219,20 @@ final class PullRequestStatusStore: ObservableObject {
 
         var nextFocused = focused.filter { liveSessionIDs.contains($0.key) }
         var nextSummaries = workspaceSummaries.filter { liveSessionIDs.contains($0.key) }
+        var nextLists = workspacePullRequests.filter { liveSessionIDs.contains($0.key) }
+        var nextFocusedWorkspace = focusedWorkspace.filter { liveSessionIDs.contains($0.key) }
         for (sessionID, panes) in result.panesBySession where liveSessionIDs.contains(sessionID) {
             let targets = result.targetsBySession[sessionID] ?? [:]
             let statuses = PullRequestStatusProjection.statuses(targetsByPaneID: targets, cache: pullRequestCache)
             nextFocused[sessionID] = PullRequestStatusProjection.focusedState(panes: panes, targetsByPaneID: targets, statuses: statuses)
             nextSummaries[sessionID] = PullRequestStatusProjection.workspaceSummaries(panes: panes, statuses: statuses)
+            nextLists[sessionID] = PullRequestStatusProjection.workspacePullRequests(panes: panes, statuses: statuses)
+            nextFocusedWorkspace[sessionID] = PullRequestStatusProjection.focusedWorkspaceID(panes: panes)
         }
         if nextFocused != focused { focused = nextFocused }
         if nextSummaries != workspaceSummaries { workspaceSummaries = nextSummaries }
+        if nextLists != workspacePullRequests { workspacePullRequests = nextLists }
+        if nextFocusedWorkspace != focusedWorkspace { focusedWorkspace = nextFocusedWorkspace }
 
         if let next = owed {
             owed = nil

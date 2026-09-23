@@ -117,6 +117,23 @@ enum PullRequestStatusProjection {
         return FocusedPullRequestState(target: target, pullRequest: statuses[pane.id])
     }
 
+    /// Each workspace's distinct PRs (several panes on one branch list it
+    /// once), by number. Panes without a workspace are left out.
+    static func workspacePullRequests(panes: [Pane], statuses: [String: PullRequestStatus]) -> [String: [PullRequestStatus]] {
+        var byWorkspace: [String: [String: PullRequestStatus]] = [:]
+        for pane in panes {
+            guard let workspaceID = pane.workspaceID, let status = statuses[pane.id] else { continue }
+            byWorkspace[workspaceID, default: [:]][status.url] = status
+        }
+        return byWorkspace.mapValues { $0.values.sorted { $0.number < $1.number } }
+    }
+
+    /// The focused pane's workspace, whether or not that pane is in a
+    /// repository.
+    static func focusedWorkspaceID(panes: [Pane]) -> String? {
+        panes.first(where: \.focused)?.workspaceID
+    }
+
     /// Per-workspace counts over distinct PRs (several panes on one branch
     /// count once). Workspaces with no PR are omitted, as are panes whose
     /// backend reported no workspace.
