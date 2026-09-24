@@ -174,3 +174,20 @@ enum WorkspaceFetchPlanner {
         liveSessionIDs.contains(sessionID)
     }
 }
+
+/// "Next/Previous Workspace": the workspace `offset` steps from the focused
+/// one in the backend's order, wrapping at both ends. With nothing focused it
+/// starts from the edge it moves toward; nil when there's nowhere to go (no
+/// workspaces, or only the focused one).
+enum WorkspaceCyclePlanner {
+    static func target(in workspaces: [Workspace], offset: Int) -> String? {
+        guard !workspaces.isEmpty else { return nil }
+        guard let current = workspaces.firstIndex(where: \.focused) else {
+            return (offset >= 0 ? workspaces.first : workspaces.last)?.id
+        }
+        guard workspaces.count > 1 else { return nil }
+        let count = workspaces.count
+        let index = ((current + offset) % count + count) % count
+        return workspaces[index].id
+    }
+}

@@ -93,4 +93,43 @@ final class PaneFocusShellTests: XCTestCase {
             "@0|\(pane.id)"
         )
     }
+
+    func test_tmuxFocusPaneDirection_movesToTheNeighbour() throws {
+        guard let tmuxPath = ["/opt/homebrew/bin/tmux", "/usr/local/bin/tmux", "/usr/bin/tmux"]
+            .first(where: { FileManager.default.isExecutableFile(atPath: $0) })
+        else {
+            throw XCTSkip("tmux not found on this machine")
+        }
+
+        let socketName = "vakta-neighbour-\(UUID().uuidString.prefix(8))"
+        let target = MultiplexerTarget(backend: .tmux, executable: tmuxPath, tmuxSocketName: socketName, environment: [:])
+        func tmux(_ args: [String]) -> String? {
+            ProcessRunner.run([tmuxPath, "-L", socketName] + args, path: "/usr/bin:/bin")?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        _ = tmux(["new-session", "-d", "-s", "probe", "-x", "200", "-y", "50", "sleep 60"])
+        defer { _ = tmux(["kill-server"]) }
+        let left = try XCTUnwrap(tmux(["display-message", "-p", "-t", "probe", "#{pane_id}"]))
+        _ = tmux(["split-window", "-h", "-t", left, "sleep 60"])
+        let right = try XCTUnwrap(tmux(["display-message", "-p", "-t", "probe", "#{pane_id}"]))
+        XCTAssertNotEqual(left, right)
+        _ = tmux(["select-pane", "-t", left])
+
+        XCTAssertTrue(MultiplexerCommand.run(
+            action: .focusPane(paneID: left, direction: .right),
+            sessionName: "probe",
+            target: target,
+            path: "/usr/bin:/bin"
+        ))
+        XCTAssertEqual(tmux(["display-message", "-p", "-t", "probe", "#{pane_id}"]), right)
+
+        XCTAssertTrue(MultiplexerCommand.run(
+            action: .focusPane(paneID: right, direction: .left),
+            sessionName: "probe",
+            target: target,
+            path: "/usr/bin:/bin"
+        ))
+        XCTAssertEqual(tmux(["display-message", "-p", "-t", "probe", "#{pane_id}"]), left)
+    }
 }

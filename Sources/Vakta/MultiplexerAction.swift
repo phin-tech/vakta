@@ -38,12 +38,23 @@ enum ResizeDirection: Equatable {
     case down
 }
 
+/// Which neighbour a `focusPane` moves to. herdr (`pane focus --direction`)
+/// and tmux (`select-pane -L/-R/-U/-D`) both resolve the neighbour from the
+/// given pane's geometry.
+enum PaneFocusDirection: Equatable {
+    case left
+    case right
+    case up
+    case down
+}
+
 /// A mutating multiplexer command targeting a specific pane or workspace the
 /// caller already enumerated (via `PaneQuery`/`WorkspaceQuery`). Ids are the
 /// backend's own opaque handles -- herdr `w2C`/`w2C:p3`, tmux `@1`/`%3`.
 enum MultiplexerAction: Equatable {
     case splitPane(paneID: String, direction: SplitDirection)
     case closePane(paneID: String)
+    case focusPane(paneID: String, direction: PaneFocusDirection)
     case zoomPane(paneID: String)
     case resizePane(paneID: String, direction: ResizeDirection)
     case renamePane(paneID: String, label: String)

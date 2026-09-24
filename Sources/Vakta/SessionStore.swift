@@ -1038,6 +1038,11 @@ final class SessionStore: ObservableObject {
         saveWorkspace()
         refreshFileSidebarRoot()
         refreshPullRequestStatus()
+        // Workspace-position commands (⌘1…⌘9 in the Mac-style preset, `TAB n`)
+        // are available only against a known workspace list; keep the
+        // selected session's current rather than waiting for the sidebar or
+        // ⌘K to fetch it. A no-op for targets without workspaces.
+        fetchWorkspaces(for: id)
     }
 
     /// Resolves the selected session's focused-pane working directory off the
@@ -1381,6 +1386,58 @@ final class SessionStore: ObservableObject {
             )
             DispatchQueue.main.async { [weak self] in
                 self?.refetchTopology(for: id)
+            }
+        }
+    }
+
+    /// Runs a pane action on `id`'s focused pane, found with one session-wide
+    /// pane listing -- unlike `performPaneAction`, no cached workspace list
+    /// is needed, so a keyboard shortcut works before the sidebar or ⌘K ever
+    /// fetched one. Both backends report exactly one focused pane per
+    /// session in that listing.
+    func performFocusedPaneAction(_ make: @escaping (String) -> MultiplexerAction, in id: Session.ID) {
+        guard let session = sessions.first(where: { $0.id == id }) else { return }
+        guard case .multiplexer(let target) = LaunchTargetResolver.resolve(session.profile) else { return }
+        let sessionName = session.sessionName
+        let path = resolvedPATH
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let isCancelled = { [weak self] in self?.isShuttingDown ?? true }
+            guard let panes = PaneQuery.panes(sessionName: sessionName, target: target, path: path, isCancelled: isCancelled),
+                  let paneID = panes.first(where: \.focused)?.id
+            else { return }
+            _ = MultiplexerCommand.run(action: make(paneID), sessionName: sessionName, target: target, path: path, isCancelled: isCancelled)
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.refetchTopology(for: id)
+                if id == self.selectedID { self.refreshPullRequestStatus(onlySelectedSession: true) }
+            }
+        }
+    }
+
+    /// "Next/Previous Workspace": fetches `id`'s workspaces fresh (the cache
+    /// may be missing or stale), picks the target with
+    /// `WorkspaceCyclePlanner`, and focuses it the usual way.
+    func cycleWorkspace(by offset: Int, in id: Session.ID) {
+        guard let session = sessions.first(where: { $0.id == id }) else { return }
+        guard case .multiplexer(let target) = LaunchTargetResolver.resolve(session.profile) else { return }
+        let sessionName = session.sessionName
+        let path = resolvedPATH
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let workspaces = WorkspaceQuery.workspaces(
+                sessionName: sessionName,
+                target: target,
+                path: path,
+                isCancelled: { [weak self] in self?.isShuttingDown ?? true }
+            ) else { return }
+            let destination = WorkspaceCyclePlanner.target(in: workspaces, offset: offset)
+            DispatchQueue.main.async { [weak self] in
+                guard let self,
+                      WorkspaceFetchPlanner.shouldApply(sessionID: id, liveSessionIDs: Set(self.sessions.map(\.id)))
+                else { return }
+                self.workspaces[id] = workspaces
+                if let destination { self.focusWorkspace(destination, in: id) }
             }
         }
     }

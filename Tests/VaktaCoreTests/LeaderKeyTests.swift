@@ -94,6 +94,16 @@ final class LeaderTreeTests: XCTestCase {
         XCTAssertNil(paths[.copy], "not in the tree")
     }
 
+    func test_commandPaths_paneFocusAndWorkspaceCycling() {
+        let paths = LeaderTree.defaultRoot.commandPaths()
+        XCTAssertEqual(paths[.focusPaneLeft], [Key.w, 4], "w h")
+        XCTAssertEqual(paths[.focusPaneDown], [Key.w, 38], "w j")
+        XCTAssertEqual(paths[.focusPaneUp], [Key.w, 40], "w k")
+        XCTAssertEqual(paths[.focusPaneRight], [Key.w, 37], "w l")
+        XCTAssertEqual(paths[.previousWorkspace], [48, 33], "TAB [")
+        XCTAssertEqual(paths[.nextWorkspace], [48, 30], "TAB ]")
+    }
+
     func test_sequenceDisplay_joinsGlyphsWithSpaces() {
         XCTAssertEqual(LeaderHintAssembler.sequence(for: [Key.o, Key.f]), "o f")
         XCTAssertEqual(LeaderHintAssembler.sequence(for: [Key.tab, Key.n]), "TAB n")

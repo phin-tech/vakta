@@ -240,6 +240,8 @@ struct MultiplexerTarget: Equatable {
                 return base + ["pane", "split", "--pane", paneID, "--direction", herdrSplitDirection(direction), "--focus"]
             case let .closePane(paneID):
                 return base + ["pane", "close", paneID]
+            case let .focusPane(paneID, direction):
+                return base + ["pane", "focus", "--pane", paneID, "--direction", herdrFocusDirection(direction)]
             case let .zoomPane(paneID):
                 return base + ["pane", "zoom", "--pane", paneID]
             case let .resizePane(paneID, direction):
@@ -263,6 +265,8 @@ struct MultiplexerTarget: Equatable {
                 return tmuxArgv(["split-window", tmuxSplitFlag(direction), "-t", paneID])
             case let .closePane(paneID):
                 return tmuxArgv(["kill-pane", "-t", paneID])
+            case let .focusPane(paneID, direction):
+                return tmuxArgv(["select-pane", "-t", paneID, tmuxFocusFlag(direction)])
             case let .zoomPane(paneID):
                 return tmuxArgv(["resize-pane", "-Z", "-t", paneID])
             case let .resizePane(paneID, direction):
@@ -284,6 +288,24 @@ struct MultiplexerTarget: Equatable {
     /// herdr `--amount` is a split-ratio delta; tmux resize is in cells.
     private static let herdrResizeStep = "0.05"
     private static let tmuxResizeStep = "5"
+
+    private func herdrFocusDirection(_ direction: PaneFocusDirection) -> String {
+        switch direction {
+        case .left: return "left"
+        case .right: return "right"
+        case .up: return "up"
+        case .down: return "down"
+        }
+    }
+
+    private func tmuxFocusFlag(_ direction: PaneFocusDirection) -> String {
+        switch direction {
+        case .left: return "-L"
+        case .right: return "-R"
+        case .up: return "-U"
+        case .down: return "-D"
+        }
+    }
 
     private func herdrSplitDirection(_ direction: SplitDirection) -> String {
         switch direction {

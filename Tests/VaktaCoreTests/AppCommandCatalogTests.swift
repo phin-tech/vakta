@@ -44,10 +44,14 @@ final class AppCommandCatalogTests: XCTestCase {
         XCTAssertEqual(rows.map(\.id), [
             "toggleFileSidebarChanges", "showWelcomeTour", "showWhatsNew",
             "showStatusBarBriefly", "cycleStatusBar", "openPullRequest", "showPullRequests",
+            "focusPaneLeft", "focusPaneRight", "focusPaneUp", "focusPaneDown",
+            "previousWorkspace", "nextWorkspace",
         ])
         XCTAssertEqual(rows.map(\.title), [
             "Toggle File Sidebar Git Changes", "Show Welcome Tour", "What's New in Vakta",
             "Show Status Bar Briefly", "Cycle Status Bar Visibility", "Open Pull Request", "Show Pull Requests",
+            "Focus Pane Left", "Focus Pane Right", "Focus Pane Up", "Focus Pane Down",
+            "Previous Workspace", "Next Workspace",
         ])
     }
 
@@ -81,6 +85,8 @@ final class AppCommandCatalogTests: XCTestCase {
             .editHerdrConfig, .reloadHerdrConfig,
             .showWelcomeTour, .showWhatsNew,
             .showStatusBarBriefly, .cycleStatusBar, .openPullRequest, .showPullRequests,
+            .focusPaneLeft, .focusPaneRight, .focusPaneUp, .focusPaneDown,
+            .previousWorkspace, .nextWorkspace,
         ]
         let bindable = AppCommandCatalog.bindableCommands
 
@@ -110,6 +116,8 @@ final class CommandAvailabilityTests: XCTestCase {
     private let multiplexerCommands: [AppCommand] = [
         .splitPaneRight, .splitPaneDown, .zoomPane, .closePane, .renamePane,
         .closeWorkspace, .newWorkspace, .stopSession,
+        .focusPaneLeft, .focusPaneRight, .focusPaneUp, .focusPaneDown,
+        .previousWorkspace, .nextWorkspace,
     ]
 
     private var otherPaletteCommands: [AppCommand] {

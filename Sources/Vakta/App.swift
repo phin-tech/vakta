@@ -1414,6 +1414,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .cycleStatusBar: statusBarPreferences.cycle()
         case .openPullRequest: openFocusedPullRequest()
         case .showPullRequests: showPullRequestList()
+        case .focusPaneLeft: performWorkspacePaneAction { .focusPane(paneID: $0, direction: .left) }
+        case .focusPaneRight: performWorkspacePaneAction { .focusPane(paneID: $0, direction: .right) }
+        case .focusPaneUp: performWorkspacePaneAction { .focusPane(paneID: $0, direction: .up) }
+        case .focusPaneDown: performWorkspacePaneAction { .focusPane(paneID: $0, direction: .down) }
+        case .previousWorkspace:
+            if let id = sessionStore.selectedID { sessionStore.cycleWorkspace(by: -1, in: id) }
+        case .nextWorkspace:
+            if let id = sessionStore.selectedID { sessionStore.cycleWorkspace(by: 1, in: id) }
         case .splitPaneRight: performWorkspacePaneAction { .splitPane(paneID: $0, direction: .right) }
         case .splitPaneDown: performWorkspacePaneAction { .splitPane(paneID: $0, direction: .down) }
         case .zoomPane: performWorkspacePaneAction { .zoomPane(paneID: $0) }
@@ -1451,13 +1459,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         sessionStore.performAction(make(workspaceID), in: id)
     }
 
-    /// ⌘K pane-level action on the active pane of the selected session's
-    /// focused workspace. The store resolves the exact pane cross-backend.
+    /// Pane-level action (⌘K, a chord, a leader key) on the selected
+    /// session's focused pane. Resolved with a session-wide pane listing, so
+    /// it works without a cached workspace list.
     private func performWorkspacePaneAction(_ make: @escaping (String) -> MultiplexerAction) {
-        guard let id = sessionStore.selectedID,
-              let workspaceID = sessionStore.focusedWorkspaceID(in: id)
-        else { return }
-        sessionStore.performPaneAction(make, workspaceID: workspaceID, in: id)
+        guard let id = sessionStore.selectedID else { return }
+        sessionStore.performFocusedPaneAction(make, in: id)
     }
 
     /// ⌘K "Stop Session": confirms, then ends the selected session on the

@@ -88,6 +88,7 @@ enum LeaderTree {
     // Physical key codes (HIToolbox kVK_ANSI_*), named for the US layout.
     private enum Key {
         static let a: UInt16 = 0, s: UInt16 = 1, d: UInt16 = 2, f: UInt16 = 3, h: UInt16 = 4, g: UInt16 = 5, b: UInt16 = 11, l: UInt16 = 37
+        static let j: UInt16 = 38, k: UInt16 = 40, leftBracket: UInt16 = 33, rightBracket: UInt16 = 30
         static let z: UInt16 = 6, x: UInt16 = 7, v: UInt16 = 9, q: UInt16 = 12, w: UInt16 = 13
         static let e: UInt16 = 14, r: UInt16 = 15, u: UInt16 = 32, o: UInt16 = 31, p: UInt16 = 35
         static let n: UInt16 = 45, equal: UInt16 = 24, minus: UInt16 = 27, zero: UInt16 = 29
@@ -121,11 +122,17 @@ enum LeaderTree {
             leaf(Key.z, .zoomPane),
             leaf(Key.d, .closePane),
             leaf(Key.r, .renamePane),
+            leaf(Key.h, .focusPaneLeft),
+            leaf(Key.j, .focusPaneDown),
+            leaf(Key.k, .focusPaneUp),
+            leaf(Key.l, .focusPaneRight),
         ]),
         group(Key.tab, "Workspaces",
               Keybinding.digitKeyCodes.enumerated().map { leaf($0.element, .focusWorkspace($0.offset)) } + [
                 leaf(Key.n, .newWorkspace),
                 leaf(Key.d, .closeWorkspace),
+                leaf(Key.leftBracket, .previousWorkspace),
+                leaf(Key.rightBracket, .nextWorkspace),
               ]),
         group(Key.o, "Open", [
             leaf(Key.p, .toggleSidebar),

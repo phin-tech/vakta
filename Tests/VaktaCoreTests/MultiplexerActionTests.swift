@@ -26,6 +26,30 @@ final class MultiplexerActionTests: XCTestCase {
         MultiplexerTarget(backend: .tmux, executable: "tmux", tmuxSocketPath: socketPath, tmuxSocketName: socketName, environment: [:])
     }
 
+    // MARK: focus a neighbouring pane
+
+    func test_focusPane_herdr_usesPaneFocusWithDirection() {
+        for (direction, word) in [(PaneFocusDirection.left, "left"), (.right, "right"), (.up, "up"), (.down, "down")] {
+            XCTAssertEqual(
+                herdr().actionArgv(sessionName: "foo", .focusPane(paneID: "w2C:p3", direction: direction)),
+                ["herdr", "--session", "foo", "pane", "focus", "--pane", "w2C:p3", "--direction", word]
+            )
+        }
+    }
+
+    func test_focusPane_tmux_selectsTheNeighbourFromThePane() {
+        for (direction, flag) in [(PaneFocusDirection.left, "-L"), (.right, "-R"), (.up, "-U"), (.down, "-D")] {
+            XCTAssertEqual(
+                tmux().actionArgv(sessionName: "foo", .focusPane(paneID: "%3", direction: direction)),
+                ["tmux", "select-pane", "-t", "%3", flag]
+            )
+        }
+        XCTAssertEqual(
+            tmux(socketPath: "/tmp/s").actionArgv(sessionName: "foo", .focusPane(paneID: "%3", direction: .left)),
+            ["tmux", "-S", "/tmp/s", "select-pane", "-t", "%3", "-L"]
+        )
+    }
+
     // MARK: split
 
     func test_splitPane_right_herdr_focusesTheNewPane() {

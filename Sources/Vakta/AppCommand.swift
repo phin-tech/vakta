@@ -82,6 +82,12 @@ enum AppCommand: Hashable, Codable {
     // The mutating multiplexer commands (see `MultiplexerAction`). They act
     // on the selected session's focused workspace/pane and require a backend
     // that vends them -- see `CommandAvailability`.
+    case focusPaneLeft
+    case focusPaneRight
+    case focusPaneUp
+    case focusPaneDown
+    case previousWorkspace
+    case nextWorkspace
     case splitPaneRight
     case splitPaneDown
     case zoomPane
@@ -128,6 +134,12 @@ enum AppCommand: Hashable, Codable {
         case .cycleStatusBar: return "Cycle Status Bar Visibility"
         case .openPullRequest: return "Open Pull Request"
         case .showPullRequests: return "Show Pull Requests"
+        case .focusPaneLeft: return "Focus Pane Left"
+        case .focusPaneRight: return "Focus Pane Right"
+        case .focusPaneUp: return "Focus Pane Up"
+        case .focusPaneDown: return "Focus Pane Down"
+        case .previousWorkspace: return "Previous Workspace"
+        case .nextWorkspace: return "Next Workspace"
         case .splitPaneRight: return "Split Pane Right"
         case .splitPaneDown: return "Split Pane Down"
         case .zoomPane: return "Zoom Pane"
@@ -171,6 +183,12 @@ enum AppCommand: Hashable, Codable {
         case .cycleStatusBar: return "cycleStatusBar"
         case .openPullRequest: return "openPullRequest"
         case .showPullRequests: return "showPullRequests"
+        case .focusPaneLeft: return "focusPaneLeft"
+        case .focusPaneRight: return "focusPaneRight"
+        case .focusPaneUp: return "focusPaneUp"
+        case .focusPaneDown: return "focusPaneDown"
+        case .previousWorkspace: return "previousWorkspace"
+        case .nextWorkspace: return "nextWorkspace"
         case .splitPaneRight: return "splitPaneRight"
         case .splitPaneDown: return "splitPaneDown"
         case .zoomPane: return "zoomPane"
@@ -192,7 +210,9 @@ enum AppCommand: Hashable, Codable {
     var requirement: AppCommandRequirement {
         switch self {
         case .splitPaneRight, .splitPaneDown, .zoomPane, .closePane, .renamePane,
-             .closeWorkspace, .newWorkspace, .stopSession:
+             .closeWorkspace, .newWorkspace, .stopSession,
+             .focusPaneLeft, .focusPaneRight, .focusPaneUp, .focusPaneDown,
+             .previousWorkspace, .nextWorkspace:
             return .multiplexerActions
         case .selectSession(let index):
             return .session(at: index)
@@ -219,9 +239,10 @@ enum AppCommand: Hashable, Codable {
             return .application
         case .selectSession, .newSession, .nextUnreadSession, .stopSession:
             return .sessions
-        case .splitPaneRight, .splitPaneDown, .zoomPane, .closePane, .renamePane:
+        case .splitPaneRight, .splitPaneDown, .zoomPane, .closePane, .renamePane,
+             .focusPaneLeft, .focusPaneRight, .focusPaneUp, .focusPaneDown:
             return .panes
-        case .newWorkspace, .closeWorkspace, .focusWorkspace:
+        case .newWorkspace, .closeWorkspace, .focusWorkspace, .previousWorkspace, .nextWorkspace:
             return .workspaces
         case .increaseFontSize, .decreaseFontSize, .resetFontSize:
             return .font
@@ -276,6 +297,8 @@ enum AppCommandCatalog {
         .toggleFileSidebarChanges,
         .showWelcomeTour, .showWhatsNew,
         .showStatusBarBriefly, .cycleStatusBar, .openPullRequest, .showPullRequests,
+        .focusPaneLeft, .focusPaneRight, .focusPaneUp, .focusPaneDown,
+        .previousWorkspace, .nextWorkspace,
     ]
 
     /// Every command Preferences lets the user bind, in display order within
@@ -290,7 +313,8 @@ enum AppCommandCatalog {
         + [
             .newSession, .nextUnreadSession, .stopSession,
             .splitPaneRight, .splitPaneDown, .zoomPane, .closePane, .renamePane,
-            .newWorkspace, .closeWorkspace,
+            .focusPaneLeft, .focusPaneRight, .focusPaneUp, .focusPaneDown,
+            .newWorkspace, .closeWorkspace, .previousWorkspace, .nextWorkspace,
         ]
         + (0..<9).map { AppCommand.focusWorkspace($0) }
         + [
