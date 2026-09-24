@@ -100,10 +100,11 @@ final class WorkspaceRefreshMonitor {
     /// different kind can't cancel a refresh an earlier one asked for.
     private var pendingWorkspace: Set<Session.ID> = []
     private var pendingFileSidebar: Set<Session.ID> = []
-    /// The status bar's refresh lists panes (a helper per session), so it
-    /// gets its own, sparser cadence: ~0.25 s after a pane switch, at most
-    /// every 1.5 s while typing.
-    private let pullRequestDebouncer = WorkspaceRefreshDebouncer(debounceInterval: 0.25, minInterval: 1.5)
+    /// The status bar's pane-switch refresh: one pane listing of the selected
+    /// session (milliseconds; cached PR data is shown at once and any due
+    /// fetch runs separately), so ~0.1 s after the last input, at most every
+    /// 0.4 s while typing.
+    private let pullRequestDebouncer = WorkspaceRefreshDebouncer(debounceInterval: 0.1, minInterval: 0.4)
     private var lastPullRequestFireDate: Date?
     private var pendingPullRequestWork: DispatchWorkItem?
 

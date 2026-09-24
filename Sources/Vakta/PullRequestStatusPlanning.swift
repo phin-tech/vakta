@@ -34,17 +34,20 @@ enum PullRequestRefreshPlanner {
     /// repository regardless of age -- e.g. on window focus, so a PR pushed
     /// moments ago appears. gh missing or logged out won't fix itself within
     /// a minute, so those back off to the background age unless forced.
+    /// A repository whose fetch is already running is skipped even when
+    /// forced -- that fetch's result is on its way.
     static func repositoriesToFetch(
         repositories: [GitRemote],
         cache: [GitRemote: PullRequestCacheEntry],
         focused: GitRemote?,
         now: Date,
         forceFocused: Bool,
-        policy: PullRequestRefreshPolicy
+        policy: PullRequestRefreshPolicy,
+        inFlight: Set<GitRemote> = []
     ) -> [GitRemote] {
         var seen = Set<GitRemote>()
         return repositories.filter { repository in
-            guard seen.insert(repository).inserted else { return false }
+            guard seen.insert(repository).inserted, !inFlight.contains(repository) else { return false }
             guard let entry = cache[repository] else { return true }
             let isFocused = repository == focused
             if isFocused && forceFocused { return true }

@@ -80,6 +80,21 @@ final class PullRequestStatusPlanningTests: XCTestCase {
         }
     }
 
+    func test_repositoriesWithAFetchInFlight_areSkippedEvenWhenForced() {
+        XCTAssertEqual(
+            PullRequestRefreshPlanner.repositoriesToFetch(
+                repositories: [focused, background],
+                cache: [:],
+                focused: focused,
+                now: now,
+                forceFocused: true,
+                policy: policy,
+                inFlight: [focused]
+            ),
+            [background]
+        )
+    }
+
     func test_transientFailure_retriesOnTheNormalSchedule() {
         XCTAssertEqual(due([focused: fetched(60, failure: .failed), background: fetched(1)]), [focused])
     }

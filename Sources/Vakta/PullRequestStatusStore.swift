@@ -2,13 +2,15 @@
 //  PullRequestStatusStore.swift
 //  Vakta
 //
-//  Owns the PR status refresh cycle for every pane in every multiplexer
-//  session: list panes → resolve new/stale working directories to checkouts
-//  → plan PR targets → fetch the repositories that are due (one `gh` call
-//  each) → publish the focused pane's state and per-workspace summaries.
-//  The whole cycle runs off the main actor; at most one runs at a time, and
-//  requests arriving meanwhile collapse into one follow-up (the latest
-//  sessions, with `forceFocused` sticky). Decisions live in
+//  Owns PR status for every pane in every multiplexer session, stale-while-
+//  revalidate: a pane cycle lists panes, resolves new/stale working
+//  directories to checkouts, plans PR targets, and publishes at once from
+//  cached PR indexes; the repositories that are due are then fetched (one
+//  `gh` call each) by a separate job whose results republish as they land.
+//  A pane switch is therefore never held behind the network. At most one
+//  pane cycle runs at a time -- requests arriving meanwhile collapse into one
+//  follow-up (the latest sessions, `forceFocused` sticky) -- and a
+//  repository is never fetched twice at once. Decisions live in
 //  `PullRequestStatusPlanning.swift` / `RepoCheckout.swift`.
 
 import Foundation
@@ -42,18 +44,18 @@ final class PullRequestStatusStore: ObservableObject {
     }
 
     private struct CycleResult {
+        let request: Request
         let startedAt: Date
-        /// A partial cycle saw only some sessions' panes, so it must not
-        /// prune caches other sessions still use.
-        let isPartial: Bool
         /// Sessions whose pane listing succeeded; a failed listing keeps the
         /// session's previously published state.
         let panesBySession: [Session.ID: [Pane]]
         let targetsBySession: [Session.ID: [String: PullRequestTarget]]
         let directories: Set<String>
         let resolvedCheckouts: [String: RepoCheckoutCacheEntry]
-        let liveRepositories: Set<GitRemote>
-        let fetched: [GitRemote: PullRequestListOutcome]
+
+        /// A partial cycle saw only some sessions' panes, so it must not
+        /// prune caches other sessions still use.
+        var isPartial: Bool { request.onlySessionID != nil }
     }
 
     /// Each helper receives the request's helper environment (PATH/HOME).
@@ -71,6 +73,11 @@ final class PullRequestStatusStore: ObservableObject {
     /// Sessions named by the latest request; results for any other session
     /// are dropped when a cycle lands.
     private var liveSessionIDs: Set<Session.ID> = []
+    /// Each session's latest listed panes and their targets; published state
+    /// is recomputed from these plus the caches.
+    private var panesBySession: [Session.ID: [Pane]] = [:]
+    private var targetsBySession: [Session.ID: [String: PullRequestTarget]] = [:]
+    private var inFlight: Set<GitRemote> = []
     private var isRunning = false
     private var owed: Request?
 
@@ -157,11 +164,8 @@ final class PullRequestStatusStore: ObservableObject {
         isRunning = true
         let startedAt = now()
         let checkoutCache = self.checkoutCache
-        let pullRequestCache = self.pullRequestCache
         let listPanes = self.listPanes
         let resolveCheckout = self.resolveCheckout
-        let listPullRequests = self.listPullRequests
-        let policy = self.policy
         let checkoutMaxAge = self.checkoutMaxAge
         let supportedHosts = self.supportedHosts
 
@@ -188,41 +192,21 @@ final class PullRequestStatusStore: ObservableObject {
             let checkouts = checkoutCache.merging(resolved) { $1 }.mapValues(\.checkout)
 
             var targetsBySession: [Session.ID: [String: PullRequestTarget]] = [:]
-            var repositories: [GitRemote] = []
-            var focusedRepository: GitRemote?
-            for session in request.sessions {
-                guard let panes = panesBySession[session.id] else { continue }
-                let plan = PullRequestTargetPlanner.plan(panes: panes, checkouts: checkouts, supportedHosts: supportedHosts)
-                targetsBySession[session.id] = plan.targetsByPaneID
-                repositories += plan.repositories
-                if session.id == request.focusedSessionID,
-                   let pane = panes.first(where: \.focused) {
-                    focusedRepository = plan.targetsByPaneID[pane.id]?.repository
-                }
-            }
-
-            let due = PullRequestRefreshPlanner.repositoriesToFetch(
-                repositories: repositories,
-                cache: pullRequestCache,
-                focused: focusedRepository,
-                now: startedAt,
-                forceFocused: request.forceFocused,
-                policy: policy
-            )
-            var fetched: [GitRemote: PullRequestListOutcome] = [:]
-            for repository in due {
-                fetched[repository] = listPullRequests(repository, request.environment)
+            for (sessionID, panes) in panesBySession {
+                targetsBySession[sessionID] = PullRequestTargetPlanner.plan(
+                    panes: panes,
+                    checkouts: checkouts,
+                    supportedHosts: supportedHosts
+                ).targetsByPaneID
             }
 
             let result = CycleResult(
+                request: request,
                 startedAt: startedAt,
-                isPartial: request.onlySessionID != nil,
                 panesBySession: panesBySession,
                 targetsBySession: targetsBySession,
                 directories: Set(directories),
-                resolvedCheckouts: resolved,
-                liveRepositories: Set(repositories),
-                fetched: fetched
+                resolvedCheckouts: resolved
             )
             DispatchQueue.main.async { self?.finish(result) }
         }
@@ -234,23 +218,85 @@ final class PullRequestStatusStore: ObservableObject {
         checkoutCache = checkoutCache
             .filter { result.isPartial || result.directories.contains($0.key) }
             .merging(result.resolvedCheckouts) { $1 }
-        for (repository, outcome) in result.fetched {
-            pullRequestCache[repository] = PullRequestRefreshPlanner.applying(
-                outcome,
-                to: pullRequestCache[repository],
-                at: result.startedAt
-            )
-        }
+        panesBySession = panesBySession.filter { liveSessionIDs.contains($0.key) }
+            .merging(result.panesBySession.filter { liveSessionIDs.contains($0.key) }) { $1 }
+        targetsBySession = targetsBySession.filter { liveSessionIDs.contains($0.key) }
+            .merging(result.targetsBySession.filter { liveSessionIDs.contains($0.key) }) { $1 }
         if !result.isPartial {
-            pullRequestCache = PullRequestRefreshPlanner.pruned(pullRequestCache, liveRepositories: result.liveRepositories)
+            pullRequestCache = PullRequestRefreshPlanner.pruned(pullRequestCache, liveRepositories: liveRepositories)
         }
 
+        publish()
+        fetchDueRepositories(for: result.request, at: result.startedAt)
+
+        if let next = owed {
+            owed = nil
+            start(next)
+        }
+    }
+
+    /// Repositories any live session's panes point at, in session order.
+    private var liveRepositoryList: [GitRemote] {
+        var repositories: [GitRemote] = []
+        for targets in targetsBySession.values {
+            for target in targets.values.sorted(by: { $0.repository.ghRepository < $1.repository.ghRepository })
+            where !repositories.contains(target.repository) {
+                repositories.append(target.repository)
+            }
+        }
+        return repositories
+    }
+
+    private var liveRepositories: Set<GitRemote> { Set(liveRepositoryList) }
+
+    /// Starts one background job fetching every due repository that isn't
+    /// already being fetched; each result republishes as it lands.
+    private func fetchDueRepositories(for request: Request, at date: Date) {
+        let focusedRepository = request.focusedSessionID.flatMap { sessionID -> GitRemote? in
+            guard let pane = panesBySession[sessionID]?.first(where: \.focused) else { return nil }
+            return targetsBySession[sessionID]?[pane.id]?.repository
+        }
+        let due = PullRequestRefreshPlanner.repositoriesToFetch(
+            repositories: liveRepositoryList,
+            cache: pullRequestCache,
+            focused: focusedRepository,
+            now: date,
+            forceFocused: request.forceFocused,
+            policy: policy,
+            inFlight: inFlight
+        )
+        guard !due.isEmpty else { return }
+        // The focused repository first, so the bar's own PR lands soonest.
+        let ordered = due.sorted { first, _ in first == focusedRepository }
+        inFlight.formUnion(ordered)
+        let listPullRequests = self.listPullRequests
+        let environment = request.environment
+        runInBackground { [weak self] in
+            for repository in ordered {
+                let outcome = listPullRequests(repository, environment)
+                DispatchQueue.main.async { self?.applyFetch(outcome, for: repository, at: date) }
+            }
+        }
+    }
+
+    /// Drops a result for a repository no live pane points at any more (its
+    /// cache entry was pruned while the fetch ran).
+    private func applyFetch(_ outcome: PullRequestListOutcome, for repository: GitRemote, at date: Date) {
+        inFlight.remove(repository)
+        guard liveRepositories.contains(repository) else { return }
+        pullRequestCache[repository] = PullRequestRefreshPlanner.applying(outcome, to: pullRequestCache[repository], at: date)
+        publish()
+    }
+
+    /// Recomputes every live session's published state from its latest
+    /// panes, targets, and the PR cache.
+    private func publish() {
         var nextFocused = focused.filter { liveSessionIDs.contains($0.key) }
         var nextSummaries = workspaceSummaries.filter { liveSessionIDs.contains($0.key) }
         var nextLists = workspacePullRequests.filter { liveSessionIDs.contains($0.key) }
         var nextFocusedWorkspace = focusedWorkspace.filter { liveSessionIDs.contains($0.key) }
-        for (sessionID, panes) in result.panesBySession where liveSessionIDs.contains(sessionID) {
-            let targets = result.targetsBySession[sessionID] ?? [:]
+        for (sessionID, panes) in panesBySession where liveSessionIDs.contains(sessionID) {
+            let targets = targetsBySession[sessionID] ?? [:]
             let statuses = PullRequestStatusProjection.statuses(targetsByPaneID: targets, cache: pullRequestCache)
             nextFocused[sessionID] = PullRequestStatusProjection.focusedState(panes: panes, targetsByPaneID: targets, statuses: statuses)
             nextSummaries[sessionID] = PullRequestStatusProjection.workspaceSummaries(panes: panes, statuses: statuses)
@@ -261,10 +307,5 @@ final class PullRequestStatusStore: ObservableObject {
         if nextSummaries != workspaceSummaries { workspaceSummaries = nextSummaries }
         if nextLists != workspacePullRequests { workspacePullRequests = nextLists }
         if nextFocusedWorkspace != focusedWorkspace { focusedWorkspace = nextFocusedWorkspace }
-
-        if let next = owed {
-            owed = nil
-            start(next)
-        }
     }
 }
