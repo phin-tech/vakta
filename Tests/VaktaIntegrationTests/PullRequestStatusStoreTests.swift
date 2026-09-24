@@ -232,6 +232,45 @@ final class PullRequestStatusStoreTests: XCTestCase {
         XCTAssertEqual(store.focused[sessionID]?.pullRequest?.checks.state, .passing)
     }
 
+    // MARK: partial refresh (a pane switch in the selected session)
+
+    func test_partialRefresh_updatesOnlyThatSession_andKeepsOtherSessionsCaches() {
+        let otherSession = UUID()
+        setUpTwoPanesOnOneBranch()
+        world.panes[otherSession] = [pane("q1", "/other", focused: true)]
+        world.checkouts["/other"] = checkout("/other", "topic", remote: other)
+        serve([pr(3, branch: "topic")], for: other)
+        cycle(sessions: [sessionID, otherSession])
+
+        // Focus moves to a pane in a third repository; the other session's
+        // PR changes remotely but is still within its TTL. The partial cycle
+        // never sees the other session's repository, so pruning there would
+        // drop its cache.
+        let third = GitRemote(host: "github.com", owner: "o", name: "third")
+        world.panes[sessionID] = [pane("p1", "/r"), pane("p3", "/third", focused: true)]
+        world.checkouts["/third"] = checkout("/third", "wip", remote: third)
+        serve([pr(5, branch: "wip")], for: third)
+        serve([pr(4, branch: "topic")], for: other)
+        store.refresh(
+            sessions: snapshots([sessionID, otherSession]),
+            focusedSessionID: sessionID,
+            forceFocused: false,
+            onlySessionID: sessionID
+        )
+        scheduler.runNext()
+        drainMainQueue()
+
+        XCTAssertEqual(store.focused[sessionID]?.target.repository, third, "follows the pane switch")
+        XCTAssertEqual(store.focused[sessionID]?.pullRequest?.number, 5)
+        XCTAssertEqual(store.focused[otherSession]?.pullRequest?.number, 3, "other session's state kept")
+
+        // A later full cycle within the TTL still has both repositories cached.
+        world.panes[sessionID] = [pane("p1", "/r", focused: true)]
+        cycle(sessions: [sessionID, otherSession])
+        XCTAssertEqual(store.focused[sessionID]?.pullRequest?.number, 7)
+        XCTAssertEqual(store.focused[otherSession]?.pullRequest?.number, 3, "not pruned by the partial cycle")
+    }
+
     // MARK: pane changes
 
     func test_paneMovingToAnotherRepository_followsItOnceResolved() {

@@ -36,10 +36,16 @@ final class PullRequestStatusStore: ObservableObject {
         var focusedSessionID: Session.ID?
         var forceFocused: Bool
         var environment: [String: String]
+        /// List only this session's panes (a pane switch in it); nil lists
+        /// every session.
+        var onlySessionID: Session.ID?
     }
 
     private struct CycleResult {
         let startedAt: Date
+        /// A partial cycle saw only some sessions' panes, so it must not
+        /// prune caches other sessions still use.
+        let isPartial: Bool
         /// Sessions whose pane listing succeeded; a failed listing keeps the
         /// session's previously published state.
         let panesBySession: [Session.ID: [Pane]]
@@ -93,21 +99,39 @@ final class PullRequestStatusStore: ObservableObject {
     /// Runs a cycle for `sessions` (or queues one behind the running cycle).
     /// Sessions missing from `sessions` lose their published state now.
     /// `environment` is what the multiplexer, git, and gh helpers run with.
+    /// `onlySessionID` lists just that session's panes (the rest keep their
+    /// published state and caches) -- cheap enough to run on a pane switch.
     func refresh(
         sessions: [PullRequestSessionSnapshot],
         focusedSessionID: Session.ID?,
         forceFocused: Bool,
-        environment: [String: String] = [:]
+        environment: [String: String] = [:],
+        onlySessionID: Session.ID? = nil
     ) {
         liveSessionIDs = Set(sessions.map(\.id))
         dropPublishedState(forSessionsNotIn: liveSessionIDs)
-        let request = Request(sessions: sessions, focusedSessionID: focusedSessionID, forceFocused: forceFocused, environment: environment)
+        let request = Request(
+            sessions: sessions,
+            focusedSessionID: focusedSessionID,
+            forceFocused: forceFocused,
+            environment: environment,
+            onlySessionID: onlySessionID
+        )
         if isRunning {
+            // A queued full cycle covers any partial one; two partials for
+            // different sessions widen to a full cycle.
+            let only: Session.ID?
+            if let owed {
+                only = owed.onlySessionID == onlySessionID ? onlySessionID : nil
+            } else {
+                only = onlySessionID
+            }
             owed = Request(
                 sessions: sessions,
                 focusedSessionID: focusedSessionID,
                 forceFocused: forceFocused || (owed?.forceFocused ?? false),
-                environment: environment
+                environment: environment,
+                onlySessionID: only
             )
         } else {
             start(request)
@@ -144,7 +168,8 @@ final class PullRequestStatusStore: ObservableObject {
         runInBackground { [weak self] in
             var panesBySession: [Session.ID: [Pane]] = [:]
             var directories: [String] = []
-            for session in request.sessions {
+            let listed = request.onlySessionID.map { only in request.sessions.filter { $0.id == only } } ?? request.sessions
+            for session in listed {
                 guard let panes = listPanes(session, request.environment) else { continue }
                 panesBySession[session.id] = panes
                 directories += panes.compactMap(\.workingDirectory)
@@ -191,6 +216,7 @@ final class PullRequestStatusStore: ObservableObject {
 
             let result = CycleResult(
                 startedAt: startedAt,
+                isPartial: request.onlySessionID != nil,
                 panesBySession: panesBySession,
                 targetsBySession: targetsBySession,
                 directories: Set(directories),
@@ -206,7 +232,7 @@ final class PullRequestStatusStore: ObservableObject {
         isRunning = false
 
         checkoutCache = checkoutCache
-            .filter { result.directories.contains($0.key) }
+            .filter { result.isPartial || result.directories.contains($0.key) }
             .merging(result.resolvedCheckouts) { $1 }
         for (repository, outcome) in result.fetched {
             pullRequestCache[repository] = PullRequestRefreshPlanner.applying(
@@ -215,7 +241,9 @@ final class PullRequestStatusStore: ObservableObject {
                 at: result.startedAt
             )
         }
-        pullRequestCache = PullRequestRefreshPlanner.pruned(pullRequestCache, liveRepositories: result.liveRepositories)
+        if !result.isPartial {
+            pullRequestCache = PullRequestRefreshPlanner.pruned(pullRequestCache, liveRepositories: result.liveRepositories)
+        }
 
         var nextFocused = focused.filter { liveSessionIDs.contains($0.key) }
         var nextSummaries = workspaceSummaries.filter { liveSessionIDs.contains($0.key) }
