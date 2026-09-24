@@ -33,7 +33,7 @@ enum TutorialShortcut {
 
 struct TutorialStep: Equatable {
     enum ID: Hashable {
-        case welcome, multiplexerSetup, commandPalette, sessions, panes, leaderKeys, fileSidebar, preferences
+        case welcome, multiplexerSetup, macShortcuts, commandPalette, sessions, panes, leaderKeys, fileSidebar, preferences
     }
 
     var id: ID
@@ -64,6 +64,12 @@ enum TutorialContent {
             TutorialStep(
                 id: .multiplexerSetup, symbolName: "shippingbox", title: "Set up herdr and tmux",
                 body: "Vakta's sessions run inside herdr by default, or tmux. Install whichever you're missing; it runs in a new session so you can watch.",
+                shortcut: nil),
+            // The view shows the preset's chord table and Apply / Revert here
+            // (`MacShortcutsPresetView`).
+            TutorialStep(
+                id: .macShortcuts, symbolName: "command.square", title: "Mac-style shortcuts",
+                body: "Want ⌘T, ⌘D, ⌘W and ⌘1…⌘9 like iTerm? Vakta can run herdr and tmux actions from ⌘ chords itself — your multiplexer config and prefix keys stay as they are. Revert anytime in Preferences ▸ Keybindings.",
                 shortcut: nil),
             TutorialStep(
                 id: .commandPalette, symbolName: "magnifyingglass", title: "Everything is in the command palette",

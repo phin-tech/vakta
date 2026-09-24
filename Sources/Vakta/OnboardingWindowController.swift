@@ -17,7 +17,7 @@ import SwiftUI
 @MainActor
 final class OnboardingWindowController: NSObject, NSWindowDelegate {
     enum Content {
-        case tutorial([TutorialStep], setup: MultiplexerSetupModel)
+        case tutorial([TutorialStep], setup: MultiplexerSetupModel, keybindings: KeybindingMatcher)
         case whatsNew([ReleaseNote])
     }
 
@@ -38,14 +38,18 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
         self.window = window
         let close: () -> Void = { [weak window] in window?.performClose(nil) }
         switch content {
-        case .tutorial(let steps, let setup):
+        case .tutorial(let steps, let setup, let keybindings):
             window.title = "Welcome to Vakta"
-            window.contentView = NSHostingView(rootView: TutorialView(steps: steps, setup: setup, close: close))
+            window.contentView = NSHostingView(rootView: TutorialView(steps: steps, setup: setup, keybindings: keybindings, close: close))
         case .whatsNew(let notes):
             window.title = "What's New in Vakta"
             window.contentView = NSHostingView(rootView: WhatsNewView(notes: notes, close: close))
         }
-        window.setContentSize(NSSize(width: 520, height: 480))
+        // The tour's Mac-style shortcuts step carries a chord table.
+        switch content {
+        case .tutorial: window.setContentSize(NSSize(width: 540, height: 600))
+        case .whatsNew: window.setContentSize(NSSize(width: 520, height: 480))
+        }
         if let parent = parentWindowProvider() {
             if window.parent !== parent {
                 window.parent?.removeChildWindow(window)
@@ -102,6 +106,7 @@ private final class OnboardingWindow: NSWindow {
 private struct TutorialView: View {
     let steps: [TutorialStep]
     @ObservedObject var setup: MultiplexerSetupModel
+    let keybindings: KeybindingMatcher
     let close: () -> Void
     @State private var index = 0
 
@@ -116,7 +121,7 @@ private struct TutorialView: View {
             footer
         }
         .padding(28)
-        .frame(minWidth: 520, minHeight: 480)
+        .frame(minWidth: 540, minHeight: 600)
     }
 
     private func stepView(_ step: TutorialStep) -> some View {
@@ -144,6 +149,11 @@ private struct TutorialView: View {
             }
             if step.id == .multiplexerSetup {
                 MultiplexerSetupPanel(model: setup)
+            }
+            if step.id == .macShortcuts {
+                MacShortcutsPresetView(matcher: keybindings)
+                    .padding(14)
+                    .background(RoundedRectangle(cornerRadius: 10).fill(Color.secondary.opacity(0.08)))
             }
         }
         .frame(maxWidth: .infinity)

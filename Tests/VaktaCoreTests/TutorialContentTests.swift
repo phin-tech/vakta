@@ -61,7 +61,7 @@ final class TutorialContentTests: XCTestCase {
 
     func test_steps_coverTheTourInOrder() {
         let steps = TutorialContent.steps(bindings: Keybinding.defaults, leader: leaderOff, leaderSequences: [:])
-        XCTAssertEqual(steps.map(\.id), [.welcome, .multiplexerSetup, .commandPalette, .sessions, .panes, .leaderKeys, .fileSidebar, .preferences])
+        XCTAssertEqual(steps.map(\.id), [.welcome, .multiplexerSetup, .macShortcuts, .commandPalette, .sessions, .panes, .leaderKeys, .fileSidebar, .preferences])
     }
 
     func test_steps_carryResolvedShortcuts() {
@@ -104,5 +104,14 @@ final class TutorialContentTests: XCTestCase {
     func test_previous_movesBack_andStopsAtTheFirstStep() {
         XCTAssertEqual(TutorialNavigation.previous(from: 2), 1)
         XCTAssertEqual(TutorialNavigation.previous(from: 0), 0)
+    }
+
+    func test_macShortcutsStep_explainsTheyDriveTheMultiplexerWithoutTouchingItsConfig() throws {
+        let steps = TutorialContent.steps(bindings: Keybinding.defaults, leader: LeaderSettings(), leaderSequences: [:])
+        let step = try XCTUnwrap(steps.first { $0.id == .macShortcuts })
+        XCTAssertEqual(step.title, "Mac-style shortcuts")
+        XCTAssertTrue(step.body.contains("⌘"))
+        XCTAssertTrue(step.body.localizedCaseInsensitiveContains("config"))
+        XCTAssertNil(step.shortcut, "the step shows its own chord table and Apply button")
     }
 }

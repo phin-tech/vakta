@@ -195,6 +195,20 @@ final class OnboardingPlannerTests: XCTestCase {
 
     // MARK: Shipping catalog
 
+    func test_shippingCatalog_0_3_4_announcesTheStatusBarAndMacShortcuts_toUsersUpgradingFrom0_3_3() throws {
+        let presentation = OnboardingPlanner.presentation(
+            stored: .loaded(OnboardingState(lastSeenVersion: "0.3.3")),
+            priorInstallDetected: true,
+            currentVersion: AppVersion("0.3.4"),
+            releaseNotes: WhatsNewCatalog.releaseNotes
+        )
+        guard case .whatsNew(let notes) = presentation else { return XCTFail("expected What's New, got \(presentation)") }
+        XCTAssertEqual(notes.map(\.version), [try XCTUnwrap(AppVersion("0.3.4"))])
+        let titles = notes.first?.highlights.map(\.title) ?? []
+        XCTAssertTrue(titles.contains("Mac-style shortcuts"), "\(titles)")
+        XCTAssertTrue(titles.contains("Pull requests in the status bar"), "\(titles)")
+    }
+
     func test_shippingCatalog_versionsParseAreUniqueAndEachHasHighlights() {
         let notes = WhatsNewCatalog.releaseNotes
         XCTAssertFalse(notes.isEmpty)

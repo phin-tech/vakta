@@ -322,7 +322,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let acknowledge = { OnboardingLaunch.acknowledge(root: root, currentVersion: OnboardingLaunch.bundleVersion) }
         switch presentation {
         case .none: return
-        case .tutorial: onboardingController.show(.tutorial(tutorialSteps(), setup: multiplexerSetup), onClose: acknowledge)
+        case .tutorial: onboardingController.show(.tutorial(tutorialSteps(), setup: multiplexerSetup, keybindings: keybindingMatcher), onClose: acknowledge)
         case .whatsNew(let notes): onboardingController.show(.whatsNew(notes), onClose: acknowledge)
         }
     }
@@ -1433,7 +1433,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .stopSession: confirmStopSelectedSession()
         case .editHerdrConfig: preferencesController.show(section: .herdr)
         case .reloadHerdrConfig: reloadHerdrConfig()
-        case .showWelcomeTour: onboardingController.show(.tutorial(tutorialSteps(), setup: multiplexerSetup))
+        case .showWelcomeTour: onboardingController.show(.tutorial(tutorialSteps(), setup: multiplexerSetup, keybindings: keybindingMatcher))
         case .showWhatsNew:
             onboardingController.show(.whatsNew(OnboardingPlanner.releaseHistory(
                 currentVersion: OnboardingLaunch.bundleVersion, releaseNotes: WhatsNewCatalog.releaseNotes)))

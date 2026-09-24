@@ -216,5 +216,17 @@ enum WhatsNewCatalog {
                 detail: "The standard macOS shortcut now works out of the box, and can be rebound like any other."
             ),
         ]),
+        ReleaseNote(version: AppVersion("0.3.4")!, highlights: [
+            WhatsNewHighlight(
+                symbolName: "command.square",
+                title: "Mac-style shortcuts",
+                detail: "⌘T, ⌘D, ⌘W, ⌘1…⌘9 and ⌘⌥ arrows for herdr and tmux, run by Vakta so your multiplexer config stays as it is. Turn them on in Preferences ▸ Keybindings."
+            ),
+            WhatsNewHighlight(
+                symbolName: "checkmark.circle",
+                title: "Pull requests in the status bar",
+                detail: "The focused pane's branch and GitHub PR with CI checks, a green check when it's ready to merge, and every PR across your sessions one click (or ⌘K \"Show Pull Requests\") away."
+            ),
+        ]),
     ]
 }
