@@ -89,6 +89,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusBarObserver: AnyCancellable?
     private var statusBarVisibilityObserver: AnyCancellable?
     private var statusBarPopoverObserver: AnyCancellable?
+    private var statusBarKeyMonitor: Any?
     private var isStatusBarDocked = false
     private var statusBarVisibility: StatusBarVisibility = .auto
     private var statusBarDockState = StatusBarDockState()
@@ -348,30 +349,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self else { return }
             self.statusBarAutoHideState = StatusBarAutoHide.setHeld(self.statusBarAutoHideState, open, at: Date())
             self.updateStatusBarAutoHide()
+            if open { self.fetchMissingWorkspaceLabelsForStatusBar() }
+        }
+        // While a list is open it takes Escape (and, pinned, ↑/↓/Return);
+        // every other key -- and these, when no list is open -- reaches the
+        // terminal untouched.
+        statusBarKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { @MainActor [weak self] event in
+            guard let self, self.statusBarModel.isAnyPopoverOpen,
+                  let action = StatusBarListKey.action(
+                      keyCode: event.keyCode,
+                      hasModifiers: !event.modifierFlags.intersection([.command, .control, .option]).isEmpty
+                  ),
+                  self.statusBarModel.handle(action)
+            else { return event }
+            return nil
         }
         statusBarVisibilityObserver = statusBarPreferences.$visibility.sink { [weak self] visibility in
             self?.sessionStore.isPullRequestStatusEnabled = visibility.needsPullRequestStatus
         }
         let pullRequestStatus = sessionStore.pullRequestStatus
-        let workspaceState = Publishers.CombineLatest3(
-            pullRequestStatus.$workspaceSummaries,
+        let pullRequestState = Publishers.CombineLatest3(
+            pullRequestStatus.$focused,
             pullRequestStatus.$workspacePullRequests,
             pullRequestStatus.$focusedWorkspace
         )
-        statusBarObserver = Publishers.CombineLatest4(
-            statusBarPreferences.$visibility,
-            sessionStore.$selectedID,
-            pullRequestStatus.$focused,
-            workspaceState
+        let sessionState = Publishers.CombineLatest3(
+            sessionStore.$sessions,
+            sessionStore.$workspaces,
+            sessionStore.$selectedID
         )
-        .sink { [weak self] visibility, selectedID, focused, workspaceState in
+        statusBarObserver = Publishers.CombineLatest3(
+            statusBarPreferences.$visibility,
+            pullRequestState,
+            sessionState
+        )
+        .sink { [weak self] visibility, pullRequestState, sessionState in
             guard let self else { return }
-            let (summaries, lists, focusedWorkspace) = workspaceState
-            let workspaceID = selectedID.flatMap { focusedWorkspace[$0] }
+            let (focused, lists, focusedWorkspace) = pullRequestState
+            let (sessions, workspaces, selectedID) = sessionState
             let content = StatusBarPresentation.content(
                 focused: selectedID.flatMap { focused[$0] },
-                workspaceSummaries: selectedID.flatMap { summaries[$0] } ?? [:],
-                workspacePullRequests: selectedID.flatMap { id in workspaceID.flatMap { lists[id]?[$0] } } ?? []
+                lists: Self.statusBarLists(sessions: sessions, workspaces: workspaces, pullRequests: lists),
+                currentGroup: selectedID.flatMap { id in
+                    focusedWorkspace[id].map { StatusBarGroupKey(sessionID: id, workspaceID: $0) }
+                }
             )
             let previous = selectedID == self.statusBarContentSessionID ? self.lastStatusBarContent : nil
             self.lastStatusBarContent = content
@@ -388,6 +409,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             self.updateStatusBarAutoHide()
         }
+    }
+
+    /// Every session's per-workspace PRs in sidebar order: workspaces the
+    /// sidebar knows (with their labels) first, in its order, then any others
+    /// by id.
+    private static func statusBarLists(
+        sessions: [Session],
+        workspaces: [Session.ID: [Workspace]],
+        pullRequests: [Session.ID: [String: [PullRequestStatus]]]
+    ) -> [StatusBarWorkspaceInput] {
+        sessions.flatMap { session -> [StatusBarWorkspaceInput] in
+            guard let byWorkspace = pullRequests[session.id] else { return [] }
+            let known = workspaces[session.id] ?? []
+            let order = known.map(\.id).filter { byWorkspace[$0] != nil }
+                + byWorkspace.keys.filter { id in !known.contains { $0.id == id } }.sorted()
+            return order.compactMap { workspaceID in
+                guard let pullRequests = byWorkspace[workspaceID], !pullRequests.isEmpty else { return nil }
+                return StatusBarWorkspaceInput(
+                    sessionID: session.id,
+                    sessionTitle: session.displayTitle,
+                    workspaceID: workspaceID,
+                    workspaceTitle: known.first { $0.id == workspaceID }?.label,
+                    pullRequests: pullRequests
+                )
+            }
+        }
+    }
+
+    /// Group headers use workspace labels, which the sidebar only fetches on
+    /// demand; fetch them for sessions with PRs when a list opens.
+    private func fetchMissingWorkspaceLabelsForStatusBar() {
+        for (sessionID, _) in sessionStore.pullRequestStatus.workspacePullRequests where sessionStore.workspaces[sessionID] == nil {
+            sessionStore.fetchWorkspaces(for: sessionID)
+        }
+    }
+
+    /// "Show Pull Requests": reveals the bar if it isn't showing, then pins
+    /// the all-sessions list open for the keyboard.
+    private func showPullRequestList() {
+        if !isStatusBarDocked, !statusBarAutoHideState.isRevealed {
+            if statusBarVisibility == .hide {
+                sessionStore.refreshPullRequestStatus(forceFocused: true, evenIfDisabled: true)
+            }
+            statusBarAutoHideState = StatusBarAutoHide.toggleSummon(statusBarAutoHideState, at: Date())
+            updateStatusBarAutoHide()
+        }
+        statusBarModel.pin(.pullRequests)
     }
 
     /// Runs `StatusBarDockPlanner` now and again at its next deadline (the
@@ -1345,6 +1413,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .showStatusBarBriefly: toggleStatusBarBriefly()
         case .cycleStatusBar: statusBarPreferences.cycle()
         case .openPullRequest: openFocusedPullRequest()
+        case .showPullRequests: showPullRequestList()
         case .splitPaneRight: performWorkspacePaneAction { .splitPane(paneID: $0, direction: .right) }
         case .splitPaneDown: performWorkspacePaneAction { .splitPane(paneID: $0, direction: .down) }
         case .zoomPane: performWorkspacePaneAction { .zoomPane(paneID: $0) }

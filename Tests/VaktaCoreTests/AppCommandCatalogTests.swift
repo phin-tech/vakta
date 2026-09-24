@@ -43,11 +43,11 @@ final class AppCommandCatalogTests: XCTestCase {
         let rows = AppCommandCatalog.paletteCommands.dropFirst(legacyPaletteRows.count).map { (id: $0.stableID, title: $0.title) }
         XCTAssertEqual(rows.map(\.id), [
             "toggleFileSidebarChanges", "showWelcomeTour", "showWhatsNew",
-            "showStatusBarBriefly", "cycleStatusBar", "openPullRequest",
+            "showStatusBarBriefly", "cycleStatusBar", "openPullRequest", "showPullRequests",
         ])
         XCTAssertEqual(rows.map(\.title), [
             "Toggle File Sidebar Git Changes", "Show Welcome Tour", "What's New in Vakta",
-            "Show Status Bar Briefly", "Cycle Status Bar Visibility", "Open Pull Request",
+            "Show Status Bar Briefly", "Cycle Status Bar Visibility", "Open Pull Request", "Show Pull Requests",
         ])
     }
 
@@ -80,7 +80,7 @@ final class AppCommandCatalogTests: XCTestCase {
             .closeWorkspace, .newWorkspace, .stopSession,
             .editHerdrConfig, .reloadHerdrConfig,
             .showWelcomeTour, .showWhatsNew,
-            .showStatusBarBriefly, .cycleStatusBar, .openPullRequest,
+            .showStatusBarBriefly, .cycleStatusBar, .openPullRequest, .showPullRequests,
         ]
         let bindable = AppCommandCatalog.bindableCommands
 
@@ -147,7 +147,7 @@ final class CommandAvailabilityTests: XCTestCase {
         let context = CommandContext(supportsSelectedSessionActions: false)
         let visible = AppCommandCatalog.paletteCommands.filter { CommandAvailability.isAvailable($0, in: context) }
         XCTAssertEqual(visible, otherPaletteCommands)
-        XCTAssertEqual(visible.count, 16)
+        XCTAssertEqual(visible.count, 17)
     }
 
     func test_selectSession_availableOnlyWhenASessionExistsAtThatIndex() {

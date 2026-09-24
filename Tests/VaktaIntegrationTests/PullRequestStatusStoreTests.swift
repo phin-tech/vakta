@@ -20,6 +20,9 @@ private final class ManualScheduler: @unchecked Sendable {
     func schedule(_ work: @escaping @Sendable () -> Void) { queue.append(work) }
 
     func runNext() { queue.removeFirst()() }
+
+    /// Runs the most recently scheduled work item, overtaking older ones.
+    func runNewest() { queue.removeLast()() }
 }
 
 /// The multiplexer, git, and GitHub state the store observes. Tests mutate
@@ -84,11 +87,18 @@ final class PullRequestStatusStoreTests: XCTestCase {
         wait(for: [drained], timeout: 2)
     }
 
-    /// Requests a refresh and runs the resulting cycle to completion.
+    /// Requests a refresh and runs everything it schedules -- the pane
+    /// cycle and any fetches it starts -- to completion.
     private func cycle(sessions: [UUID]? = nil, forceFocused: Bool = false) {
         store.refresh(sessions: snapshots(sessions ?? [sessionID]), focusedSessionID: sessionID, forceFocused: forceFocused)
-        scheduler.runNext()
-        drainMainQueue()
+        runAll()
+    }
+
+    private func runAll() {
+        while scheduler.waiting > 0 {
+            scheduler.runNext()
+            drainMainQueue()
+        }
     }
 
     private func snapshots(_ ids: [UUID]) -> [PullRequestSessionSnapshot] {
@@ -232,6 +242,121 @@ final class PullRequestStatusStoreTests: XCTestCase {
         XCTAssertEqual(store.focused[sessionID]?.pullRequest?.checks.state, .passing)
     }
 
+    // MARK: stale-while-revalidate
+
+    func test_cachedStateIsPublishedBeforeADueFetchLands() {
+        setUpTwoPanesOnOneBranch()
+        cycle()
+        serve([pr(7, branch: "feature", failing: 0)])
+        clock = clock.addingTimeInterval(61)
+
+        store.refresh(sessions: snapshots([sessionID]), focusedSessionID: sessionID, forceFocused: false)
+        scheduler.runNext()  // the pane cycle
+        drainMainQueue()
+        XCTAssertEqual(scheduler.waiting, 1, "the due fetch runs separately")
+        XCTAssertEqual(store.focused[sessionID]?.pullRequest?.checks.state, .failing, "cached data shown meanwhile")
+
+        scheduler.runNext()  // the fetch
+        drainMainQueue()
+        XCTAssertEqual(store.focused[sessionID]?.pullRequest?.checks.state, .passing)
+    }
+
+    func test_paneSwitchIsPublishedWhileAFetchIsStillRunning() {
+        setUpTwoPanesOnOneBranch()
+        world.checkouts["/other"] = checkout("/other", "topic", remote: other)
+        serve([pr(3, branch: "topic")], for: other)
+        cycle()
+        world.panes[sessionID] = [pane("p1", "/r", focused: true), pane("p2", "/other")]
+        cycle()  // both repositories cached
+
+        clock = clock.addingTimeInterval(61)
+        store.refresh(sessions: snapshots([sessionID]), focusedSessionID: sessionID, forceFocused: false)
+        scheduler.runNext()
+        drainMainQueue()
+        XCTAssertEqual(scheduler.waiting, 1, "the focused repository's fetch is pending")
+
+        world.panes[sessionID] = [pane("p1", "/r"), pane("p2", "/other", focused: true)]
+        store.refresh(sessions: snapshots([sessionID]), focusedSessionID: sessionID, forceFocused: false, onlySessionID: sessionID)
+        scheduler.runNewest()  // the pane cycle overtakes the slow fetch
+        drainMainQueue()
+
+        XCTAssertEqual(store.focused[sessionID]?.target.repository, other)
+        XCTAssertEqual(store.focused[sessionID]?.pullRequest?.number, 3)
+        runAll()
+    }
+
+    func test_repositoryWithAFetchInFlight_isNotFetchedAgain() {
+        setUpTwoPanesOnOneBranch()
+        cycle()
+        clock = clock.addingTimeInterval(61)
+
+        store.refresh(sessions: snapshots([sessionID]), focusedSessionID: sessionID, forceFocused: false)
+        scheduler.runNext()
+        drainMainQueue()
+        store.refresh(sessions: snapshots([sessionID]), focusedSessionID: sessionID, forceFocused: true)
+        scheduler.runNewest()
+        drainMainQueue()
+
+        XCTAssertEqual(scheduler.waiting, 1, "only the original fetch")
+        runAll()
+    }
+
+    func test_fetchResultForARepositoryNoLongerInUse_isDropped() {
+        setUpTwoPanesOnOneBranch()
+        store.refresh(sessions: snapshots([sessionID]), focusedSessionID: sessionID, forceFocused: false)
+        scheduler.runNext()
+        drainMainQueue()  // fetch pending
+
+        world.panes[sessionID] = [pane("p1", "/plain", focused: true)]
+        store.refresh(sessions: snapshots([sessionID]), focusedSessionID: sessionID, forceFocused: false)
+        scheduler.runNewest()
+        drainMainQueue()
+        runAll()  // the stale fetch lands
+
+        world.panes[sessionID] = [pane("p1", "/r", focused: true)]
+        world.pullRequests[repository] = .failed
+        cycle()
+        XCTAssertNil(store.focused[sessionID]?.pullRequest, "the dropped result was never cached")
+    }
+
+    // MARK: partial refresh (a pane switch in the selected session)
+
+    func test_partialRefresh_updatesOnlyThatSession_andKeepsOtherSessionsCaches() {
+        let otherSession = UUID()
+        setUpTwoPanesOnOneBranch()
+        world.panes[otherSession] = [pane("q1", "/other", focused: true)]
+        world.checkouts["/other"] = checkout("/other", "topic", remote: other)
+        serve([pr(3, branch: "topic")], for: other)
+        cycle(sessions: [sessionID, otherSession])
+
+        // Focus moves to a pane in a third repository; the other session's
+        // PR changes remotely but is still within its TTL. The partial cycle
+        // never sees the other session's repository, so pruning there would
+        // drop its cache.
+        let third = GitRemote(host: "github.com", owner: "o", name: "third")
+        world.panes[sessionID] = [pane("p1", "/r"), pane("p3", "/third", focused: true)]
+        world.checkouts["/third"] = checkout("/third", "wip", remote: third)
+        serve([pr(5, branch: "wip")], for: third)
+        serve([pr(4, branch: "topic")], for: other)
+        store.refresh(
+            sessions: snapshots([sessionID, otherSession]),
+            focusedSessionID: sessionID,
+            forceFocused: false,
+            onlySessionID: sessionID
+        )
+        runAll()
+
+        XCTAssertEqual(store.focused[sessionID]?.target.repository, third, "follows the pane switch")
+        XCTAssertEqual(store.focused[sessionID]?.pullRequest?.number, 5)
+        XCTAssertEqual(store.focused[otherSession]?.pullRequest?.number, 3, "other session's state kept")
+
+        // A later full cycle within the TTL still has both repositories cached.
+        world.panes[sessionID] = [pane("p1", "/r", focused: true)]
+        cycle(sessions: [sessionID, otherSession])
+        XCTAssertEqual(store.focused[sessionID]?.pullRequest?.number, 7)
+        XCTAssertEqual(store.focused[otherSession]?.pullRequest?.number, 3, "not pruned by the partial cycle")
+    }
+
     // MARK: pane changes
 
     func test_paneMovingToAnotherRepository_followsItOnceResolved() {
@@ -249,9 +374,10 @@ final class PullRequestStatusStoreTests: XCTestCase {
 
     func test_requestsDuringCycle_collapseIntoOneFollowUp() {
         setUpTwoPanesOnOneBranch()
+        cycle()  // warm the cache, so the cycles below start no fetches
         store.refresh(sessions: snapshots([sessionID]), focusedSessionID: sessionID, forceFocused: false)
         store.refresh(sessions: snapshots([sessionID]), focusedSessionID: sessionID, forceFocused: false)
-        store.refresh(sessions: snapshots([sessionID]), focusedSessionID: sessionID, forceFocused: true)
+        store.refresh(sessions: snapshots([sessionID]), focusedSessionID: sessionID, forceFocused: false)
         XCTAssertEqual(scheduler.waiting, 1)
 
         scheduler.runNext()

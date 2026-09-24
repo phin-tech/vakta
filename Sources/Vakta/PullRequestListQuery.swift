@@ -22,7 +22,7 @@ enum PullRequestListOutcome: Equatable {
 }
 
 enum PullRequestListQuery {
-    static let jsonFields = "number,url,title,isDraft,headRefName,headRepositoryOwner,statusCheckRollup,reviewDecision"
+    static let jsonFields = "number,url,title,isDraft,headRefName,headRepositoryOwner,statusCheckRollup,reviewDecision,mergeStateStatus"
 
     /// `env`'s exit status when the command isn't found on PATH.
     private static let commandNotFoundExitCode: Int32 = 127

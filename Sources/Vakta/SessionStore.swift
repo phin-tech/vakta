@@ -537,7 +537,9 @@ final class SessionStore: ObservableObject {
     /// elsewhere shows without waiting for the TTL.
     /// `evenIfDisabled` runs one cycle while the status bar is set to Never
     /// -- "Show Status Bar Briefly" needs something to show.
-    func refreshPullRequestStatus(forceFocused: Bool = false, evenIfDisabled: Bool = false) {
+    /// `onlySelectedSession` lists just the selected session's panes -- a
+    /// pane switch there changes nothing elsewhere.
+    func refreshPullRequestStatus(forceFocused: Bool = false, evenIfDisabled: Bool = false, onlySelectedSession: Bool = false) {
         // While disabled, the timer does nothing -- data a one-off
         // `evenIfDisabled` cycle fetched stays until the next one.
         guard isPullRequestStatusEnabled || evenIfDisabled else { return }
@@ -551,7 +553,8 @@ final class SessionStore: ObservableObject {
             sessions: snapshots,
             focusedSessionID: selectedID,
             forceFocused: forceFocused,
-            environment: ["PATH": resolvedPATH, "HOME": NSHomeDirectory()]
+            environment: ["PATH": resolvedPATH, "HOME": NSHomeDirectory()],
+            onlySessionID: onlySelectedSession ? selectedID : nil
         )
     }
 

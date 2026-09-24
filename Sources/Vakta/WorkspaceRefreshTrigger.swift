@@ -47,6 +47,19 @@ enum FileSidebarRefreshGate {
     }
 }
 
+/// Whether a passthrough input event should refresh the status bar's PR
+/// state: switching panes (a key or click in the focused terminal) changes
+/// which pane is focused, and the bar follows it.
+enum PullRequestStatusRefreshGate {
+    static func shouldTrigger(
+        eventIsKeyDownOrLeftMouseDown: Bool,
+        sessionIsFocused: Bool,
+        statusBarEnabled: Bool
+    ) -> Bool {
+        eventIsKeyDownOrLeftMouseDown && sessionIsFocused && statusBarEnabled
+    }
+}
+
 /// Trailing debounce with a minimum-interval floor: a burst of candidate
 /// events collapses to one fetch `debounceInterval` after the burst's last
 /// event, but never fires sooner than `minInterval` after the previous
@@ -87,6 +100,13 @@ final class WorkspaceRefreshMonitor {
     /// different kind can't cancel a refresh an earlier one asked for.
     private var pendingWorkspace: Set<Session.ID> = []
     private var pendingFileSidebar: Set<Session.ID> = []
+    /// The status bar's pane-switch refresh: one pane listing of the selected
+    /// session (milliseconds; cached PR data is shown at once and any due
+    /// fetch runs separately), so ~0.1 s after the last input, at most every
+    /// 0.4 s while typing.
+    private let pullRequestDebouncer = WorkspaceRefreshDebouncer(debounceInterval: 0.1, minInterval: 0.4)
+    private var lastPullRequestFireDate: Date?
+    private var pendingPullRequestWork: DispatchWorkItem?
 
     init(
         sessionStore: SessionStore,
@@ -133,11 +153,32 @@ final class WorkspaceRefreshMonitor {
             sessionIsFocused: focused,
             fileSidebarVisible: fileSidebarPreferences.isVisible
         )
+        if PullRequestStatusRefreshGate.shouldTrigger(
+            eventIsKeyDownOrLeftMouseDown: isInput,
+            sessionIsFocused: focused,
+            statusBarEnabled: sessionStore.isPullRequestStatusEnabled
+        ) {
+            schedulePullRequestRefresh()
+        }
         guard workspace || fileSidebar else { return }
 
         if workspace { pendingWorkspace.insert(id) }
         if fileSidebar { pendingFileSidebar.insert(id) }
         schedule(for: id)
+    }
+
+    private func schedulePullRequestRefresh() {
+        let now = Date()
+        let fireDate = pullRequestDebouncer.scheduledFireDate(now: now, lastFireDate: lastPullRequestFireDate)
+        pendingPullRequestWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.lastPullRequestFireDate = Date()
+            self.pendingPullRequestWork = nil
+            self.sessionStore.refreshPullRequestStatus(onlySelectedSession: true)
+        }
+        pendingPullRequestWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + max(0, fireDate.timeIntervalSince(now)), execute: work)
     }
 
     private func schedule(for id: Session.ID) {
