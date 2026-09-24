@@ -38,6 +38,18 @@ struct KeybindingsPreferencesView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Form {
+                Section {
+                    MacShortcutsPresetView(matcher: matcher)
+                } header: {
+                    Text("Mac-style Shortcuts")
+                } footer: {
+                    Text("iTerm-style ⌘ chords for herdr and tmux. Vakta runs these itself — "
+                        + "⌘ never reaches a multiplexer through the terminal — so your herdr/tmux "
+                        + "config and prefix keys are untouched. Revert restores whatever the preset replaced.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
                 ForEach(Self.sections, id: \.group) { section in
                     Section(section.group.title) {
                         ForEach(section.commands, id: \.self) { command in

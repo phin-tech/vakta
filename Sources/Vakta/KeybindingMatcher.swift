@@ -288,6 +288,43 @@ final class KeybindingMatcher: ObservableObject {
         bindings.first { $0.action == action }
     }
 
+    // MARK: Mac-style preset
+
+    /// Vakta's storage folder, where the config backup taken before applying
+    /// the preset is written (see `MultiplexerConfigBackup`).
+    var storageRoot: URL { root }
+
+    var isMacStylePresetApplied: Bool { KeybindingPreset.macStyle.isApplied(in: bindings) }
+
+    /// What applying the preset would change, for Preferences to show first.
+    var macStylePresetChanges: [KeybindingPresetChange] { KeybindingPreset.macStyle.changes(from: bindings) }
+
+    /// Applies the Mac-style chords, recording (alongside any earlier record)
+    /// every binding they replaced so `revertMacStylePreset` can restore it
+    /// after a restart.
+    func applyMacStylePreset() {
+        let result = KeybindingPreset.macStyle.apply(to: bindings)
+        var replaced = presetRecord()?.replaced ?? []
+        for binding in result.replaced where !replaced.contains(binding) {
+            replaced.append(binding)
+        }
+        KeybindingPresetPersistence.store(root: root).save(KeybindingPresetRecord(replaced: replaced))
+        bindings = result.bindings
+    }
+
+    /// Removes the preset's chords and restores what they replaced; without
+    /// a readable record, the shipped defaults stand in for it.
+    func revertMacStylePreset() {
+        let candidates = presetRecord()?.replaced ?? Keybinding.defaults
+        bindings = KeybindingPreset.macStyle.revert(bindings, restoring: candidates)
+        KeybindingPresetPersistence.store(root: root).save(KeybindingPresetRecord(replaced: []))
+    }
+
+    private func presetRecord() -> KeybindingPresetRecord? {
+        guard case .loaded(let record) = KeybindingPresetPersistence.store(root: root).load() else { return nil }
+        return record
+    }
+
     /// Restores the shipped defaults (session chords; sidebar/preferences
     /// unbound).
     func resetToDefaults() {
