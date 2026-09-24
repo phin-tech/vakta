@@ -119,6 +119,26 @@ final class PullRequestIndexTests: XCTestCase {
         XCTAssertEqual(try index(json).pullRequests.first?.checkRuns, [])
     }
 
+    // MARK: merge state
+
+    func test_parse_mergeStateStatus() throws {
+        func state(_ raw: String?) throws -> PullRequestMergeState? {
+            let field = raw.map { #","mergeStateStatus":"\#($0)""# } ?? ""
+            return try index(#"[{"headRefName":"b","headRepositoryOwner":{"login":"o"},"number":1,"url":"u"\#(field)}]"#).pullRequests.first?.mergeState
+        }
+        XCTAssertEqual(try state("CLEAN"), .ready)
+        XCTAssertEqual(try state("HAS_HOOKS"), .ready)
+        XCTAssertEqual(try state("clean"), .ready)
+        XCTAssertEqual(try state("BLOCKED"), .blocked)
+        XCTAssertEqual(try state("BEHIND"), .behind)
+        XCTAssertEqual(try state("DIRTY"), .conflicts)
+        XCTAssertEqual(try state("UNSTABLE"), .unstable)
+        XCTAssertEqual(try state("DRAFT"), .draft)
+        XCTAssertEqual(try state("UNKNOWN"), .unknown)
+        XCTAssertEqual(try state("SOMETHING_NEW"), .unknown)
+        XCTAssertEqual(try state(nil), .unknown)
+    }
+
     // MARK: matching
 
     func test_pullRequest_matchesBranchAndHeadOwner() throws {
@@ -199,7 +219,7 @@ final class PullRequestIndexTests: XCTestCase {
             PullRequestListQuery.arguments(repository: "phin-tech/vakta", limit: 100),
             [
                 "gh", "pr", "list", "--repo", "phin-tech/vakta", "--state", "open", "--limit", "100",
-                "--json", "number,url,title,isDraft,headRefName,headRepositoryOwner,statusCheckRollup,reviewDecision"
+                "--json", "number,url,title,isDraft,headRefName,headRepositoryOwner,statusCheckRollup,reviewDecision,mergeStateStatus"
             ]
         )
     }

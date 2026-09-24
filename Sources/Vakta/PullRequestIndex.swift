@@ -28,6 +28,32 @@ enum PullRequestReview: Equatable {
     }
 }
 
+/// GitHub's `mergeStateStatus`, collapsed to what the status bar needs:
+/// `.ready` means the PR can be merged now -- checks, required reviews, no
+/// conflicts, not a draft (`CLEAN`; `HAS_HOOKS` is clean with pre-receive
+/// hooks). GitHub computes it lazily, so a fresh PR may report `.unknown`.
+enum PullRequestMergeState: Equatable {
+    case ready
+    case blocked
+    case behind
+    case conflicts
+    case unstable
+    case draft
+    case unknown
+
+    init(gitHubStatus: String?) {
+        switch gitHubStatus?.uppercased() {
+        case "CLEAN", "HAS_HOOKS": self = .ready
+        case "BLOCKED": self = .blocked
+        case "BEHIND": self = .behind
+        case "DIRTY": self = .conflicts
+        case "UNSTABLE": self = .unstable
+        case "DRAFT": self = .draft
+        default: self = .unknown
+        }
+    }
+}
+
 /// One row of gh's `statusCheckRollup`. gh mixes two shapes: workflow check
 /// runs (`name`, `status` + `conclusion`, `detailsUrl`) and commit-status
 /// contexts (`context`, `state`, `targetUrl`).
@@ -144,6 +170,7 @@ struct PullRequestStatus: Equatable {
     let review: PullRequestReview?
     /// Every check, in gh's order (see `PullRequestCheck`).
     var checkRuns: [PullRequestCheck] = []
+    var mergeState: PullRequestMergeState = .unknown
 }
 
 struct PullRequestIndex: Equatable {
@@ -205,6 +232,7 @@ struct PullRequestIndex: Equatable {
         let headRepositoryOwner: Owner
         let statusCheckRollup: [CheckRow]?
         let reviewDecision: String?
+        let mergeStateStatus: String?
 
         var status: PullRequestStatus {
             let rows = (statusCheckRollup ?? []).map(\.row)
@@ -217,7 +245,8 @@ struct PullRequestIndex: Equatable {
                 headOwner: headRepositoryOwner.login,
                 checks: .summarize(rows),
                 review: PullRequestReview(gitHubDecision: reviewDecision),
-                checkRuns: rows.map(PullRequestCheck.init(row:))
+                checkRuns: rows.map(PullRequestCheck.init(row:)),
+                mergeState: PullRequestMergeState(gitHubStatus: mergeStateStatus)
             )
         }
     }

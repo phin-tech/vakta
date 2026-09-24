@@ -110,7 +110,11 @@ enum StatusBarGlyph: Equatable {
     case failing
     case changesRequested
     case pending
+    /// Checks pass (or it's approved), but GitHub doesn't report it
+    /// mergeable yet -- e.g. awaiting a required review.
     case passing
+    /// GitHub reports the PR mergeable right now.
+    case readyToMerge
     /// No checks and no decisive review yet.
     case noChecks
 }
@@ -132,31 +136,62 @@ struct StatusBarPullRequest: Equatable {
     }
 }
 
+/// One workspace's PRs as the shell supplies them, in sidebar order.
+struct StatusBarWorkspaceInput: Equatable {
+    let sessionID: UUID
+    let sessionTitle: String
+    let workspaceID: String
+    /// The workspace's label when known; its id otherwise.
+    let workspaceTitle: String?
+    let pullRequests: [PullRequestStatus]
+}
+
+struct StatusBarGroupKey: Hashable {
+    let sessionID: UUID
+    let workspaceID: String
+}
+
+struct StatusBarPullRequestGroup: Equatable {
+    /// `session › workspace`.
+    let title: String
+    /// The focused pane's workspace.
+    let isCurrent: Bool
+    let pullRequests: [StatusBarPullRequest]
+}
+
 struct StatusBarContent: Equatable {
     var branch: String?
     var pullRequest: StatusBarPullRequest?
-    /// Other PRs in the selected session with failing checks or changes
-    /// requested; 0 hides the indicator.
+    /// Distinct PRs anywhere, other than the focused one, with failing checks
+    /// or changes requested (drives Auto-hide's peek).
     var attentionElsewhere: Int
-    /// Every PR in the focused pane's workspace: worst first, then number.
-    var workspacePullRequests: [StatusBarPullRequest] = []
+    /// Every PR across all sessions, grouped by session › workspace: the
+    /// current workspace first, then sidebar order; worst first within each.
+    var pullRequestGroups: [StatusBarPullRequestGroup] = []
 
     var isEmpty: Bool {
-        branch == nil && pullRequest == nil && attentionElsewhere == 0 && workspacePullRequests.isEmpty
+        branch == nil && pullRequest == nil && attentionElsewhere == 0 && pullRequestGroups.isEmpty
     }
 
-    /// The workspace block shows only when it adds something: a PR besides
-    /// the focused one.
-    var showsWorkspacePullRequests: Bool {
-        workspacePullRequests.contains { $0.url != pullRequest?.url }
+    /// Distinct PRs across the groups (one PR can appear in several).
+    var distinctPullRequests: [StatusBarPullRequest] {
+        var seen = Set<String>()
+        return pullRequestGroups.flatMap(\.pullRequests).filter { seen.insert($0.url).inserted }
     }
 
-    var workspaceGlyph: StatusBarGlyph? {
-        workspacePullRequests.map(\.glyph).min { StatusBarPresentation.severity($0) < StatusBarPresentation.severity($1) }
+    /// The list block shows only when it adds something: a PR besides the
+    /// focused one.
+    var showsPullRequestList: Bool {
+        distinctPullRequests.contains { $0.url != pullRequest?.url }
     }
 
-    var workspaceLabel: String {
-        workspacePullRequests.count == 1 ? "1 PR" : "\(workspacePullRequests.count) PRs"
+    var listGlyph: StatusBarGlyph? {
+        distinctPullRequests.map(\.glyph).min { StatusBarPresentation.severity($0) < StatusBarPresentation.severity($1) }
+    }
+
+    var listLabel: String {
+        let count = distinctPullRequests.count
+        return count == 1 ? "1 PR" : "\(count) PRs"
     }
 }
 
@@ -164,21 +199,37 @@ enum StatusBarPresentation {
     /// `workspaceSummaries` are the selected session's. A PR open in panes
     /// of several workspaces is counted once per workspace -- an accepted
     /// overcount for a rare layout.
-    /// `workspacePullRequests` are the focused pane's workspace's.
+    /// `lists` are every session's workspaces in sidebar order;
+    /// `currentGroup` is the focused pane's workspace, listed first.
     static func content(
         focused: FocusedPullRequestState?,
-        workspaceSummaries: [String: PullRequestSummary],
-        workspacePullRequests: [PullRequestStatus] = []
+        lists: [StatusBarWorkspaceInput] = [],
+        currentGroup: StatusBarGroupKey? = nil
     ) -> StatusBarContent {
-        let total = workspaceSummaries.values.reduce(0) { $0 + $1.needingAttention }
-        let focusedNeedsAttention = focused?.pullRequest?.needsAttention == true
+        let focusedURL = focused?.pullRequest?.url
+        var attention = Set<String>()
+        for pullRequest in lists.flatMap(\.pullRequests) where pullRequest.needsAttention && pullRequest.url != focusedURL {
+            attention.insert(pullRequest.url)
+        }
+
+        var groups: [StatusBarPullRequestGroup] = []
+        for input in lists where !input.pullRequests.isEmpty {
+            let isCurrent = StatusBarGroupKey(sessionID: input.sessionID, workspaceID: input.workspaceID) == currentGroup
+            let group = StatusBarPullRequestGroup(
+                title: "\(input.sessionTitle) › \(input.workspaceTitle ?? input.workspaceID)",
+                isCurrent: isCurrent,
+                pullRequests: input.pullRequests.map(barPullRequest).sorted {
+                    severity($0.glyph) != severity($1.glyph) ? severity($0.glyph) < severity($1.glyph) : $0.number < $1.number
+                }
+            )
+            if isCurrent { groups.insert(group, at: 0) } else { groups.append(group) }
+        }
+
         return StatusBarContent(
             branch: focused?.target.branch,
             pullRequest: focused?.pullRequest.map(barPullRequest),
-            attentionElsewhere: max(0, total - (focusedNeedsAttention ? 1 : 0)),
-            workspacePullRequests: workspacePullRequests.map(barPullRequest).sorted {
-                severity($0.glyph) != severity($1.glyph) ? severity($0.glyph) < severity($1.glyph) : $0.number < $1.number
-            }
+            attentionElsewhere: attention.count,
+            pullRequestGroups: groups
         )
     }
 
@@ -195,14 +246,15 @@ enum StatusBarPresentation {
         )
     }
 
-    /// Lower is worse -- the order `glyph(for:)` checks in.
+    /// Lower is worse: problems first, ready-to-merge last.
     static func severity(_ glyph: StatusBarGlyph) -> Int {
         switch glyph {
         case .failing: return 0
         case .changesRequested: return 1
         case .pending: return 2
-        case .passing: return 3
-        case .noChecks: return 4
+        case .noChecks: return 3
+        case .passing: return 4
+        case .readyToMerge: return 5
         }
     }
 
@@ -223,11 +275,12 @@ enum StatusBarPresentation {
     }
 
     /// Worst first: failing checks, changes requested, pending checks, then
-    /// passing checks or an approval.
+    /// mergeable now, then passing checks or an approval.
     static func glyph(for pullRequest: PullRequestStatus) -> StatusBarGlyph {
         if pullRequest.checks.state == .failing { return .failing }
         if pullRequest.review == .changesRequested { return .changesRequested }
         if pullRequest.checks.state == .pending { return .pending }
+        if pullRequest.mergeState == .ready { return .readyToMerge }
         if pullRequest.checks.state == .passing || pullRequest.review == .approved { return .passing }
         return .noChecks
     }
@@ -240,5 +293,36 @@ enum StatusBarPresentation {
         case .hide, .autoHide: return false
         case .auto: return !content.isEmpty
         }
+    }
+}
+
+/// Keys a status bar list takes: Escape closes any open list; the arrows and
+/// Return drive a pinned one. Anything with a command-style modifier passes
+/// through, so app shortcuts keep working.
+enum StatusBarListAction: Equatable {
+    case up
+    case down
+    case open
+    case close
+}
+
+enum StatusBarListKey {
+    static func action(keyCode: UInt16, hasModifiers: Bool) -> StatusBarListAction? {
+        guard !hasModifiers else { return nil }
+        switch keyCode {
+        case 126: return .up
+        case 125: return .down
+        case 36, 76: return .open
+        case 53: return .close
+        default: return nil
+        }
+    }
+
+    /// Moves the selection by `delta`, starting from the first (down) or
+    /// last (up) row when nothing is selected; clamped, nil when empty.
+    static func moved(_ selection: Int?, by delta: Int, count: Int) -> Int? {
+        guard count > 0 else { return nil }
+        guard let selection else { return delta >= 0 ? 0 : count - 1 }
+        return min(max(selection + delta, 0), count - 1)
     }
 }

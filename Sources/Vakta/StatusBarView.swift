@@ -13,22 +13,88 @@ import SwiftUI
 final class StatusBarViewModel: ObservableObject {
     @Published var content = StatusBarContent(branch: nil, pullRequest: nil, attentionElsewhere: 0)
     var openURL: (String) -> Void = { _ in }
-    /// True while any of the bar's popovers is open; Auto-hide holds the bar
-    /// revealed meanwhile. Tracked per popover, so moving from one list to
-    /// the other can't release the hold with a late close.
+
+    /// True while any list is open (hovered or pinned); Auto-hide holds the
+    /// bar revealed meanwhile. Hover-opened lists are tracked per popover, so
+    /// moving from one to the other can't release the hold with a late close.
     @Published private(set) var isAnyPopoverOpen = false
-    private var openPopovers: Set<StatusBarPopover> = []
+    /// The list opened by a click or "Show Pull Requests": stays open without
+    /// hover and takes ↑/↓/Return/Escape.
+    @Published private(set) var pinned: StatusBarPopover?
+    /// The selected row of the pinned list (flattened across groups).
+    @Published private(set) var selection: Int?
+    /// Bumped to tell hover-opened lists to close (Escape).
+    @Published private(set) var closeGeneration = 0
+    private var hoverOpen: Set<StatusBarPopover> = []
 
     func setPopover(_ popover: StatusBarPopover, open: Bool) {
-        if open { openPopovers.insert(popover) } else { openPopovers.remove(popover) }
-        let anyOpen = !openPopovers.isEmpty
-        if anyOpen != isAnyPopoverOpen { isAnyPopoverOpen = anyOpen }
+        if open { hoverOpen.insert(popover) } else { hoverOpen.remove(popover) }
+        updateOpen()
+    }
+
+    func togglePin(_ popover: StatusBarPopover) {
+        pinned == popover ? closeAll() : pin(popover)
+    }
+
+    func pin(_ popover: StatusBarPopover) {
+        pinned = popover
+        selection = nil
+        updateOpen()
+    }
+
+    /// Closes every list, pinned or hovered.
+    func closeAll() {
+        pinned = nil
+        selection = nil
+        if !hoverOpen.isEmpty {
+            hoverOpen.removeAll()
+            closeGeneration += 1
+        }
+        updateOpen()
+    }
+
+    /// Returns whether the key was consumed. Escape closes any open list;
+    /// the arrows and Return act only on a pinned list; anything else
+    /// passes through to the terminal.
+    func handle(_ action: StatusBarListAction) -> Bool {
+        switch action {
+        case .close:
+            guard pinned != nil || !hoverOpen.isEmpty else { return false }
+            closeAll()
+            return true
+        case .up, .down:
+            guard let pinned else { return false }
+            selection = StatusBarListKey.moved(selection, by: action == .up ? -1 : 1, count: rows(for: pinned).count)
+            return true
+        case .open:
+            guard let pinned else { return false }
+            let rows = rows(for: pinned)
+            if let index = StatusBarListKey.moved(selection, by: 0, count: rows.count), selection != nil,
+               let url = rows[index] {
+                openURL(url)
+            }
+            closeAll()
+            return true
+        }
+    }
+
+    /// Each row's URL, in display order (a check without a page has none).
+    func rows(for popover: StatusBarPopover) -> [String?] {
+        switch popover {
+        case .checks: return content.pullRequest?.checks.map(\.url) ?? []
+        case .pullRequests: return content.pullRequestGroups.flatMap { $0.pullRequests.map { Optional($0.url) } }
+        }
+    }
+
+    private func updateOpen() {
+        let open = pinned != nil || !hoverOpen.isEmpty
+        if open != isAnyPopoverOpen { isAnyPopoverOpen = open }
     }
 }
 
 enum StatusBarPopover: Hashable {
     case checks
-    case workspace
+    case pullRequests
 }
 
 struct StatusBarView: View {
@@ -75,35 +141,32 @@ struct StatusBarView: View {
                             .accessibilityLabel("\(label) checks passing")
                     }
                 }
-                .hoverPopover(
-                    isEnabled: pullRequest.checksLabel != nil,
-                    onOpenChange: { model.setPopover(.checks, open: $0) }
-                ) {
-                    StatusBarChecksList(pullRequest: pullRequest, openURL: model.openURL)
-                }
-            }
-            Spacer(minLength: 8)
-            if content.showsWorkspacePullRequests, let glyph = content.workspaceGlyph {
-                HStack(spacing: 3) {
-                    Image(systemName: Self.symbol(for: glyph))
-                        .foregroundStyle(Self.color(for: glyph))
-                    Text(content.workspaceLabel)
-                        .foregroundStyle(.secondary)
-                }
-                .accessibilityLabel("\(content.workspaceLabel) in this workspace")
-                .hoverPopover(isEnabled: true, onOpenChange: { model.setPopover(.workspace, open: $0) }) {
-                    StatusBarWorkspaceList(
-                        pullRequests: content.workspacePullRequests,
-                        focusedURL: content.pullRequest?.url,
+                .listPopover(.checks, model: model, isEnabled: pullRequest.checksLabel != nil) {
+                    StatusBarChecksList(
+                        pullRequest: pullRequest,
+                        selection: model.pinned == .checks ? model.selection : nil,
                         openURL: model.openURL
                     )
                 }
             }
-            if content.attentionElsewhere > 0 {
-                Label("\(content.attentionElsewhere)", systemImage: "exclamationmark.triangle.fill")
-                    .labelStyle(.titleAndIcon)
-                    .foregroundStyle(.orange)
-                    .help("\(content.attentionElsewhere) other pull request\(content.attentionElsewhere == 1 ? "" : "s") in this session need attention")
+            Spacer(minLength: 8)
+            if content.showsPullRequestList || model.pinned == .pullRequests {
+                let glyph = content.listGlyph ?? .noChecks
+                HStack(spacing: 3) {
+                    Image(systemName: Self.symbol(for: glyph))
+                        .foregroundStyle(Self.color(for: glyph))
+                    Text(content.listLabel)
+                        .foregroundStyle(.secondary)
+                }
+                .accessibilityLabel("\(content.listLabel) across all sessions")
+                .listPopover(.pullRequests, model: model, isEnabled: true) {
+                    StatusBarPullRequestList(
+                        groups: content.pullRequestGroups,
+                        focusedURL: content.pullRequest?.url,
+                        selection: model.pinned == .pullRequests ? model.selection : nil,
+                        openURL: model.openURL
+                    )
+                }
             }
         }
         .font(.system(size: 11))
@@ -121,17 +184,20 @@ struct StatusBarView: View {
         case .failing: return "xmark.circle.fill"
         case .changesRequested: return "exclamationmark.bubble.fill"
         case .pending: return "clock.fill"
-        case .passing: return "checkmark.circle.fill"
+        case .passing: return "checkmark.circle"
+        case .readyToMerge: return "checkmark.circle.fill"
         case .noChecks: return "arrow.triangle.pull"
         }
     }
 
+    /// Green is reserved for "ready to merge"; passing checks alone are an
+    /// outlined, muted check.
     static func color(for glyph: StatusBarGlyph) -> Color {
         switch glyph {
         case .failing, .changesRequested: return .red
         case .pending: return .yellow
-        case .passing: return .green
-        case .noChecks: return .secondary
+        case .readyToMerge: return .green
+        case .passing, .noChecks: return .secondary
         }
     }
 
@@ -141,7 +207,8 @@ struct StatusBarView: View {
         case .failing: state = "checks failing"
         case .changesRequested: state = "changes requested"
         case .pending: state = "checks pending"
-        case .passing: state = "checks passing"
+        case .passing: state = "checks passing, not mergeable yet"
+        case .readyToMerge: state = "ready to merge"
         case .noChecks: state = "no checks"
         }
         let draft = pullRequest.isDraft ? "Draft · " : ""
@@ -149,86 +216,159 @@ struct StatusBarView: View {
     }
 }
 
-/// Opens `popover` once the pointer rests on the content, and keeps it open
-/// while the pointer is over the content or the popover (a separate window).
-/// `onOpenChange` reports every open/close, including a close forced by the
-/// content disappearing or being disabled with the popover open.
-private struct HoverPopover<Popover: View>: ViewModifier {
+/// A status bar list: opens when the pointer rests on the content and
+/// stays open while it's over the content or the list (a separate window);
+/// a click pins it open (again: closes). The model owns pinning, keyboard
+/// selection, and Escape; `closeGeneration` closes a hover-opened list.
+private struct ListPopover<List: View>: ViewModifier {
+    let popover: StatusBarPopover
+    @ObservedObject var model: StatusBarViewModel
     let isEnabled: Bool
-    let onOpenChange: (Bool) -> Void
-    let popover: () -> Popover
+    let list: () -> List
 
-    @State private var isShown = false
+    @State private var isHoverShown = false
     @State private var isOverContent = false
-    @State private var isOverPopover = false
+    @State private var isOverList = false
     @State private var pending: DispatchWorkItem?
 
     func body(content: Content) -> some View {
         content
             .contentShape(Rectangle())
             .onHover { isOverContent = $0 && isEnabled; hoverChanged() }
-            .popover(isPresented: $isShown, arrowEdge: .top) {
-                popover().onHover { isOverPopover = $0; hoverChanged() }
+            .onTapGesture { if isEnabled { model.togglePin(popover) } }
+            .popover(isPresented: presented, arrowEdge: .top) {
+                list().onHover { isOverList = $0; hoverChanged() }
             }
-            .onChange(of: isShown) { onOpenChange($0) }
+            .onChange(of: isHoverShown) { model.setPopover(popover, open: $0) }
+            .onChange(of: model.closeGeneration) { _ in resetHover() }
             .onChange(of: isEnabled) { enabled in
                 guard !enabled else { return }
-                isOverContent = false
-                isShown = false
+                resetHover()
+                if model.pinned == popover { model.closeAll() }
             }
+            // The content can vanish with the list open (focus moved to a
+            // pane without a PR); release the hold.
             .onDisappear {
-                pending?.cancel()
-                isOverContent = false
-                isOverPopover = false
-                if isShown { isShown = false }
-                onOpenChange(false)
+                resetHover()
+                model.setPopover(popover, open: false)
+                if model.pinned == popover { model.closeAll() }
             }
+    }
+
+    /// Shown while hovered or pinned; dismissing it (clicking elsewhere)
+    /// closes it either way.
+    private var presented: Binding<Bool> {
+        Binding(
+            get: { isHoverShown || model.pinned == popover },
+            set: { shown in
+                guard !shown else { return }
+                resetHover()
+                if model.pinned == popover { model.closeAll() }
+            }
+        )
+    }
+
+    private func resetHover() {
+        pending?.cancel()
+        isOverContent = false
+        isOverList = false
+        if isHoverShown { isHoverShown = false }
     }
 
     private func hoverChanged() {
         pending?.cancel()
-        let wanted = isOverContent || isOverPopover
-        guard wanted != isShown else { return }
-        let work = DispatchWorkItem { isShown = isOverContent || isOverPopover }
+        let wanted = isOverContent || isOverList
+        guard wanted != isHoverShown else { return }
+        let work = DispatchWorkItem { isHoverShown = isOverContent || isOverList }
         pending = work
         DispatchQueue.main.asyncAfter(deadline: .now() + (wanted ? 0.3 : 0.35), execute: work)
     }
 }
 
 private extension View {
-    func hoverPopover<Popover: View>(
+    func listPopover<List: View>(
+        _ popover: StatusBarPopover,
+        model: StatusBarViewModel,
         isEnabled: Bool,
-        onOpenChange: @escaping (Bool) -> Void,
-        @ViewBuilder popover: @escaping () -> Popover
+        @ViewBuilder list: @escaping () -> List
     ) -> some View {
-        modifier(HoverPopover(isEnabled: isEnabled, onOpenChange: onOpenChange, popover: popover))
+        modifier(ListPopover(popover: popover, model: model, isEnabled: isEnabled, list: list))
     }
 }
 
-/// Every PR in the focused pane's workspace, worst first; the focused PR is
-/// highlighted, and a row opens its PR.
-struct StatusBarWorkspaceList: View {
-    let pullRequests: [StatusBarPullRequest]
+/// Row chrome shared by the lists: the keyboard selection is an accent fill,
+/// the focused pane's PR a faint one.
+private struct StatusBarRowBackground: ViewModifier {
+    let isSelected: Bool
+    var isFocused = false
+
+    func body(content: Content) -> some View {
+        content
+            .padding(.vertical, 3)
+            .padding(.horizontal, 4)
+            .background(
+                RoundedRectangle(cornerRadius: 4).fill(
+                    isSelected ? Color.accentColor.opacity(0.35)
+                        : isFocused ? Color.accentColor.opacity(0.12) : .clear
+                )
+            )
+            .contentShape(Rectangle())
+    }
+}
+
+/// Every PR across all sessions, grouped by session › workspace (current
+/// first), worst first within a group; the focused PR highlighted. A row
+/// opens its PR; a pinned list also takes ↑/↓/Return (see the model).
+struct StatusBarPullRequestList: View {
+    let groups: [StatusBarPullRequestGroup]
     let focusedURL: String?
+    let selection: Int?
     let openURL: (String) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("This workspace · \(pullRequests.count == 1 ? "1 PR" : "\(pullRequests.count) PRs")")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.secondary)
-            ScrollView {
-                VStack(alignment: .leading, spacing: 2) {
-                    ForEach(pullRequests, id: \.url) { row($0) }
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(Array(numberedGroups.enumerated()), id: \.offset) { _, entry in
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(entry.group.title + (entry.group.isCurrent ? " · this workspace" : ""))
+                                    .font(.system(size: 11, weight: entry.group.isCurrent ? .semibold : .regular))
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                                ForEach(Array(entry.group.pullRequests.enumerated()), id: \.offset) { offset, pullRequest in
+                                    row(pullRequest, index: entry.firstRow + offset).id(entry.firstRow + offset)
+                                }
+                            }
+                        }
+                    }
+                }
+                .frame(maxHeight: 380)
+                .onChange(of: selection) { index in
+                    if let index { proxy.scrollTo(index) }
                 }
             }
-            .frame(maxHeight: 320)
+            if groups.isEmpty {
+                Text("No open pull requests in any pane").foregroundStyle(.secondary)
+            }
         }
+        .font(.system(size: 12))
         .padding(10)
-        .frame(width: 340)
+        .frame(width: 380)
     }
 
-    private func row(_ pullRequest: StatusBarPullRequest) -> some View {
+    /// Groups paired with the flattened index of their first row, matching
+    /// `StatusBarViewModel.rows(for:)`.
+    private var numberedGroups: [(group: StatusBarPullRequestGroup, firstRow: Int)] {
+        var next = 0
+        return groups.map { group in
+            defer { next += group.pullRequests.count }
+            return (group, next)
+        }
+    }
+
+    private func row(_ pullRequest: StatusBarPullRequest, index: Int) -> some View {
         Button {
             openURL(pullRequest.url)
         } label: {
@@ -255,17 +395,10 @@ struct StatusBarWorkspaceList: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            .font(.system(size: 12))
-            .padding(.vertical, 3)
-            .padding(.horizontal, 4)
-            .background(
-                RoundedRectangle(cornerRadius: 4)
-                    .fill(pullRequest.url == focusedURL ? Color.accentColor.opacity(0.15) : .clear)
-            )
-            .contentShape(Rectangle())
+            .modifier(StatusBarRowBackground(isSelected: index == selection, isFocused: pullRequest.url == focusedURL))
         }
         .buttonStyle(.plain)
-        .help(pullRequest.url == focusedURL ? "Focused pane's PR — open #\(pullRequest.number)" : "Open #\(pullRequest.number)")
+        .help(pullRequest.glyph == .readyToMerge ? "Ready to merge — open #\(pullRequest.number)" : "Open #\(pullRequest.number)")
     }
 }
 
@@ -273,6 +406,7 @@ struct StatusBarWorkspaceList: View {
 /// A row with a details page opens it.
 struct StatusBarChecksList: View {
     let pullRequest: StatusBarPullRequest
+    let selection: Int?
     let openURL: (String) -> Void
 
     var body: some View {
@@ -282,8 +416,8 @@ struct StatusBarChecksList: View {
                 .foregroundStyle(.secondary)
             ScrollView {
                 VStack(alignment: .leading, spacing: 2) {
-                    ForEach(Array(pullRequest.checks.enumerated()), id: \.offset) { _, check in
-                        row(check)
+                    ForEach(Array(pullRequest.checks.enumerated()), id: \.offset) { index, check in
+                        row(check, isSelected: index == selection)
                     }
                 }
             }
@@ -293,7 +427,7 @@ struct StatusBarChecksList: View {
         .frame(width: 300)
     }
 
-    private func row(_ check: PullRequestCheck) -> some View {
+    private func row(_ check: PullRequestCheck, isSelected: Bool) -> some View {
         Button {
             if let url = check.url { openURL(url) }
         } label: {
@@ -310,8 +444,7 @@ struct StatusBarChecksList: View {
                 }
             }
             .font(.system(size: 12))
-            .contentShape(Rectangle())
-            .padding(.vertical, 2)
+            .modifier(StatusBarRowBackground(isSelected: isSelected))
         }
         .buttonStyle(.plain)
         .disabled(check.url == nil)
