@@ -14,9 +14,9 @@ start an agent in a pane), without compiling Kata into Vakta.
 
 ## Model
 
-- **Linked Extension**: a local directory with `vakta-extension.toml`,
-  registered with `vakta extension link <dir>` or in Preferences ▸
-  Extensions. v1 does not install from GitHub.
+- **Linked Extension**: a local directory with `vakta-extension.json`,
+  registered in Preferences ▸ Extensions (a `vakta extension link <dir>`
+  CLI is a follow-up). v1 does not install from GitHub.
 - **Trust**: approval is pinned to the manifest's hash plus the hash of the
   executable `command[0]` resolves to, inside the Extension directory. Any
   change asks again. **Developer mode** (per Linked Extension) pins only
@@ -34,21 +34,25 @@ start an agent in a pane), without compiling Kata into Vakta.
 - **Versioning**: `initialize` exchanges `vakta_extension_api`. A mismatch
   marks the Extension Failed with the reason.
 
-## Manifest (sketch)
+## Manifest
 
-```toml
-id = "kata"
-name = "Kata"
-command = ["./.build/release/kata-vakta", "serve"]
+JSON, not TOML: Vakta has no TOML parser (`HerdrConfigDocument` deliberately
+isn't one), and JSON matches the protocol.
 
-[[build]]
-command = ["swift", "build", "-c", "release"]
-
-[[panel_views]]
-id = "issues"
-title = "Issues"
-symbol = "checklist"
+```json
+{
+  "id": "kata",
+  "name": "Kata",
+  "command": ["./.build/release/kata-vakta", "serve"],
+  "build": [["swift", "build", "-c", "release"]],
+  "panelViews": [{"id": "issues", "title": "Issues", "symbol": "checklist"}]
+}
 ```
+
+`command[0]` must be a relative path inside the Extension directory, never a
+bare program name or an absolute path, because Trust pins that file. Build
+commands run through `/usr/bin/env` with the resolved login-shell PATH, in
+the Extension directory, only after the user approves.
 
 Status Items and Session Badges are declared implicitly: an Extension
 that sends none has none.

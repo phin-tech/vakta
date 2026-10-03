@@ -24,6 +24,7 @@ final class Stores {
     let editorPreferences: EditorPreferencesStore
     let sessionStore: SessionStore
     let workspaceRefreshMonitor: WorkspaceRefreshMonitor
+    let extensionRegistry: ExtensionRegistryStore
     let persistenceFailures = PersistenceFailureCenter()
     let preferencesRouter = PreferencesRouter()
 
@@ -70,6 +71,8 @@ final class Stores {
             root: root,
             pathResolver: resolvedPATH
         )
+        let sessionStore = sessionStore
+        extensionRegistry = ExtensionRegistryStore(root: root, path: { sessionStore.resolvedPATH })
         workspaceRefreshMonitor = WorkspaceRefreshMonitor(
             sessionStore: sessionStore,
             herdrPreferences: herdrPreferences,
@@ -95,5 +98,6 @@ extension View {
             .environmentObject(stores.sessionStore.notifier)
             .environmentObject(stores.persistenceFailures)
             .environmentObject(stores.preferencesRouter)
+            .environmentObject(stores.extensionRegistry)
     }
 }

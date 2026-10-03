@@ -79,6 +79,7 @@ enum BoundedProcessRunner {
         environment: [String: String],
         timeout: TimeInterval,
         maxOutputBytes: Int = maxOutputBytes,
+        currentDirectory: URL? = nil,
         isCancelled: @escaping () -> Bool = { false }
     ) -> ProcessResult {
         ProcessResultInterpreter.interpret(runRaw(
@@ -87,6 +88,7 @@ enum BoundedProcessRunner {
             environment: environment,
             timeout: timeout,
             maxOutputBytes: maxOutputBytes,
+            currentDirectory: currentDirectory,
             isCancelled: isCancelled
         ))
     }
@@ -97,12 +99,14 @@ enum BoundedProcessRunner {
         environment: [String: String],
         timeout: TimeInterval,
         maxOutputBytes: Int = maxOutputBytes,
+        currentDirectory: URL? = nil,
         isCancelled: @escaping () -> Bool = { false }
     ) -> ProcessRawResult {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
         process.environment = environment
+        process.currentDirectoryURL = currentDirectory
         let outPipe = Pipe()
         process.standardOutput = outPipe
         process.standardError = FileHandle.nullDevice
