@@ -177,7 +177,7 @@ final class ExtensionHost: ObservableObject {
     }
 
     /// What this host draws and carries out; grows as Contributions land.
-    static let supportedViewKinds: [String] = ["list", "detail"]
+    static let supportedViewKinds: [String] = ["list", "detail", "form"]
     static let supportedEffects: [String] = ["refresh", "replace", "push", "pop", "toast", "notify", "open_url"]
 
     /// Built from scratch: Vakta's own environment is never passed through

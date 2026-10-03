@@ -99,6 +99,7 @@ final class ProtocolFixtureTests: XCTestCase {
             title: nil,
             searchPlaceholder: "Filter issues",
             emptyText: "No open issues",
+            buttons: [ViewButton(title: "New Issue…", symbol: "plus", callback: "new-form", payload: nil, style: .default, confirm: nil, shortcut: nil)],
             sections: [
                 ListSection(title: "Ready", items: [
                     ListItem(

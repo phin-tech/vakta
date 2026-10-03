@@ -83,6 +83,27 @@ final class KataServer {
                 return connection.fail(id, failure)
             }
             respond(id, effects: KataCallbacks.claimed(issue))
+        case KataForms.commentForm, KataForms.closeForm:
+            guard let issue = KataCallbacks.issueID(callback.payload) else { return connection.fail(id, code: -32602, "missing issue id") }
+            let form = callback.callback == KataForms.commentForm ? KataForms.comment(issue: issue) : KataForms.close(issue: issue)
+            respond(id, effects: [.push(form)])
+        case KataForms.newForm:
+            respond(id, effects: [.push(KataForms.newIssue())])
+        case KataForms.commentSubmit, KataForms.closeSubmit, KataForms.newSubmit:
+            let issue = KataCallbacks.issueID(callback.payload)
+            switch KataForms.arguments(for: callback.callback, issue: issue, values: callback.form ?? [:]) {
+            case .failure(.missing(let field)):
+                connection.fail(id, code: -32602, "Missing \(field).")
+            case .failure(.unknownForm):
+                connection.fail(id, code: -32601, "unknown form")
+            case .success(let arguments):
+                switch KataCLI.mutateReturningOutput(arguments, workspace: workspace) {
+                case .failure(let failure):
+                    connection.fail(id, failure.text)
+                case .success(let output):
+                    respond(id, effects: KataForms.effects(after: callback.callback, created: KataForms.createdID(output)))
+                }
+            }
         default:
             connection.fail(id, code: -32601, "unknown action \(callback.callback)")
         }

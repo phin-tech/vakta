@@ -36,6 +36,8 @@ final class PanelViewStore: ObservableObject {
     @Published private(set) var callbacks = CallbackTracker()
     /// A short confirmation from a `toast` Effect; cleared after a moment.
     @Published private(set) var toast: String?
+    /// The form on screen and its edits; replaced when another form shows.
+    @Published private var currentForm: FormState?
 
     var effectSink: PanelEffectSink = .inert
 
@@ -145,6 +147,28 @@ final class PanelViewStore: ObservableObject {
             guard let self, self.toastGeneration == current else { return }
             self.toast = nil
         }
+    }
+
+    /// The state of `form` while it's on screen (fresh when it changes).
+    func formState(for form: FormView) -> FormState {
+        if let current = currentForm, current.form == form { return current }
+        return FormState(form: form)
+    }
+
+    func editForm(_ form: FormView, _ edit: (inout FormState) -> Void) {
+        var state = formState(for: form)
+        edit(&state)
+        currentForm = state
+    }
+
+    /// Validates `form` and, when it passes, sends its submit Callback with
+    /// the field values.
+    func submitForm(_ form: FormView) {
+        var state = formState(for: form)
+        let values = state.submit()
+        currentForm = state
+        guard let values else { return }
+        press(form.submit, form: values)
     }
 
     func setFilter(_ filter: String) { model.filter = filter }

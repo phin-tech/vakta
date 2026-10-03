@@ -57,7 +57,11 @@ struct ExtensionPanelView: View {
     }
 
     private func press(_ button: ViewButton) {
-        store.press(button)
+        if case .form(let form)? = store.model.visibleDocument, button == form.submit {
+            store.submitForm(form)
+        } else {
+            store.press(button)
+        }
     }
 
     @ViewBuilder
@@ -99,7 +103,9 @@ struct ExtensionPanelView: View {
             listScreen(list)
         case .detail(let detail):
             ScrollView { DocumentDetail(detail: detail, terminalStyle: terminalStyle) }
-        case .form, .unsupported:
+        case .form(let form):
+            ScrollView { DocumentForm(form: form, terminalStyle: terminalStyle) }
+        case .unsupported:
             placeholder(symbol: "questionmark.square.dashed", text: "This view needs a newer Vakta.")
         }
     }
@@ -107,6 +113,16 @@ struct ExtensionPanelView: View {
     private func listScreen(_ list: ListView) -> some View {
         let filtered = store.model.filteredList ?? list
         return VStack(spacing: 0) {
+            if !list.buttons.isEmpty {
+                HStack(spacing: 6) {
+                    Spacer()
+                    ForEach(Array(list.buttons.enumerated()), id: \.offset) { _, button in
+                        DocumentButton(button: button, compact: false)
+                    }
+                }
+                .padding(.horizontal, 10)
+                .padding(.top, 6)
+            }
             if let prompt = list.searchPlaceholder {
                 TextField(prompt, text: Binding(get: { store.model.filter }, set: { store.setFilter($0) }))
                     .textFieldStyle(.roundedBorder)
@@ -172,6 +188,8 @@ struct ExtensionPanelView: View {
             ScrollView {
                 if case .detail(let detail) = document {
                     DocumentDetail(detail: detail, terminalStyle: terminalStyle)
+                } else if case .form(let form) = document {
+                    DocumentForm(form: form, terminalStyle: terminalStyle)
                 } else {
                     Text("This view needs a newer Vakta.").foregroundStyle(.secondary).padding()
                 }
@@ -314,6 +332,102 @@ struct DocumentDetail: View {
     static func attributed(_ markdown: String) -> AttributedString {
         let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
         return (try? AttributedString(markdown: markdown, options: options)) ?? AttributedString(markdown)
+    }
+}
+
+/// A form View Document drawn with native controls. Edits live in the store
+/// (`FormState`) so they survive re-renders of the list underneath.
+struct DocumentForm: View {
+    @EnvironmentObject private var store: PanelViewStore
+    let form: FormView
+    let terminalStyle: Bool
+
+    private var state: FormState { store.formState(for: form) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(form.title)
+                .font(terminalStyle ? .system(size: 12, weight: .semibold, design: .monospaced) : .system(size: 13, weight: .semibold))
+            ForEach(form.fields, id: \.id) { field in
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(field.required ? "\(field.label) *" : field.label)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                    control(for: field)
+                    if state.attemptedSubmit, let problem = state.problems[field.id] {
+                        Text(problem).font(.system(size: 10)).foregroundStyle(.red)
+                    }
+                }
+            }
+            HStack {
+                Button("Cancel") { store.back() }
+                    .controlSize(.small)
+                Spacer()
+                SubmitButton(form: form)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private func control(for field: FormField) -> some View {
+        switch field.kind {
+        case .text(let placeholder, _):
+            TextField(placeholder ?? "", text: textBinding(field.id))
+                .textFieldStyle(.roundedBorder)
+                .controlSize(.small)
+        case .multiline:
+            TextEditor(text: textBinding(field.id))
+                .font(.system(size: 11, design: terminalStyle ? .monospaced : .default))
+                .frame(minHeight: 70, maxHeight: 160)
+                .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.primary.opacity(0.15)))
+        case .picker(let options, _):
+            Picker(field.label, selection: Binding(
+                get: { state.choice(field.id) ?? "" },
+                set: { value in store.editForm(form) { $0.setChoice(field.id, value.isEmpty ? nil : value) } }
+            )) {
+                if !field.required { Text("None").tag("") }
+                ForEach(options, id: \.value) { option in Text(option.label).tag(option.value) }
+            }
+            .labelsHidden()
+            .controlSize(.small)
+        case .toggle:
+            Toggle(field.label, isOn: Binding(
+                get: { state.isOn(field.id) },
+                set: { value in store.editForm(form) { $0.setToggle(field.id, value) } }
+            ))
+            .controlSize(.small)
+        case .unsupported:
+            Text("This field needs a newer Vakta.").font(.system(size: 10)).foregroundStyle(.secondary)
+        }
+    }
+
+    private func textBinding(_ id: String) -> Binding<String> {
+        Binding(get: { state.text(id) }, set: { value in store.editForm(form) { $0.setText(id, value) } })
+    }
+}
+
+/// A form's submit button: validates through the store before sending.
+private struct SubmitButton: View {
+    @EnvironmentObject private var store: PanelViewStore
+    let form: FormView
+
+    var body: some View {
+        let state = store.callbackState(form.submit)
+        VStack(alignment: .trailing, spacing: 2) {
+            Button(role: form.submit.style == .destructive ? .destructive : nil) {
+                store.submitForm(form)
+            } label: {
+                if state == .pending { ProgressView().controlSize(.mini) } else { Text(form.submit.title) }
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+            .disabled(state == .pending)
+            if case .failed(let message) = state {
+                Text(message).font(.system(size: 10)).foregroundStyle(.red).lineLimit(4)
+            }
+        }
     }
 }
 

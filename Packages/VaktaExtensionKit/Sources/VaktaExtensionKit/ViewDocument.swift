@@ -21,12 +21,17 @@ public struct ListView: Codable, Equatable, Sendable {
     public var title: String?
     public var searchPlaceholder: String?
     public var emptyText: String?
+    /// View-level buttons (like "New Issue…"), shown above the sections.
+    public var buttons: [ViewButton]
     public var sections: [ListSection]
 
-    public init(title: String?, searchPlaceholder: String?, emptyText: String?, sections: [ListSection]) {
+    public init(
+        title: String?, searchPlaceholder: String?, emptyText: String?, buttons: [ViewButton] = [], sections: [ListSection]
+    ) {
         self.title = title
         self.searchPlaceholder = searchPlaceholder
         self.emptyText = emptyText
+        self.buttons = buttons
         self.sections = sections
     }
 }
@@ -310,7 +315,7 @@ extension ViewDocument: Codable {
 
 extension ListView {
     private enum CodingKeys: String, CodingKey {
-        case title, searchPlaceholder, emptyText, sections
+        case title, searchPlaceholder, emptyText, buttons, sections
     }
 
     public init(from decoder: Decoder) throws {
@@ -319,6 +324,7 @@ extension ListView {
             title: try container.decodeIfPresent(String.self, forKey: .title),
             searchPlaceholder: try container.decodeIfPresent(String.self, forKey: .searchPlaceholder),
             emptyText: try container.decodeIfPresent(String.self, forKey: .emptyText),
+            buttons: try container.decodeIfPresent([ViewButton].self, forKey: .buttons) ?? [],
             sections: try container.decodeIfPresent([ListSection].self, forKey: .sections) ?? []
         )
     }
@@ -328,6 +334,7 @@ extension ListView {
         try container.encodeIfPresent(title, forKey: .title)
         try container.encodeIfPresent(searchPlaceholder, forKey: .searchPlaceholder)
         try container.encodeIfPresent(emptyText, forKey: .emptyText)
+        try container.encode(buttons, forKey: .buttons)
         try container.encode(sections, forKey: .sections)
     }
 }

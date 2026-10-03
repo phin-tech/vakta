@@ -92,7 +92,7 @@ final class KataIssuesTests: XCTestCase {
                 .init(label: "Owner", value: "sam"),
                 .init(label: "Labels", value: "extensions, epic, third"),
             ],
-            buttons: []
+            buttons: KataForms.detailButtons(issue: "cl01")
         )))
     }
 
@@ -134,7 +134,7 @@ final class KataButtonsTests: XCTestCase {
         for item in list.sections.flatMap(\.items) {
             XCTAssertEqual(item.buttons, [claim(item.id)], item.id)
             guard case .detail(let detail)? = item.detail else { return XCTFail() }
-            XCTAssertEqual(detail.buttons, [claim(item.id)], item.id)
+            XCTAssertEqual(detail.buttons, [claim(item.id)] + KataForms.detailButtons(issue: item.id), item.id)
         }
     }
 

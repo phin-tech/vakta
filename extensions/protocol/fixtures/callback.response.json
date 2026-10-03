@@ -1,6 +1,6 @@
 {"jsonrpc": "2.0", "id": 12, "result": {"effects": [
   {"type": "refresh"},
-  {"type": "replace", "document": {"kind": "list", "sections": []}},
+  {"type": "replace", "document": {"kind": "list", "buttons": [], "sections": []}},
   {"type": "push", "document": {
     "kind": "form",
     "title": "Close fcae",

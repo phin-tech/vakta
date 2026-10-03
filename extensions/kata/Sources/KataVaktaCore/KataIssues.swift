@@ -113,7 +113,10 @@ public enum KataViews {
         ].compactMap { title, issues, symbol -> ListSection? in
             issues.isEmpty ? nil : ListSection(title: title, items: issues.map { row($0, symbol: symbol) })
         }
-        return .list(ListView(title: nil, searchPlaceholder: "Filter issues", emptyText: "No open issues", sections: sections))
+        return .list(ListView(
+            title: nil, searchPlaceholder: "Filter issues", emptyText: "No open issues",
+            buttons: KataForms.headerButtons(), sections: sections
+        ))
     }
 
     public static func notInitialized(directory: String) -> ViewDocument {
@@ -153,7 +156,10 @@ public enum KataViews {
         if let owner = issue.owner { fields.append(.init(label: "Owner", value: owner)) }
         if !issue.labels.isEmpty { fields.append(.init(label: "Labels", value: issue.labels.joined(separator: ", "))) }
         if let parent = issue.parent { fields.append(.init(label: "Parent", value: parent.shortID)) }
-        return .detail(DetailView(title: "\(issue.shortID) · \(issue.title)", markdown: issue.body, fields: fields, buttons: buttons(for: issue)))
+        return .detail(DetailView(
+            title: "\(issue.shortID) · \(issue.title)", markdown: issue.body, fields: fields,
+            buttons: buttons(for: issue) + KataForms.detailButtons(issue: issue.shortID)
+        ))
     }
 
     private static func buttons(for issue: KataIssue) -> [ViewButton] {

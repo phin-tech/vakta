@@ -89,8 +89,9 @@ UUID each launch), `cwd` (active pane), `gitRoot?`, `branch?`, `workspace`,
 `focused`. Getting an unfocused Session's cwd means querying its active pane.
 That runs on Session changes and on refresh, never per keystroke.
 
-**View Document**: `list` (sections, rows with title, subtitle, SF Symbol,
-accessories and buttons; filtering happens in Vakta) | `detail` (markdown,
+**View Document**: `list` (view-level header buttons, sections, rows with
+title, subtitle, SF Symbol, accessories and buttons; filtering happens in
+Vakta) | `detail` (markdown,
 fields, buttons) | `form` (text, multiline, picker, toggle, submit
 Callback). Buttons carry `callback`, `payload`, `style`, an optional
 `confirm`, and an optional `shortcut`. Shortcuts only work while the view has

@@ -76,6 +76,12 @@ enum FixtureExtension {
                         {"type": "toast", "text": json.dumps({"payload": params.get("payload"), "form": params.get("form")}, sort_keys=True)}]}})
                 elif name == "hang":
                     pass
+                elif name == "form":
+                    send({"jsonrpc": "2.0", "id": ident, "result": {"effects": [{"type": "push", "document": {
+                        "kind": "form", "title": "Close one",
+                        "fields": [{"id": "message", "label": "Message", "kind": "multiline", "required": True},
+                                   {"id": "notify", "label": "Notify", "kind": "toggle", "isOn": True}],
+                        "submit": {"title": "Close", "callback": "echo", "payload": {"id": "one"}, "style": "primary"}}}]}})
                 elif name == "navigate":
                     send({"jsonrpc": "2.0", "id": ident, "result": {"effects": [
                         {"type": "push", "document": {"kind": "detail", "title": "Pushed"}}]}})

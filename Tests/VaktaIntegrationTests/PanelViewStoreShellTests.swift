@@ -275,6 +275,41 @@ final class PanelViewCallbackShellTests: XCTestCase {
         try await waitFor("popped") { !store.model.isShowingDetail && store.toast == "popped" }
     }
 
+    private func visibleForm() -> FormView? {
+        if case .form(let form)? = store.model.visibleDocument { return form }
+        return nil
+    }
+
+    func test_form_blocksAnIncompleteSubmit_thenSendsTheValues() async throws {
+        store.press(button("form"))
+        try await waitFor("form pushed") { visibleForm() != nil }
+        let form = try XCTUnwrap(visibleForm())
+
+        store.submitForm(form)
+        XCTAssertTrue(store.formState(for: form).attemptedSubmit)
+        XCTAssertEqual(store.formState(for: form).problems, ["message": "Required"])
+        try await Task.sleep(nanoseconds: 300_000_000)
+        XCTAssertNil(store.toast, "an incomplete form sends nothing")
+
+        store.editForm(form) { $0.setText("message", "done") }
+        store.editForm(form) { $0.setToggle("notify", false) }
+        store.submitForm(form)
+
+        try await waitFor("echo toast") { store.toast != nil }
+        XCTAssertEqual(store.toast, #"{"form": {"message": "done", "notify": false}, "payload": {"id": "one"}}"#)
+    }
+
+    func test_formEdits_resetWhenADifferentFormIsShown() async throws {
+        store.press(button("form"))
+        try await waitFor("form pushed") { visibleForm() != nil }
+        let form = try XCTUnwrap(visibleForm())
+        store.editForm(form) { $0.setText("message", "draft") }
+        XCTAssertEqual(store.formState(for: form).text("message"), "draft")
+
+        let other = FormView(title: "Other", fields: form.fields, submit: form.submit)
+        XCTAssertEqual(store.formState(for: other).text("message"), "")
+    }
+
     func test_openURLAndNotify_reachTheSink() async throws {
         store.press(button("open"))
         try await waitFor("sink") { !outcomes.urls.isEmpty && !outcomes.notices.isEmpty }

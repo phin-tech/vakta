@@ -60,13 +60,29 @@ enum KataCLI {
 
     /// Runs a mutating `kata` command; `nil` on success, else kata's message.
     static func mutate(_ arguments: [String], workspace: String) -> String? {
-        guard let result = run(arguments + ["--json", "--workspace", workspace]) else {
-            return "Couldn't run kata. Is it installed and on your PATH?"
+        if case .failure(let message) = mutateReturningOutput(arguments, workspace: workspace) { return message.text }
+        return nil
+    }
+
+    struct Failure: Error { let text: String }
+
+    /// Runs a mutating `kata` command, returning its stdout on success.
+    /// Global flags go before a `--` separator so it still ends the flags.
+    static func mutateReturningOutput(_ arguments: [String], workspace: String) -> Swift.Result<Data, Failure> {
+        let globals = ["--json", "--workspace", workspace]
+        let full: [String]
+        if let separator = arguments.firstIndex(of: "--") {
+            full = Array(arguments[..<separator]) + globals + Array(arguments[separator...])
+        } else {
+            full = arguments + globals
         }
-        guard result.status != 0 else { return nil }
+        guard let result = run(full) else {
+            return .failure(Failure(text: "Couldn't run kata. Is it installed and on your PATH?"))
+        }
+        guard result.status != 0 else { return .success(result.stdout) }
         let output = result.stderr.isEmpty ? result.stdout : result.stderr
-        if case .failed(let message) = KataOutput.decodeIssues(output) { return message }
-        return "kata exited with status \(result.status)."
+        if case .failed(let message) = KataOutput.decodeIssues(output) { return .failure(Failure(text: message)) }
+        return .failure(Failure(text: "kata exited with status \(result.status)."))
     }
 
     private final class Collected: @unchecked Sendable {

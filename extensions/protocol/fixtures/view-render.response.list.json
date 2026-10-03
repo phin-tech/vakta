@@ -2,6 +2,7 @@
   "kind": "list",
   "searchPlaceholder": "Filter issues",
   "emptyText": "No open issues",
+  "buttons": [{"title": "New Issue…", "symbol": "plus", "callback": "new-form", "style": "default"}],
   "sections": [
     {"title": "Ready", "items": [
       {

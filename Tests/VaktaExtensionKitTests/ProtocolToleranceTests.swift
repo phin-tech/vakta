@@ -71,7 +71,7 @@ final class ProtocolToleranceTests: XCTestCase {
     func test_omittedCollections_decodeAsEmpty() throws {
         XCTAssertEqual(
             try decode(ViewDocument.self, #"{"kind":"list"}"#),
-            .list(ListView(title: nil, searchPlaceholder: nil, emptyText: nil, sections: []))
+            .list(ListView(title: nil, searchPlaceholder: nil, emptyText: nil, buttons: [], sections: []))
         )
         XCTAssertEqual(try decode(ListSection.self, #"{"title":"Ready"}"#), ListSection(title: "Ready", items: []))
         XCTAssertEqual(
