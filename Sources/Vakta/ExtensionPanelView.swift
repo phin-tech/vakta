@@ -262,14 +262,24 @@ private struct ItemRow: View {
                 .padding(.vertical, 1)
                 .background(RoundedRectangle(cornerRadius: terminalStyle ? 0 : 3).fill(Color.primary.opacity(0.06)))
             }
-            if (isHovered || isSelected) && !item.buttons.isEmpty {
-                ForEach(Array(item.buttons.enumerated()), id: \.offset) { _, button in
-                    DocumentButton(button: button, compact: true)
-                }
-            } else if item.detail != nil {
+            if item.detail != nil {
                 Image(systemName: "chevron.right")
                     .font(.system(size: 9))
                     .foregroundStyle(.tertiary)
+            }
+        }
+        // Buttons float over the trailing edge instead of joining the row,
+        // so hovering never re-wraps the title and subtitle.
+        .overlay(alignment: .trailing) {
+            if (isHovered || isSelected) && !item.buttons.isEmpty {
+                HStack(spacing: 2) {
+                    ForEach(Array(item.buttons.enumerated()), id: \.offset) { _, button in
+                        DocumentButton(button: button, compact: true)
+                    }
+                }
+                .padding(.horizontal, 4)
+                .padding(.vertical, 1)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: terminalStyle ? 0 : 5))
             }
         }
         .onHover { isHovered = $0 }
