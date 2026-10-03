@@ -23,10 +23,13 @@ start an agent in a pane), without compiling Kata into Vakta.
   the manifest. The Trust prompt says which of the two is being approved.
 - **Process**: one long-lived child per trusted, enabled Extension, started
   at app launch. Newline-delimited JSON-RPC 2.0 over stdin/stdout; stderr
-  goes to the Extension log. The child's environment is built explicitly
-  (resolved PATH, HOME, `VAKTA_EXTENSION_*`) without changing Vakta's own
-  environment. On quit or disable: `shutdown`, close stdin, grace period,
-  then kill the process group.
+  goes to the Extension log (`<support>/extension-logs/<id>.log`). The
+  child's environment is built explicitly (resolved PATH, HOME, LANG,
+  `VAKTA_EXTENSION_ID`, `VAKTA_EXTENSION_ROOT`, `VAKTA_EXTENSION_CONFIG_DIR`
+  = `<support>/extension-data/<id>`, `VAKTA_EXTENSION_API`) without changing
+  Vakta's own environment. On quit or disable: `shutdown`, grace period,
+  then SIGKILL the child. (The child isn't put in its own process group, so
+  grandchildren it spawns must exit on their own when their stdin closes.)
 - **Failure**: a down Extension's Contributions are removed immediately,
   never shown stale. Vakta restarts it with backoff. Repeated crashes mark
   it **Failed** (Preferences: Restart, View log). A Panel View shows an

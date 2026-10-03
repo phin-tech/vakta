@@ -25,6 +25,8 @@ final class Stores {
     let sessionStore: SessionStore
     let workspaceRefreshMonitor: WorkspaceRefreshMonitor
     let extensionRegistry: ExtensionRegistryStore
+    let extensionHost: ExtensionHost
+    let extensionContextMonitor: ExtensionContextMonitor
     let persistenceFailures = PersistenceFailureCenter()
     let preferencesRouter = PreferencesRouter()
 
@@ -73,6 +75,13 @@ final class Stores {
         )
         let sessionStore = sessionStore
         extensionRegistry = ExtensionRegistryStore(root: root, path: { sessionStore.resolvedPATH })
+        extensionHost = ExtensionHost(
+            registry: extensionRegistry,
+            supportRoot: root,
+            hostVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev",
+            environment: { ["PATH": sessionStore.resolvedPATH, "HOME": NSHomeDirectory(), "LANG": "en_US.UTF-8"] }
+        )
+        extensionContextMonitor = ExtensionContextMonitor(sessionStore: sessionStore, host: extensionHost)
         workspaceRefreshMonitor = WorkspaceRefreshMonitor(
             sessionStore: sessionStore,
             herdrPreferences: herdrPreferences,
@@ -99,5 +108,6 @@ extension View {
             .environmentObject(stores.persistenceFailures)
             .environmentObject(stores.preferencesRouter)
             .environmentObject(stores.extensionRegistry)
+            .environmentObject(stores.extensionHost)
     }
 }

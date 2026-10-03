@@ -1,0 +1,88 @@
+//
+//  ExtensionContextMonitor.swift
+//  Vakta
+//
+//  Keeps the Extension host's contexts current: snapshots every Session on
+//  the main actor when Sessions, selection or workspaces change (and on the
+//  file sidebar's refresh signal, which fires as the focused pane's
+//  directory may have moved), gathers working directories and git state off
+//  the main actor, and drops results superseded by a newer snapshot.
+
+import Combine
+import Foundation
+import VaktaExtensionKit
+
+@MainActor
+final class ExtensionContextMonitor {
+    private let sessionStore: SessionStore
+    private let host: ExtensionHost
+    private var subscriptions: Set<AnyCancellable> = []
+    private var generation = 0
+    private var periodic: Timer?
+
+    init(sessionStore: SessionStore, host: ExtensionHost) {
+        self.sessionStore = sessionStore
+        self.host = host
+
+        let changes: [AnyPublisher<Void, Never>] = [
+            sessionStore.$sessions.map { _ in () }.eraseToAnyPublisher(),
+            sessionStore.$selectedID.map { _ in () }.eraseToAnyPublisher(),
+            sessionStore.$workspaces.map { _ in () }.eraseToAnyPublisher(),
+            sessionStore.fileSidebarRefreshed.eraseToAnyPublisher(),
+        ]
+        Publishers.MergeMany(changes)
+            .debounce(for: .milliseconds(400), scheduler: DispatchQueue.main)
+            .sink { [weak self] in self?.refresh() }
+            .store(in: &subscriptions)
+
+        // A `cd` inside a multiplexer pane produces no event Vakta sees, so
+        // re-gather occasionally while any Extension is running.
+        periodic = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.host.phases.values.contains(.running) else { return }
+                self.refresh()
+            }
+        }
+    }
+
+    deinit {
+        periodic?.invalidate()
+    }
+
+    func refresh() {
+        generation += 1
+        let current = generation
+        let inputs = snapshot()
+        let path = sessionStore.resolvedPATH
+        Task { [weak self] in
+            let contexts = await Self.gather(inputs, path: path)
+            guard let self, self.generation == current else { return }
+            self.host.updateContexts(contexts)
+        }
+    }
+
+    /// Nonisolated, so the blocking queries run off the main actor.
+    private nonisolated static func gather(_ inputs: [ExtensionSessionInput], path: String) async -> [ExtensionContext] {
+        ExtensionContextGatherer.gather(inputs, path: path)
+    }
+
+    private func snapshot() -> [ExtensionSessionInput] {
+        sessionStore.sessions.map { session in
+            let target: MultiplexerTarget?
+            if case .multiplexer(let resolved) = LaunchTargetResolver.resolve(session.profile) {
+                target = resolved
+            } else {
+                target = nil
+            }
+            return ExtensionSessionInput(
+                sessionID: session.id,
+                target: target,
+                sessionName: session.sessionName,
+                terminalReportedWorkingDirectory: session.viewState.workingDirectory,
+                profileWorkingDirectory: session.profile.workingDirectory,
+                focusedWorkspace: sessionStore.workspaces[session.id]?.first(where: \.focused),
+                focused: session.id == sessionStore.selectedID
+            )
+        }
+    }
+}

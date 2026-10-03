@@ -8,6 +8,7 @@
 
 import AppKit
 import SwiftUI
+import VaktaExtensionKit
 
 struct ExtensionsPreferencesView: View {
     @EnvironmentObject private var registry: ExtensionRegistryStore
@@ -66,7 +67,13 @@ struct ExtensionsPreferencesView: View {
 
 private struct ExtensionRow: View {
     @EnvironmentObject private var registry: ExtensionRegistryStore
+    @EnvironmentObject private var host: ExtensionHost
     let entry: ExtensionEntry
+
+    private var runtimePhase: ExtensionSupervisor.Phase? {
+        guard entry.status == .ready, let id = entry.manifest?.id else { return nil }
+        return host.phases[id]
+    }
     let review: () -> Void
 
     var body: some View {
@@ -81,9 +88,12 @@ private struct ExtensionRow: View {
                         .truncationMode(.middle)
                 }
                 Spacer()
-                Text(ExtensionText.status(entry.status))
+                Text(runtimePhase.map(ExtensionText.phase) ?? ExtensionText.status(entry.status))
                     .font(.caption)
-                    .foregroundStyle(entry.status == .ready ? Color.green : Color.secondary)
+                    .foregroundStyle(runtimePhase == .running ? Color.green : Color.secondary)
+            }
+            if case .failed(let reason)? = runtimePhase {
+                Text(ExtensionText.failure(reason)).font(.caption).foregroundStyle(.red)
             }
             if case .invalid(let problems) = entry.status {
                 ForEach(problems, id: \.self) { problem in
@@ -103,6 +113,17 @@ private struct ExtensionRow: View {
                 Spacer()
                 if case .needsApproval = entry.status {
                     Button("Review…", action: review)
+                }
+                if let id = entry.manifest?.id, entry.status == .ready {
+                    Button("Restart") { host.restart(id) }
+                    Button("View Log") {
+                        let url = host.logURL(for: id)
+                        if FileManager.default.fileExists(atPath: url.path) {
+                            NSWorkspace.shared.open(url)
+                        } else {
+                            NSWorkspace.shared.activateFileViewerSelecting([url.deletingLastPathComponent()])
+                        }
+                    }
                 }
                 Button("Show in Finder") {
                     NSWorkspace.shared.activateFileViewerSelecting([entry.directoryURL])
@@ -200,6 +221,29 @@ enum ExtensionText {
         case .disabled: return "Disabled"
         case .needsApproval: return "Needs approval"
         case .invalid: return "Invalid"
+        }
+    }
+
+    static func phase(_ phase: ExtensionSupervisor.Phase) -> String {
+        switch phase {
+        case .running: return "Running"
+        case .starting, .initializing: return "Starting…"
+        case .backingOff: return "Restarting…"
+        case .stopping: return "Stopping…"
+        case .stopped: return "Stopped"
+        case .failed: return "Failed"
+        }
+    }
+
+    static func failure(_ reason: ExtensionSupervisor.FailureReason) -> String {
+        switch reason {
+        case .launchFailed: return "Its program couldn't be started."
+        case .crashLoop(let code):
+            return "It kept exiting\(code.map { " (status \($0))" } ?? ""). Check the log, then restart it."
+        case .apiVersionMismatch(let version):
+            return "It speaks extension API \(version); this Vakta speaks \(vaktaExtensionAPIVersion)."
+        case .initializeRejected(let message): return "It refused to start: \(message)"
+        case .invalidInitializeResult: return "It answered the handshake with something Vakta doesn't understand."
         }
     }
 

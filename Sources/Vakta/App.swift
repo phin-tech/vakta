@@ -594,6 +594,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         true
     }
 
+    func applicationWillTerminate(_: Notification) {
+        // Extensions also see stdin close when Vakta exits; this asks them
+        // to shut down first.
+        stores?.extensionHost.stopAll()
+    }
+
     func applicationDidResignActive(_: Notification) {
         // A leader sequence left pending while switching away would silently
         // swallow the first keys typed on return.
