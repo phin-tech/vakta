@@ -93,7 +93,12 @@ Extension → host:
 session name, stable across restarts; not `Session.id`, which is a new
 UUID each launch), `cwd` (active pane), `gitRoot?`, `branch?`, `workspace`,
 `focused`. Getting an unfocused Session's cwd means querying its active pane.
-That runs on Session changes and on refresh, never per keystroke.
+That runs on Session changes and on refresh, never per keystroke. After
+input pauses in the focused terminal (100 ms), Vakta re-gathers just the
+focused Session and sends it first, the others as last known; a full
+parallel pass follows on structural changes. herdr's `*.focused` events
+would be faster but don't fire for interactive switches (see
+herdr-events-plan.md, Follow-ups).
 
 **View Document**: `list` (view-level header buttons, sections, rows with
 title, subtitle, SF Symbol, accessories and buttons; filtering happens in
