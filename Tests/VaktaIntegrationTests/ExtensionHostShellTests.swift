@@ -210,10 +210,11 @@ final class ExtensionHostShellTests: XCTestCase {
     func test_notificationsFromTheExtension_reachOnMessage_andLogsAreWritten() async throws {
         let host = try await startHost()
         var received: [JSONRPCMessage] = []
-        host.onMessage = { id, message in
+        let subscription = host.messages.sink { id, message in
             XCTAssertEqual(id, "fixture")
             received.append(message)
         }
+        defer { subscription.cancel() }
         try await waitFor("running") { phase(host) == .running }
 
         host.notify("fixture", method: "fixture/push", params: .object([

@@ -7,7 +7,9 @@
 //  normal, `mismatch` (wrong API version), `hang` (never answers
 //  initialize), `crash-once` (exits on its first contexts/changed, then
 //  behaves). It always exits when a context names the session "crash", and
-//  logs every contexts/changed as `contexts:<session names>`.
+//  logs every contexts/changed as `contexts:<session names>`. Rendered lists
+//  carry `render <n> for <focused session>` so tests can see re-renders; the
+//  view "broken" answers with an error.
 
 import Foundation
 
@@ -29,6 +31,8 @@ enum FixtureExtension {
             send({"jsonrpc": "2.0", "method": "log", "params": {"level": "info", "message": message}})
 
         documents = {}
+        renders = 0
+        focused = "none"
 
         for line in sys.stdin:
             message = json.loads(line)
@@ -42,6 +46,7 @@ enum FixtureExtension {
                 send({"jsonrpc": "2.0", "id": ident, "result": {"apiVersion": version, "name": "Fixture"}})
             elif method == "contexts/changed":
                 names = [c["sessionKey"]["sessionName"] for c in params.get("contexts", [])]
+                focused = next((c["sessionKey"]["sessionName"] for c in params.get("contexts", []) if c.get("focused")), "none")
                 log("contexts:" + ",".join(names))
                 flag = os.path.join(root, ".crashed-once")
                 if mode == "crash-once" and not os.path.exists(flag):
@@ -51,10 +56,15 @@ enum FixtureExtension {
                     sys.exit(5)
             elif method == "view/render":
                 view = params.get("view")
+                renders += 1
+                if view == "broken":
+                    send({"jsonrpc": "2.0", "id": ident, "error": {"code": -32000, "message": "fixture can't render"}})
+                    continue
                 send({"jsonrpc": "2.0", "id": ident, "result": documents.get(view, {
                     "kind": "list", "sections": [{"title": "Fixture", "items": [
-                        {"id": "one", "title": "First item", "buttons": [
-                            {"title": "Refresh", "callback": "refresh"}]}]}]})})
+                        {"id": "one", "title": "First item", "subtitle": "render %d for %s" % (renders, focused),
+                         "detail": {"kind": "detail", "title": "One detail"},
+                         "buttons": [{"title": "Refresh", "callback": "refresh"}]}]}]})})
             elif method == "callback":
                 name = params.get("callback")
                 if name == "refresh":

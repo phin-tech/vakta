@@ -27,6 +27,7 @@ final class Stores {
     let extensionRegistry: ExtensionRegistryStore
     let extensionHost: ExtensionHost
     let extensionContextMonitor: ExtensionContextMonitor
+    let panelViewStore: PanelViewStore
     let persistenceFailures = PersistenceFailureCenter()
     let preferencesRouter = PreferencesRouter()
 
@@ -82,6 +83,7 @@ final class Stores {
             environment: { ["PATH": sessionStore.resolvedPATH, "HOME": NSHomeDirectory(), "LANG": "en_US.UTF-8"] }
         )
         extensionContextMonitor = ExtensionContextMonitor(sessionStore: sessionStore, host: extensionHost)
+        panelViewStore = PanelViewStore(host: extensionHost)
         workspaceRefreshMonitor = WorkspaceRefreshMonitor(
             sessionStore: sessionStore,
             herdrPreferences: herdrPreferences,
@@ -109,5 +111,6 @@ extension View {
             .environmentObject(stores.preferencesRouter)
             .environmentObject(stores.extensionRegistry)
             .environmentObject(stores.extensionHost)
+            .environmentObject(stores.panelViewStore)
     }
 }

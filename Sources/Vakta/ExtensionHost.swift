@@ -24,14 +24,16 @@ final class ExtensionHost: ObservableObject {
     /// Keyed by manifest id.
     @Published private(set) var phases: [String: ExtensionSupervisor.Phase] = [:]
 
+    /// The focused Session's Extension Context, as last sent.
+    @Published private(set) var focusedContext: ExtensionContext?
+
     /// Messages from running Extensions for features to route (view updates,
     /// status items, badges). `log` notifications are written to the log here.
-    var onMessage: ((_ extensionID: String, _ message: JSONRPCMessage) -> Void)?
-    /// Called when an Extension stops running for any reason, so features
-    /// can remove its Contributions.
-    var onStopped: ((_ extensionID: String) -> Void)?
-    /// Called after each successful handshake.
-    var onReady: ((_ extensionID: String) -> Void)?
+    let messages = PassthroughSubject<(extensionID: String, message: JSONRPCMessage), Never>()
+    /// An Extension stopped running for any reason; remove its Contributions.
+    let stopped = PassthroughSubject<String, Never>()
+    /// An Extension finished its handshake.
+    let ready = PassthroughSubject<String, Never>()
 
     private let registry: ExtensionRegistryStore
     private let supportRoot: URL
@@ -66,6 +68,8 @@ final class ExtensionHost: ObservableObject {
     func updateContexts(_ contexts: [ExtensionContext]) {
         guard contexts != self.contexts else { return }
         self.contexts = contexts
+        let focused = contexts.first(where: \.focused)
+        if focused != focusedContext { focusedContext = focused }
         for runtime in runtimes.values where runtime.phase == .running {
             runtime.sendContexts(contexts)
         }
@@ -139,14 +143,14 @@ final class ExtensionHost: ObservableObject {
                 self.phases[id] = phase
                 if phase == .running {
                     runtime.sendContexts(self.contexts)
-                    self.onReady?(id)
+                    self.ready.send(id)
                 } else {
-                    self.onStopped?(id)
+                    self.stopped.send(id)
                 }
             }
             runtime.onMessage = { [weak self, weak runtime] message in
                 guard let self, let runtime, self.runtimes[id] === runtime else { return }
-                self.onMessage?(id, message)
+                self.messages.send((extensionID: id, message: message))
             }
             runtimes[id] = runtime
             runtime.start()
@@ -173,7 +177,7 @@ final class ExtensionHost: ObservableObject {
     }
 
     /// What this host draws and carries out; grows as Contributions land.
-    static let supportedViewKinds: [String] = []
+    static let supportedViewKinds: [String] = ["list", "detail"]
     static let supportedEffects: [String] = []
 
     /// Built from scratch: Vakta's own environment is never passed through

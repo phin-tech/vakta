@@ -23,6 +23,8 @@ struct FileSidebarView: View {
     @EnvironmentObject private var sessionStore: SessionStore
     @EnvironmentObject private var appearanceStore: AppearanceStore
     @EnvironmentObject private var preferences: FileSidebarPreferencesStore
+    @EnvironmentObject private var extensionRegistry: ExtensionRegistryStore
+    @EnvironmentObject private var panelViewStore: PanelViewStore
     @StateObject private var changesLoader = FileSidebarChangesLoader()
     @StateObject private var fileTree = FileTreeModel()
     @State private var selectedPath: String?
@@ -34,6 +36,14 @@ struct FileSidebarView: View {
     /// slashes (an `ls`/`tree` look); otherwise it's a Finder-style list with
     /// the system font and real file icons.
     private var terminalStyle: Bool { appearanceStore.sidebarFont == .matchTerminal }
+
+    private var panelViewOptions: [PanelViewOption] { PanelModeResolver.options(from: extensionRegistry.entries) }
+
+    /// The saved mode, or Files while its Extension view isn't available
+    /// (the saved choice is kept so it returns with the Extension).
+    private var mode: FileSidebarMode {
+        PanelModeResolver.effectiveMode(saved: preferences.mode, available: panelViewOptions)
+    }
     private var accent: Color { Color(nsColor: sessionStore.terminalAccentColor) }
     private var selection: Color { Color(nsColor: sessionStore.terminalSelectionColor) }
 
@@ -47,6 +57,7 @@ struct FileSidebarView: View {
         .onAppear {
             rebuildRoot()
             loadChanges()
+            activatePanelView()
         }
         // Root changes re-query through `fileSidebarRefreshed`, which
         // `SessionStore` sends after every root resolution (including a move
@@ -55,14 +66,17 @@ struct FileSidebarView: View {
             rebuildRoot()
             collapsedChangePaths = []
         }
-        .onChange(of: preferences.mode) { _ in loadChanges() }
+        .onChange(of: mode) { _ in
+            loadChanges()
+            activatePanelView()
+        }
         .onReceive(sessionStore.fileSidebarRefreshed) { loadChanges() }
     }
 
     /// Re-runs git for the current root while Changes is showing; the Files
     /// tree never pays for it.
     private func loadChanges() {
-        guard preferences.mode == .changes else { return }
+        guard mode == .changes else { return }
         changesLoader.load(
             root: sessionStore.fileSidebarRoot,
             environment: ["PATH": sessionStore.resolvedPATH, "HOME": NSHomeDirectory()]
@@ -89,6 +103,7 @@ struct FileSidebarView: View {
             Button {
                 sessionStore.refreshFileSidebarRoot()
                 fileTree.reload()
+                if case .extensionView = mode { panelViewStore.refresh() }
             } label: {
                 Image(systemName: "arrow.clockwise")
                     .font(.system(size: 11, weight: .medium))
@@ -105,9 +120,33 @@ struct FileSidebarView: View {
     /// Files ↔ Changes. Two small icon buttons rather than a `Picker` so it
     /// fits the header row and takes the terminal accent.
     private var modeToggle: some View {
-        HStack(spacing: 0) {
+        let split = PanelModeResolver.split(panelViewOptions)
+        return HStack(spacing: 0) {
             modeButton(.files, symbol: "folder", help: "All files")
             modeButton(.changes, symbol: "plusminus", help: "Git changes only")
+            ForEach(split.inline) { option in
+                modeButton(.extensionView(option.ref), symbol: option.symbol, help: option.title)
+            }
+            if !split.overflow.isEmpty {
+                Menu {
+                    ForEach(split.overflow) { option in
+                        Button {
+                            preferences.mode = .extensionView(option.ref)
+                        } label: {
+                            Label(option.title, systemImage: option.symbol)
+                        }
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 10, weight: .medium))
+                        .frame(width: 20, height: 16)
+                        .foregroundStyle(split.overflow.contains { mode == .extensionView($0.ref) } ? accent : Color.secondary)
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("More views")
+            }
         }
         .padding(1)
         .background(
@@ -116,7 +155,7 @@ struct FileSidebarView: View {
     }
 
     private func modeButton(_ mode: FileSidebarMode, symbol: String, help: String) -> some View {
-        let isOn = preferences.mode == mode
+        let isOn = self.mode == mode
         return Button {
             preferences.mode = mode
         } label: {
@@ -138,10 +177,18 @@ struct FileSidebarView: View {
 
     @ViewBuilder
     private var content: some View {
-        if preferences.mode == .changes {
-            changesContent
+        switch mode {
+        case .changes: changesContent
+        case .files: filesContent
+        case .extensionView: ExtensionPanelView()
+        }
+    }
+
+    private func activatePanelView() {
+        if case .extensionView(let ref) = mode {
+            panelViewStore.activate(ref)
         } else {
-            filesContent
+            panelViewStore.activate(nil)
         }
     }
 
