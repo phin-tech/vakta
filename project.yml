@@ -11,6 +11,8 @@ packages:
     # Keep in sync with Package.swift. The embedding C API is unstable, so this
     # is pinned exact, not a range.
     exactVersion: 1.6.20260909
+  VaktaExtensionKit:
+    path: Packages/VaktaExtensionKit
 
 targets:
   Vakta:
@@ -25,6 +27,7 @@ targets:
         product: GhosttyTerminal
       - package: libghostty-spm
         product: GhosttyTheme
+      - package: VaktaExtensionKit
     info:
       path: Vakta/Info.plist
       properties:

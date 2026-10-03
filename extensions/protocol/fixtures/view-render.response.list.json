@@ -1,0 +1,30 @@
+{"jsonrpc": "2.0", "id": "r-7", "result": {
+  "kind": "list",
+  "searchPlaceholder": "Filter issues",
+  "emptyText": "No open issues",
+  "sections": [
+    {"title": "Ready", "items": [
+      {
+        "id": "fcae",
+        "title": "VaktaExtensionKit protocol types",
+        "subtitle": "P2 · sphinizy",
+        "symbol": "circle",
+        "accessories": [{"text": "extensions"}],
+        "detail": {
+          "kind": "detail",
+          "title": "fcae · VaktaExtensionKit protocol types",
+          "markdown": "## What to build\nShared types.",
+          "fields": [{"label": "Priority", "value": "2"}],
+          "buttons": []
+        },
+        "buttons": [
+          {"title": "Claim", "symbol": "hand.raised", "callback": "claim", "payload": {"id": "fcae"}, "style": "default"},
+          {"title": "Close…", "callback": "close", "payload": {"id": "fcae"}, "style": "destructive",
+           "confirm": {"title": "Close fcae?", "message": "This asserts the work is complete.", "button": "Close"},
+           "shortcut": "cmd+backspace"}
+        ]
+      }
+    ]},
+    {"items": []}
+  ]
+}}

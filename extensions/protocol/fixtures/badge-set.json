@@ -1,0 +1,5 @@
+{"jsonrpc": "2.0", "method": "badge/set", "params": {
+  "sessionKey": {"backend": "herdr", "sessionName": "vakta"},
+  "text": "fcae",
+  "symbol": "circle.fill"
+}}

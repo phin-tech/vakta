@@ -1,0 +1,6 @@
+{"jsonrpc": "2.0", "method": "view/update", "params": {"view": "issues", "document": {
+  "kind": "detail",
+  "title": "7cq8 · Link, Trust, developer mode",
+  "fields": [],
+  "buttons": [{"title": "Start", "symbol": "play", "callback": "start", "payload": {"id": "7cq8"}, "style": "primary", "shortcut": "return"}]
+}}}

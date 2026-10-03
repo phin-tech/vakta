@@ -1,0 +1,8 @@
+{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+  "apiVersion": 1,
+  "host": {"name": "Vakta", "version": "0.1.0"},
+  "capabilities": {
+    "viewKinds": ["list", "detail", "form"],
+    "effects": ["refresh", "replace", "push", "pop", "toast", "notify", "open_url", "open_pane", "open_session"]
+  }
+}}
