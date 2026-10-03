@@ -8,7 +8,10 @@ import Foundation
 import KataVaktaCore
 import VaktaExtensionKit
 
-final class KataServer {
+/// `@unchecked Sendable`: every method runs on `Connection.queue` (a serial
+/// queue) -- messages via `Connection.run`, watcher callbacks via
+/// `connection.queue.async` -- so its state is never touched concurrently.
+final class KataServer: @unchecked Sendable {
     private let connection: Connection
     private var contexts: [ExtensionContext] = []
     private var watcher: KataEventWatcher?
@@ -77,23 +80,49 @@ final class KataServer {
 
     /// Open and ready issues for `workspace`; also points the event watcher
     /// at its project and refreshes the Status Item.
-    private func load(_ workspace: String) -> Loaded {
-        switch KataCLI.issues(["list"], workspace: workspace) {
+    private func load(_ workspace: String, updatingFocus: Bool = true) -> Loaded {
+        let result: Loaded
+        switch query(workspace) {
+        case .success(.notInitialized): result = .notInitialized
+        case .success(.loaded(let open, let readyIDs)): result = .loaded(open: open, readyIDs: readyIDs)
+        case .failure(let failure): return .failed(failure.message)
+        }
+        guard updatingFocus else { return result }
+        switch result {
         case .notInitialized:
             watch(projectID: nil)
             sendStatus(nil)
-            return .notInitialized
+        case let .loaded(open, readyIDs):
+            watch(projectID: open.first?.projectID)
+            sendStatus(KataViews.status(open: open, readyIDs: readyIDs))
+        case .failed:
+            break
+        }
+        return result
+    }
+
+    private var cache = KataQueryCache()
+
+    private struct QueryFailure: Error { let message: String }
+
+    /// Open and ready issues for `workspace`, from the cache when fresh.
+    private func query(_ workspace: String) -> Result<KataQueryCache.Value, QueryFailure> {
+        if let cached = cache.value(for: workspace, at: Date()) { return .success(cached) }
+        let value: KataQueryCache.Value
+        switch KataCLI.issues(["list"], workspace: workspace) {
+        case .notInitialized:
+            value = .notInitialized
         case .failed(let message):
-            return .failed(message)
+            return .failure(QueryFailure(message: message))
         case .issues(let open):
             var readyIDs: Set<String> = []
             if case .issues(let ready) = KataCLI.issues(["ready"], workspace: workspace) {
                 readyIDs = Set(ready.map(\.shortID))
             }
-            watch(projectID: open.first?.projectID)
-            sendStatus(KataViews.status(open: open, readyIDs: readyIDs))
-            return .loaded(open: open, readyIDs: readyIDs)
+            value = .loaded(open: open, readyIDs: readyIDs)
         }
+        cache.store(value, for: workspace, at: Date())
+        return .success(value)
     }
 
     /// Recomputes the Status Item for the focused workspace.
@@ -115,7 +144,7 @@ final class KataServer {
         for context in contexts {
             guard let workspace = KataViews.workspace(for: context) else { continue }
             if openByWorkspace[workspace] == nil {
-                if case .issues(let open) = KataCLI.issues(["list"], workspace: workspace) {
+                if case .success(.loaded(let open, _)) = query(workspace) {
                     openByWorkspace[workspace] = open
                 } else {
                     openByWorkspace[workspace] = []
@@ -195,6 +224,9 @@ final class KataServer {
     }
 
     private func respond(_ id: JSONRPCID, effects: [Effect]) {
+        // Anything a Callback did may have changed issues; the refresh that
+        // usually follows must not read the cache.
+        cache.invalidateAll()
         guard let result = try? ExtensionProtocolCodec.encode(CallbackResult(effects: effects)) else {
             return connection.fail(id, "couldn't encode the result")
         }
@@ -217,8 +249,10 @@ final class KataServer {
         let connection = self.connection
         let next = KataEventWatcher(projectID: projectID) { [weak self] in
             guard let params = try? ExtensionProtocolCodec.encode(ViewInvalidateParams(view: KataViews.issuesViewID)) else { return }
-            connection.send(.notification(method: ProtocolMethod.viewInvalidate, params: params))
             connection.queue.async {
+                // Clear first, so the re-render the invalidation causes reads fresh data.
+                self?.cache.invalidate(projectID: projectID)
+                connection.send(.notification(method: ProtocolMethod.viewInvalidate, params: params))
                 self?.refreshStatus()
                 self?.refreshBadges()
             }

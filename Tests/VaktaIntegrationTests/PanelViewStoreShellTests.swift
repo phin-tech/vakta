@@ -127,6 +127,34 @@ final class PanelViewStoreShellTests: XCTestCase {
         try await waitFor("beta render") { firstSubtitle(store)?.hasSuffix("for beta") == true }
     }
 
+    func test_switchingBack_showsTheLastDocumentForThatPlace_atOnce_thenRefreshes() async throws {
+        let store = try await start()
+        host.updateContexts([context("alpha")])
+        store.activate(items)
+        try await waitFor("alpha render") { firstSubtitle(store)?.hasSuffix("for alpha") == true }
+        let alphaSubtitle = firstSubtitle(store)
+        host.updateContexts([context("beta")])
+        try await waitFor("beta render") { firstSubtitle(store)?.hasSuffix("for beta") == true }
+
+        host.updateContexts([context("alpha")])
+
+        XCTAssertEqual(firstSubtitle(store), alphaSubtitle, "alpha's last document shows immediately, not Loading")
+        try await waitFor("fresh alpha render") {
+            firstSubtitle(store)?.hasSuffix("for alpha") == true && firstSubtitle(store) != alphaSubtitle
+        }
+    }
+
+    func test_firstVisitToAPlace_showsLoading_notAnotherPlacesDocument() async throws {
+        let store = try await start()
+        host.updateContexts([context("alpha")])
+        store.activate(items)
+        try await waitFor("alpha render") { firstSubtitle(store)?.hasSuffix("for alpha") == true }
+
+        host.updateContexts([context("gamma")])
+
+        XCTAssertEqual(store.model.content, .loading)
+    }
+
     func test_renderError_isShown() async throws {
         let store = try await start()
         store.activate(PanelViewRef(extensionID: "fixture", viewID: "broken"))

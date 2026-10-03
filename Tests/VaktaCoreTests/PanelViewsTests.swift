@@ -212,4 +212,32 @@ final class PanelViewsTests: XCTestCase {
         XCTAssertEqual(model.filter, "")
         XCTAssertEqual(model.content, .loading)
     }
+
+    func test_resetShowingCached_showsItImmediately_andStillDropsStaleResults() {
+        var model = PanelViewModel()
+        let old = model.beginRender()
+        let cached = list([("Cached", [item("c", "Cached", detail: "d")])])
+
+        model.reset(showing: cached)
+
+        XCTAssertEqual(model.content, .document(cached))
+        XCTAssertFalse(model.apply(list([("Stale", [])]), generation: old), "results from before the switch are dropped")
+        XCTAssertEqual(model.content, .document(cached))
+        let fresh = list([("Fresh", [])])
+        XCTAssertTrue(model.apply(fresh, generation: model.beginRender()))
+        XCTAssertEqual(model.content, .document(fresh))
+    }
+
+    func test_resetShowingCached_clearsNavigationAndFilter() {
+        var model = PanelViewModel()
+        model.apply(list([("Ready", [item("a", "Alpha", detail: "d")])]), generation: model.beginRender())
+        model.openDetail("a")
+        model.filter = "al"
+
+        model.reset(showing: list([("Other", [])]))
+
+        XCTAssertFalse(model.isShowingDetail)
+        XCTAssertNil(model.selectedItemID)
+        XCTAssertEqual(model.filter, "")
+    }
 }

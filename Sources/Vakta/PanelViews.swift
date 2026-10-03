@@ -104,6 +104,14 @@ struct PanelViewModel: Equatable {
         path = []
     }
 
+    /// The focused Session changed to a place shown before: show its last
+    /// document right away (a fresh render replaces it); earlier results are
+    /// stale and the navigation no longer applies.
+    mutating func reset(showing cached: ViewDocument) {
+        reset()
+        content = .document(cached)
+    }
+
     /// The focused Session changed: earlier results are stale and the
     /// navigation no longer applies.
     mutating func reset() {

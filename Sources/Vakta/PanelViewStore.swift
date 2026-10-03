@@ -44,6 +44,45 @@ final class PanelViewStore: ObservableObject {
     private let host: ExtensionHost
     private var subscriptions: Set<AnyCancellable> = []
 
+    /// A view in one place: the focused Session's location when it rendered.
+    private struct PlaceKey: Hashable {
+        var ref: PanelViewRef
+        var sessionKey: SessionKey?
+        var cwd: String?
+        var gitRoot: String?
+        var branch: String?
+        var workspaceID: String?
+    }
+
+    /// The last document per place, so switching back shows it at once.
+    private var lastDocuments: [PlaceKey: ViewDocument] = [:]
+    private static let lastDocumentsLimit = 32
+
+    private var pendingFocusedContext: ExtensionContext??
+
+    private func placeKey(_ ref: PanelViewRef) -> PlaceKey {
+        let context = pendingFocusedContext ?? host.focusedContext
+        return PlaceKey(
+            ref: ref, sessionKey: context?.sessionKey, cwd: context?.cwd, gitRoot: context?.gitRoot,
+            branch: context?.branch, workspaceID: context?.workspace?.id
+        )
+    }
+
+    private func remember(_ document: ViewDocument) {
+        guard let ref = active else { return }
+        if lastDocuments.count >= Self.lastDocumentsLimit { lastDocuments.removeAll() }
+        lastDocuments[placeKey(ref)] = document
+    }
+
+    /// Resets for the current place, showing its last document if known.
+    private func resetForCurrentPlace() {
+        if let ref = active, let cached = lastDocuments[placeKey(ref)] {
+            model.reset(showing: cached)
+        } else {
+            model.reset()
+        }
+    }
+
     private let callbackTimeout: TimeInterval
     private var toastGeneration = 0
 
@@ -53,9 +92,12 @@ final class PanelViewStore: ObservableObject {
         host.$focusedContext
             .removeDuplicates()
             .dropFirst()
-            .sink { [weak self] _ in
+            .sink { [weak self] context in
                 guard let self, self.active != nil else { return }
-                self.model.reset()
+                // `sink` runs before `focusedContext` is assigned; key on the new value.
+                self.pendingFocusedContext = context
+                self.resetForCurrentPlace()
+                self.pendingFocusedContext = nil
                 self.render()
             }
             .store(in: &subscriptions)
@@ -71,7 +113,7 @@ final class PanelViewStore: ObservableObject {
     func activate(_ ref: PanelViewRef?) {
         guard ref != active else { return }
         active = ref
-        model.reset()
+        resetForCurrentPlace()
         callbacks = CallbackTracker()
         guard ref != nil else { return }
         if let unavailable = unavailableMessage(for: host.phases) {
@@ -181,7 +223,9 @@ final class PanelViewStore: ObservableObject {
                 )
                 guard self.active == ref else { return }
                 do {
-                    if self.model.apply(try ExtensionProtocolCodec.decode(ViewDocument.self, from: result), generation: generation) {
+                    let document = try ExtensionProtocolCodec.decode(ViewDocument.self, from: result)
+                    if self.model.apply(document, generation: generation) {
+                        self.remember(document)
                         self.callbacks.clearFailures()
                     }
                 } catch {
@@ -236,7 +280,7 @@ final class PanelViewStore: ObservableObject {
         case ProtocolMethod.viewUpdate:
             guard let update = try? ExtensionProtocolCodec.decode(ViewUpdateParams.self, from: params),
                   update.view == ref.viewID else { return }
-            model.apply(update.document, generation: model.generation)
+            if model.apply(update.document, generation: model.generation) { remember(update.document) }
         case ProtocolMethod.viewInvalidate:
             guard let invalidate = try? ExtensionProtocolCodec.decode(ViewInvalidateParams.self, from: params),
                   invalidate.view == ref.viewID else { return }
