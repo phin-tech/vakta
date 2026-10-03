@@ -29,6 +29,8 @@ final class KataServer: @unchecked Sendable {
                   let result = try? ExtensionProtocolCodec.encode(KataServerCore.initializeResult(for: decoded))
             else { return connection.fail(id, code: -32602, "invalid initialize params") }
             connection.respond(to: id, with: result)
+            // Find the daemon now, so the first query doesn't pay for it.
+            daemon.warm()
         case let .notification(ProtocolMethod.contextsChanged, params):
             guard let params, let decoded = try? ExtensionProtocolCodec.decode(ContextsChangedParams.self, from: params) else { return }
             let previous = KataViews.workspace(for: focused)
@@ -102,12 +104,18 @@ final class KataServer: @unchecked Sendable {
     }
 
     private var cache = KataQueryCache()
+    private let daemon = KataDaemonClient()
 
     private struct QueryFailure: Error { let message: String }
 
     /// Open and ready issues for `workspace`, from the cache when fresh.
     private func query(_ workspace: String) -> Result<KataQueryCache.Value, QueryFailure> {
         if let cached = cache.value(for: workspace, at: Date()) { return .success(cached) }
+        // The daemon socket is the fast path; the CLI is the fallback.
+        if let direct = daemon.query(workspace) {
+            cache.store(direct, for: workspace, at: Date())
+            return .success(direct)
+        }
         // `list` and `ready` are independent: run them side by side.
         var ready: KataOutput = .issues([])
         let readyDone = DispatchSemaphore(value: 0)

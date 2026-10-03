@@ -265,6 +265,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // `.keyDown`, and this one must never fire for a key an app
         // shortcut already consumed.
         workspaceRefreshMonitor.install()
+        stores.extensionContextMonitor.install()
 
         // Finish wiring the attention notifier now that the app is up: give it
         // the user's preferences, a way to surface a session on click, and
