@@ -26,13 +26,16 @@ struct ExtensionManifest: Equatable {
     /// argv commands run once, in order, after Trust is granted.
     var build: [[String]]
     var panelViews: [PanelViewDeclaration]
+    /// Environment variables the Extension receives from the user's login
+    /// shell: exact names or `PREFIX_*`. Everything else is withheld.
+    var environment: [String] = []
 
     /// Decodes manifest bytes; `nil` when they aren't a manifest at all.
     static func decode(_ data: Data) -> ExtensionManifest? {
         guard let file = try? JSONDecoder().decode(File.self, from: data) else { return nil }
         return ExtensionManifest(
             id: file.id, name: file.name, description: file.description, command: file.command,
-            build: file.build ?? [], panelViews: file.panelViews ?? []
+            build: file.build ?? [], panelViews: file.panelViews ?? [], environment: file.environment ?? []
         )
     }
 
@@ -64,7 +67,7 @@ struct ExtensionManifest: Equatable {
                 found.append("Panel view \(view.id) needs a title and a symbol.")
             }
         }
-        return found
+        return found + ExtensionEnvironment.problems(environment)
     }
 
     /// `command[0]` resolved inside `directory`, or `nil` when it is absolute,
@@ -87,5 +90,6 @@ struct ExtensionManifest: Equatable {
         var command: [String]
         var build: [[String]]?
         var panelViews: [PanelViewDeclaration]?
+        var environment: [String]?
     }
 }

@@ -20,6 +20,8 @@ enum FixtureExtension {
 
         mode = os.environ.get("FIXTURE_MODE", "normal")
         root = os.environ.get("VAKTA_EXTENSION_ROOT", ".")
+        with open(os.path.join(root, "env-check.json"), "w") as check:
+            json.dump({k: os.environ.get(k) for k in ["FIXTURE_SECRET", "OTHER", "PATH"]}, check)
         sys.stderr.write("fixture started pid=%d\n" % os.getpid())
         sys.stderr.flush()
 
@@ -108,13 +110,14 @@ enum FixtureExtension {
 
     /// Writes the fixture Extension (manifest + script) into `directory`.
     @discardableResult
-    static func make(in directory: URL, id: String = "fixture") throws -> ExtensionFixturePaths {
+    static func make(in directory: URL, id: String = "fixture", environment: [String] = []) throws -> ExtensionFixturePaths {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let scriptURL = directory.appendingPathComponent("run.py")
         try script.write(to: scriptURL, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
+        let environmentJSON = "[" + environment.map { "\"\($0)\"" }.joined(separator: ",") + "]"
         let manifest = """
-            {"id": "\(id)", "name": "Fixture", "command": ["./run.py"],
+            {"id": "\(id)", "name": "Fixture", "command": ["./run.py"], "environment": \(environmentJSON),
              "panelViews": [{"id": "items", "title": "Items", "symbol": "list.bullet"}]}
             """
         try manifest.write(to: directory.appendingPathComponent("vakta-extension.json"), atomically: true, encoding: .utf8)

@@ -18,16 +18,9 @@ struct ExtensionsPreferencesView: View {
     var body: some View {
         Form {
             Section {
-                if registry.entries.isEmpty {
-                    Text("No extensions linked.")
-                        .foregroundStyle(.secondary)
-                }
-                ForEach(registry.entries) { entry in
-                    ExtensionRow(entry: entry, review: { reviewing = entry })
-                }
-            } header: {
                 HStack {
-                    Text("Linked Extensions")
+                    Text(registry.entries.isEmpty ? "No extensions linked." : "\(registry.entries.count) linked")
+                        .foregroundStyle(.secondary)
                     Spacer()
                     Button("Link Extension…", action: chooseDirectory)
                 }
@@ -35,6 +28,9 @@ struct ExtensionsPreferencesView: View {
                 Text("An extension is a program on your Mac that adds views to Vakta. It runs only after you approve it, and asks again if its manifest or program changes.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+            ForEach(registry.entries) { entry in
+                ExtensionSection(entry: entry, review: { reviewing = entry })
             }
         }
         .formStyle(.grouped)
@@ -65,55 +61,70 @@ struct ExtensionsPreferencesView: View {
     }
 }
 
-private struct ExtensionRow: View {
+/// One linked Extension as a settings section: identity and state, then a
+/// row per toggle, then its actions.
+private struct ExtensionSection: View {
     @EnvironmentObject private var registry: ExtensionRegistryStore
     @EnvironmentObject private var host: ExtensionHost
     let entry: ExtensionEntry
+    let review: () -> Void
 
     private var runtimePhase: ExtensionSupervisor.Phase? {
         guard entry.status == .ready, let id = entry.manifest?.id else { return nil }
         return host.phases[id]
     }
-    let review: () -> Void
+
+    private var statusText: String {
+        runtimePhase.map(ExtensionText.phase) ?? ExtensionText.status(entry.status)
+    }
+
+    private var statusColor: Color {
+        switch runtimePhase {
+        case .running?: return .green
+        case .failed?: return .red
+        default: return entry.status == .ready ? .secondary : .orange
+        }
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .firstTextBaseline) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(entry.displayName).font(.headline)
-                    Text(entry.record.directory)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
+        Section {
+            LabeledContent("Status") {
+                HStack(spacing: 5) {
+                    Circle().fill(statusColor).frame(width: 7, height: 7)
+                    Text(statusText)
                 }
-                Spacer()
-                Text(runtimePhase.map(ExtensionText.phase) ?? ExtensionText.status(entry.status))
-                    .font(.caption)
-                    .foregroundStyle(runtimePhase == .running ? Color.green : Color.secondary)
+            }
+            if case .needsApproval(let reason) = entry.status {
+                LabeledContent {
+                    Button("Review…", action: review)
+                } label: {
+                    Text(ExtensionText.reason(reason)).foregroundStyle(.secondary)
+                }
             }
             if case .failed(let reason)? = runtimePhase {
-                Text(ExtensionText.failure(reason)).font(.caption).foregroundStyle(.red)
+                Text(ExtensionText.failure(reason)).foregroundStyle(.red)
             }
             if case .invalid(let problems) = entry.status {
                 ForEach(problems, id: \.self) { problem in
-                    Text(problem).font(.caption).foregroundStyle(.red)
+                    Text(problem).foregroundStyle(.red)
+                }
+            }
+            Toggle("Enabled", isOn: Binding(
+                get: { entry.record.enabled },
+                set: { registry.setEnabled($0, for: entry.record.directory) }
+            ))
+            Toggle(isOn: Binding(
+                get: { entry.record.developerMode },
+                set: { registry.setDeveloperMode($0, for: entry.record.directory) }
+            )) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Developer mode")
+                    Text("Approval covers the manifest only, so rebuilding doesn't ask again.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
             HStack {
-                Toggle("Enabled", isOn: Binding(
-                    get: { entry.record.enabled },
-                    set: { registry.setEnabled($0, for: entry.record.directory) }
-                ))
-                Toggle("Developer mode", isOn: Binding(
-                    get: { entry.record.developerMode },
-                    set: { registry.setDeveloperMode($0, for: entry.record.directory) }
-                ))
-                .help("Approval covers the manifest only, so rebuilding doesn't ask again. Use for extensions you are editing.")
-                Spacer()
-                if case .needsApproval = entry.status {
-                    Button("Review…", action: review)
-                }
                 if let id = entry.manifest?.id, entry.status == .ready {
                     Button("Restart") { host.restart(id) }
                     Button("View Log") {
@@ -128,13 +139,22 @@ private struct ExtensionRow: View {
                 Button("Show in Finder") {
                     NSWorkspace.shared.activateFileViewerSelecting([entry.directoryURL])
                 }
+                Spacer()
                 Button("Unlink", role: .destructive) {
                     registry.unlink(entry.record.directory)
                 }
             }
-            .controlSize(.small)
+        } header: {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(entry.displayName).font(.headline)
+                Text(entry.record.directory)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .help(entry.record.directory)
+            }
         }
-        .padding(.vertical, 4)
     }
 }
 
@@ -161,6 +181,9 @@ private struct TrustReviewSheet: View {
                     }
                     if !manifest.panelViews.isEmpty {
                         row("Adds views", manifest.panelViews.map(\.title).joined(separator: ", "))
+                    }
+                    if !manifest.environment.isEmpty {
+                        row("Receives", manifest.environment.joined(separator: ", ") + " from your login shell")
                     }
                     row("Approval covers", entry.record.developerMode
                         ? "The manifest only (developer mode)."

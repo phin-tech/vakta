@@ -8,6 +8,7 @@
 //  by type via `@EnvironmentObject` (SwiftUI observes per-type); this only
 //  bundles construction and injection.
 
+import Combine
 import SwiftUI
 
 @MainActor
@@ -26,6 +27,8 @@ final class Stores {
     let workspaceRefreshMonitor: WorkspaceRefreshMonitor
     let extensionRegistry: ExtensionRegistryStore
     let extensionHost: ExtensionHost
+    let loginEnvironment = LoginEnvironmentSnapshot()
+    private var loginEnvironmentObserver: AnyCancellable?
     let extensionContextMonitor: ExtensionContextMonitor
     let panelViewStore: PanelViewStore
     let statusItemStore: StatusItemStore
@@ -82,9 +85,14 @@ final class Stores {
             registry: extensionRegistry,
             supportRoot: root,
             hostVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev",
-            environment: { ["PATH": sessionStore.resolvedPATH, "HOME": NSHomeDirectory(), "LANG": "en_US.UTF-8"] }
+            environment: { ["PATH": sessionStore.resolvedPATH, "HOME": NSHomeDirectory(), "LANG": "en_US.UTF-8"] },
+            loginEnvironment: { [loginEnvironment] in loginEnvironment.current }
         )
         extensionContextMonitor = ExtensionContextMonitor(sessionStore: sessionStore, host: extensionHost)
+        let extensionHost = extensionHost
+        loginEnvironmentObserver = loginEnvironment.$isResolved
+            .filter { $0 }
+            .sink { _ in extensionHost.loginEnvironmentChanged() }
         panelViewStore = PanelViewStore(host: extensionHost)
         statusItemStore = StatusItemStore(host: extensionHost, registry: extensionRegistry)
         sessionBadgeStore = SessionBadgeStore(host: extensionHost, registry: extensionRegistry)

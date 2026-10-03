@@ -160,6 +160,28 @@ final class ExtensionHostShellTests: XCTestCase {
         try await waitFor("stopped") { phase(host) == .stopped || phase(host) == nil }
     }
 
+    // MARK: - Environment
+
+    func test_onlyDeclaredLoginShellVariables_reachTheExtension_andPATHStaysVaktas() async throws {
+        let paths = try FixtureExtension.make(in: base.appendingPathComponent("fixture"), environment: ["FIXTURE_*"])
+        XCTAssertNil(registry.link(directory: paths.directory))
+        let error = await registry.trust(paths.directory.standardizedFileURL.path)
+        XCTAssertNil(error)
+        let host = ExtensionHost(
+            registry: registry, supportRoot: base.appendingPathComponent("support"), hostVersion: "test", policy: fastPolicy,
+            environment: { ["PATH": "/usr/bin:/bin", "HOME": NSHomeDirectory()] },
+            loginEnvironment: { ["FIXTURE_SECRET": "s3cret", "OTHER": "withheld", "PATH": "/login/bin"] }
+        )
+        self.host = host
+        try await waitFor("running") { phase(host) == .running }
+
+        let data = try Data(contentsOf: paths.directory.appendingPathComponent("env-check.json"))
+        let seen = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        XCTAssertEqual(seen?["FIXTURE_SECRET"] as? String, "s3cret")
+        XCTAssertTrue(seen?["OTHER"] is NSNull, "undeclared variables are withheld")
+        XCTAssertEqual(seen?["PATH"] as? String, "/usr/bin:/bin")
+    }
+
     // MARK: - Messages
 
     func test_request_returnsTheResult() async throws {

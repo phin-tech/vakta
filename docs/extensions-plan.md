@@ -52,6 +52,12 @@ isn't one), and JSON matches the protocol.
 }
 ```
 
+`environment` (optional) lists login-shell variables the Extension
+receives: exact names or `PREFIX_*` (Kata declares `KATA_*` for its auth
+token). Nothing else from the user's environment is passed, and PATH, HOME,
+LANG and `VAKTA_*` can't be requested. The list is part of the manifest, so
+approval covers it and the review sheet shows it.
+
 `command[0]` must be a relative path inside the Extension directory, never a
 bare program name or an absolute path, because Trust pins that file. Build
 commands run through `/usr/bin/env` with the resolved login-shell PATH, in

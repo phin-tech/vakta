@@ -44,6 +44,7 @@ final class ExtensionHost: ObservableObject {
     private let hostVersion: String
     private let policy: ExtensionSupervisor.Policy
     private let environment: @MainActor () -> [String: String]
+    private let loginEnvironment: @MainActor () -> [String: String]
     private var runtimes: [String: ExtensionRuntime] = [:]
     /// Replaced runtimes kept alive until their shutdown finishes, so their
     /// kill timer still fires.
@@ -56,8 +57,10 @@ final class ExtensionHost: ObservableObject {
         supportRoot: URL,
         hostVersion: String,
         policy: ExtensionSupervisor.Policy = .init(),
-        environment: @escaping @MainActor () -> [String: String]
+        environment: @escaping @MainActor () -> [String: String],
+        loginEnvironment: @escaping @MainActor () -> [String: String] = { [:] }
     ) {
+        self.loginEnvironment = loginEnvironment
         self.registry = registry
         self.supportRoot = supportRoot
         self.hostVersion = hostVersion
@@ -81,6 +84,16 @@ final class ExtensionHost: ObservableObject {
 
     func restart(_ extensionID: String) {
         runtimes[extensionID]?.restart()
+    }
+
+    /// The login-shell environment changed (it finished resolving): restart
+    /// every Extension that receives variables from it, with the new values.
+    func loginEnvironmentChanged() {
+        for (id, runtime) in runtimes where !runtime.declaredEnvironment.isEmpty {
+            retire(runtime)
+            runtimes[id] = nil
+        }
+        reconcile(registry.entries)
     }
 
     /// Asks every Extension to shut down (app quit).
@@ -158,7 +171,8 @@ final class ExtensionHost: ObservableObject {
                 executable: executable,
                 arguments: Array(manifest.command.dropFirst()),
                 approval: entry.record.approved,
-                environment: childEnvironment(for: id, directory: entry.directoryURL),
+                declaredEnvironment: manifest.environment,
+                environment: childEnvironment(for: id, directory: entry.directoryURL, declared: manifest.environment),
                 log: ExtensionLog(url: logURL(for: id)),
                 supervisor: ExtensionSupervisor(policy: policy, initialize: initializeParams)
             )
@@ -207,12 +221,14 @@ final class ExtensionHost: ObservableObject {
     ]
 
     /// Built from scratch: Vakta's own environment is never passed through
-    /// or mutated.
-    private func childEnvironment(for id: String, directory: URL) -> [String: String] {
+    /// or mutated. Login-shell variables the manifest declares come first;
+    /// Vakta's own (PATH, HOME, VAKTA_*) always win.
+    private func childEnvironment(for id: String, directory: URL, declared: [String]) -> [String: String] {
         let configDirectory = supportRoot.appendingPathComponent("extension-data", isDirectory: true)
             .appendingPathComponent(id, isDirectory: true)
         try? FileManager.default.createDirectory(at: configDirectory, withIntermediateDirectories: true)
-        var values = environment()
+        var values = ExtensionEnvironment.passthrough(declared, from: loginEnvironment())
+            .merging(environment(), uniquingKeysWith: { _, vakta in vakta })
         values["VAKTA_EXTENSION_ID"] = id
         values["VAKTA_EXTENSION_ROOT"] = directory.path
         values["VAKTA_EXTENSION_CONFIG_DIR"] = configDirectory.path
@@ -229,6 +245,7 @@ final class ExtensionRuntime {
     let id: String
     let directory: URL
     let approval: TrustFingerprint?
+    let declaredEnvironment: [String]
     var onPhase: ((ExtensionSupervisor.Phase) -> Void)?
     var onMessage: ((JSONRPCMessage) -> Void)?
 
@@ -254,8 +271,9 @@ final class ExtensionRuntime {
 
     init(
         id: String, directory: URL, executable: URL, arguments: [String], approval: TrustFingerprint?,
-        environment: [String: String], log: ExtensionLog, supervisor: ExtensionSupervisor
+        declaredEnvironment: [String] = [], environment: [String: String], log: ExtensionLog, supervisor: ExtensionSupervisor
     ) {
+        self.declaredEnvironment = declaredEnvironment
         self.id = id
         self.directory = directory
         self.executable = executable

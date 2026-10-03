@@ -4,6 +4,7 @@
   "description": "Kata issues for the repository you're working in.",
   "command": ["./.build/release/kata-vakta", "serve"],
   "build": [["swift", "build", "-c", "release"]],
+  "environment": ["KATA_*"],
   "panelViews": [
     {"id": "issues", "title": "Issues", "symbol": "checklist"}
   ]
