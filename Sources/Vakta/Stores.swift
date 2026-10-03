@@ -28,6 +28,7 @@ final class Stores {
     let extensionHost: ExtensionHost
     let extensionContextMonitor: ExtensionContextMonitor
     let panelViewStore: PanelViewStore
+    let statusItemStore: StatusItemStore
     let persistenceFailures = PersistenceFailureCenter()
     let preferencesRouter = PreferencesRouter()
 
@@ -84,7 +85,8 @@ final class Stores {
         )
         extensionContextMonitor = ExtensionContextMonitor(sessionStore: sessionStore, host: extensionHost)
         panelViewStore = PanelViewStore(host: extensionHost)
-        panelViewStore.effectSink = PanelEffectSink(
+        statusItemStore = StatusItemStore(host: extensionHost, registry: extensionRegistry)
+        let effectSink = PanelEffectSink(
             openURL: { NSWorkspace.shared.open($0) },
             notify: { title, body in
                 guard let sessionID = sessionStore.selectedID else { return }
@@ -113,6 +115,8 @@ final class Stores {
                 }
             }
         )
+        panelViewStore.effectSink = effectSink
+        statusItemStore.effectSink = effectSink
         workspaceRefreshMonitor = WorkspaceRefreshMonitor(
             sessionStore: sessionStore,
             herdrPreferences: herdrPreferences,

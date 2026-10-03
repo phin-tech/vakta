@@ -168,9 +168,11 @@ struct StatusBarContent: Equatable {
     /// Every PR across all sessions, grouped by session › workspace: the
     /// current workspace first, then sidebar order; worst first within each.
     var pullRequestGroups: [StatusBarPullRequestGroup] = []
+    /// Extension Status Items, after the built-in segments.
+    var extensionItems: [StatusBarExtensionItem] = []
 
     var isEmpty: Bool {
-        branch == nil && pullRequest == nil && attentionElsewhere == 0 && pullRequestGroups.isEmpty
+        branch == nil && pullRequest == nil && attentionElsewhere == 0 && pullRequestGroups.isEmpty && extensionItems.isEmpty
     }
 
     /// Distinct PRs across the groups (one PR can appear in several).

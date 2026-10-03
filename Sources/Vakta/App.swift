@@ -378,22 +378,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             sessionStore.$workspaces,
             sessionStore.$selectedID
         )
-        statusBarObserver = Publishers.CombineLatest3(
+        let statusItemStore = stores.statusItemStore
+        statusBarModel.activateExtensionRow = { extensionID, itemID in
+            statusItemStore.activate(extensionID: extensionID, itemID: itemID)
+        }
+        statusBarObserver = Publishers.CombineLatest4(
             statusBarPreferences.$visibility,
             pullRequestState,
-            sessionState
+            sessionState,
+            statusItemStore.$items
         )
-        .sink { [weak self] visibility, pullRequestState, sessionState in
+        .sink { [weak self] visibility, pullRequestState, sessionState, extensionItems in
             guard let self else { return }
             let (focused, lists, focusedWorkspace) = pullRequestState
             let (sessions, workspaces, selectedID) = sessionState
-            let content = StatusBarPresentation.content(
+            var content = StatusBarPresentation.content(
                 focused: selectedID.flatMap { focused[$0] },
                 lists: Self.statusBarLists(sessions: sessions, workspaces: workspaces, pullRequests: lists),
                 currentGroup: selectedID.flatMap { id in
                     focusedWorkspace[id].map { StatusBarGroupKey(sessionID: id, workspaceID: $0) }
                 }
             )
+            content.extensionItems = extensionItems
             let previous = selectedID == self.statusBarContentSessionID ? self.lastStatusBarContent : nil
             self.lastStatusBarContent = content
             self.statusBarContentSessionID = selectedID

@@ -13,6 +13,8 @@ import SwiftUI
 final class StatusBarViewModel: ObservableObject {
     @Published var content = StatusBarContent(branch: nil, pullRequest: nil, attentionElsewhere: 0)
     var openURL: (String) -> Void = { _ in }
+    /// Runs an Extension Popover row (its first button).
+    var activateExtensionRow: (_ extensionID: String, _ itemID: String) -> Void = { _, _ in }
 
     /// True while any list is open (hovered or pinned); Auto-hide holds the
     /// bar revealed meanwhile. Hover-opened lists are tracked per popover, so
@@ -70,19 +72,27 @@ final class StatusBarViewModel: ObservableObject {
             guard let pinned else { return false }
             let rows = rows(for: pinned)
             if let index = StatusBarListKey.moved(selection, by: 0, count: rows.count), selection != nil,
-               let url = rows[index] {
-                openURL(url)
+               let row = rows[index] {
+                if case .extension(let extensionID) = pinned {
+                    activateExtensionRow(extensionID, row)
+                } else {
+                    openURL(row)
+                }
             }
             closeAll()
             return true
         }
     }
 
-    /// Each row's URL, in display order (a check without a page has none).
+    /// Each row's URL (an Extension Popover's: its item id), in display
+    /// order (a check without a page has none).
     func rows(for popover: StatusBarPopover) -> [String?] {
         switch popover {
         case .checks: return content.pullRequest?.checks.map(\.url) ?? []
         case .pullRequests: return content.pullRequestGroups.flatMap { $0.pullRequests.map { Optional($0.url) } }
+        case .extension(let extensionID):
+            guard case .list(let list)? = content.extensionItems.first(where: { $0.extensionID == extensionID })?.popover else { return [] }
+            return list.sections.flatMap { $0.items.map { Optional($0.id) } }
         }
     }
 
@@ -95,6 +105,8 @@ final class StatusBarViewModel: ObservableObject {
 enum StatusBarPopover: Hashable {
     case checks
     case pullRequests
+    /// An Extension Status Item's Popover, by manifest id.
+    case `extension`(String)
 }
 
 struct StatusBarView: View {
@@ -150,6 +162,21 @@ struct StatusBarView: View {
                 }
             }
             Spacer(minLength: 8)
+            ForEach(content.extensionItems) { item in
+                HStack(spacing: 3) {
+                    if let symbol = item.symbol { Image(systemName: symbol) }
+                    Text(item.text)
+                }
+                .foregroundStyle(.secondary)
+                .accessibilityElement(children: .combine)
+                .listPopover(.extension(item.extensionID), model: model, isEnabled: item.popover != nil) {
+                    ExtensionStatusPopover(
+                        item: item,
+                        selection: model.pinned == .extension(item.extensionID) ? model.selection : nil,
+                        activate: { itemID in model.activateExtensionRow(item.extensionID, itemID) }
+                    )
+                }
+            }
             if content.showsPullRequestList || model.pinned == .pullRequests {
                 let glyph = content.listGlyph ?? .noChecks
                 HStack(spacing: 3) {
@@ -516,5 +543,65 @@ final class StatusBarHoverStrip: NSView {
         case nil: return
         }
         onPointer?(isInHotZone ? .hotZone : isInBand ? .bar : .outside)
+    }
+}
+
+/// An Extension Status Item's Popover: its list (or detail) View Document.
+/// Clicking a row, or Return on the selected one, runs the row's first
+/// button.
+private struct ExtensionStatusPopover: View {
+    let item: StatusBarExtensionItem
+    let selection: Int?
+    let activate: (String) -> Void
+
+    var body: some View {
+        Group {
+            switch item.popover {
+            case .list(let list)?:
+                let rows = list.sections.flatMap { section in section.items.map { (section.title, $0) } }
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(Array(rows.enumerated()), id: \.offset) { index, row in
+                            let (sectionTitle, listItem) = row
+                            if let sectionTitle, index == 0 || rows[index - 1].0 != sectionTitle {
+                                Text(sectionTitle).font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
+                                    .padding(.horizontal, 10).padding(.top, 6).padding(.bottom, 2)
+                            }
+                            Button {
+                                activate(listItem.id)
+                            } label: {
+                                HStack(spacing: 6) {
+                                    if let symbol = listItem.symbol { Image(systemName: symbol).frame(width: 12) }
+                                    VStack(alignment: .leading, spacing: 1) {
+                                        Text(listItem.title).lineLimit(1)
+                                        if let subtitle = listItem.subtitle {
+                                            Text(subtitle).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
+                                        }
+                                    }
+                                    Spacer(minLength: 8)
+                                    if let button = listItem.buttons.first {
+                                        Text(button.title).font(.system(size: 10)).foregroundStyle(.secondary)
+                                    }
+                                }
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 4)
+                                .background(selection == index ? Color.accentColor.opacity(0.25) : Color.clear)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(listItem.buttons.isEmpty)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+                .frame(maxHeight: 360)
+            case .detail(let detail)?:
+                DocumentDetail(detail: detail, terminalStyle: false)
+            default:
+                EmptyView()
+            }
+        }
+        .font(.system(size: 11))
+        .frame(width: 320)
     }
 }

@@ -119,6 +119,21 @@ public enum KataViews {
         ))
     }
 
+    /// The Status Item: how many issues are ready to start (unowned, no open
+    /// blockers), with a Popover whose rows start them. `nil` when none.
+    public static func status(open: [KataIssue], readyIDs: Set<String>) -> StatusSetParams? {
+        let ready = open
+            .filter { $0.owner == nil && readyIDs.contains($0.shortID) }
+            .sorted { ($0.priority ?? Int.max, $0.shortID) < ($1.priority ?? Int.max, $1.shortID) }
+        guard !ready.isEmpty else { return nil }
+        let rows = ready.map { row($0, symbol: "circle", startable: true) }
+        return StatusSetParams(
+            text: "\(ready.count) ready",
+            symbol: "checklist",
+            popover: .list(ListView(title: nil, searchPlaceholder: nil, emptyText: nil, sections: [ListSection(title: "Ready", items: rows)]))
+        )
+    }
+
     public static func notInitialized(directory: String) -> ViewDocument {
         .detail(DetailView(
             title: "No Kata project here",

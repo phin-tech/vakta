@@ -28,8 +28,10 @@ final class KataServer {
             connection.respond(to: id, with: result)
         case let .notification(ProtocolMethod.contextsChanged, params):
             guard let params, let decoded = try? ExtensionProtocolCodec.decode(ContextsChangedParams.self, from: params) else { return }
+            let previous = KataViews.workspace(for: focused)
             contexts = decoded.contexts
             connection.log(.debug, KataServerCore.describe(contexts))
+            if KataViews.workspace(for: focused) != previous { refreshStatus() }
         case let .request(id, ProtocolMethod.viewRender, params):
             guard let params, let render = try? ExtensionProtocolCodec.decode(ViewRenderParams.self, from: params) else {
                 return connection.fail(id, code: -32602, "invalid view/render params")
@@ -56,19 +58,61 @@ final class KataServer {
         guard let workspace = KataViews.workspace(for: focused) else {
             return respond(id, KataViews.noFocusedSession)
         }
-        switch KataCLI.issues(["list"], workspace: workspace) {
+        switch load(workspace) {
         case .notInitialized:
-            watch(projectID: nil)
             respond(id, KataViews.notInitialized(directory: workspace))
         case .failed(let message):
             connection.fail(id, message)
+        case let .loaded(open, readyIDs):
+            respond(id, KataViews.issues(open: open, readyIDs: readyIDs))
+        }
+    }
+
+    private enum Loaded {
+        case loaded(open: [KataIssue], readyIDs: Set<String>)
+        case notInitialized
+        case failed(String)
+    }
+
+    /// Open and ready issues for `workspace`; also points the event watcher
+    /// at its project and refreshes the Status Item.
+    private func load(_ workspace: String) -> Loaded {
+        switch KataCLI.issues(["list"], workspace: workspace) {
+        case .notInitialized:
+            watch(projectID: nil)
+            sendStatus(nil)
+            return .notInitialized
+        case .failed(let message):
+            return .failed(message)
         case .issues(let open):
             var readyIDs: Set<String> = []
             if case .issues(let ready) = KataCLI.issues(["ready"], workspace: workspace) {
                 readyIDs = Set(ready.map(\.shortID))
             }
             watch(projectID: open.first?.projectID)
-            respond(id, KataViews.issues(open: open, readyIDs: readyIDs))
+            sendStatus(KataViews.status(open: open, readyIDs: readyIDs))
+            return .loaded(open: open, readyIDs: readyIDs)
+        }
+    }
+
+    /// Recomputes the Status Item for the focused workspace.
+    func refreshStatus() {
+        guard let workspace = KataViews.workspace(for: focused) else {
+            watch(projectID: nil)
+            return sendStatus(nil)
+        }
+        _ = load(workspace)
+    }
+
+    private var lastStatus: StatusSetParams??
+
+    private func sendStatus(_ status: StatusSetParams?) {
+        guard lastStatus != .some(status) else { return }
+        lastStatus = .some(status)
+        if let status, let params = try? ExtensionProtocolCodec.encode(status) {
+            connection.send(.notification(method: ProtocolMethod.statusSet, params: params))
+        } else {
+            connection.send(.notification(method: ProtocolMethod.statusClear, params: nil))
         }
     }
 
@@ -143,9 +187,10 @@ final class KataServer {
         watcher = nil
         guard let projectID else { return }
         let connection = self.connection
-        let next = KataEventWatcher(projectID: projectID) {
+        let next = KataEventWatcher(projectID: projectID) { [weak self] in
             guard let params = try? ExtensionProtocolCodec.encode(ViewInvalidateParams(view: KataViews.issuesViewID)) else { return }
             connection.send(.notification(method: ProtocolMethod.viewInvalidate, params: params))
+            connection.queue.async { self?.refreshStatus() }
         }
         watcher = next
         next.start()

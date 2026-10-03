@@ -97,26 +97,15 @@ final class PanelViewStore: ObservableObject {
         let key = CallbackKey(view: ref.viewID, button: button)
         guard callbacks.begin(key) else { return }
         let generation = model.generation
-        let params = CallbackParams(view: ref.viewID, callback: button.callback, payload: button.payload, form: form)
         Task { [weak self] in
             guard let self else { return }
-            do {
-                let result = try await self.host.request(
-                    ref.extensionID, method: ProtocolMethod.callback,
-                    params: try ExtensionProtocolCodec.encode(params), timeout: self.callbackTimeout
-                )
-                let decoded = try ExtensionProtocolCodec.decode(CallbackResult.self, from: result)
+            switch await self.host.sendCallback(ref.extensionID, view: ref.viewID, button: button, form: form, timeout: self.callbackTimeout) {
+            case .success(let effects):
                 self.callbacks.succeed(key)
                 let isStale = self.active != ref || self.model.generation != generation
-                self.perform(EffectPlanner.plan(decoded.effects, isStale: isStale), key: key)
-            } catch ExtensionRequestError.rejected(let error) {
-                self.callbacks.fail(key, error.message)
-            } catch ExtensionRequestError.timedOut {
-                self.callbacks.fail(key, "The extension didn't answer in time.")
-            } catch ExtensionRequestError.notRunning, ExtensionRequestError.interrupted {
-                self.callbacks.fail(key, "The extension isn't running.")
-            } catch {
-                self.callbacks.fail(key, "The extension's answer couldn't be read.")
+                self.perform(EffectPlanner.plan(effects, isStale: isStale), key: key)
+            case .failure(let failure):
+                self.callbacks.fail(key, failure.message)
             }
         }
     }

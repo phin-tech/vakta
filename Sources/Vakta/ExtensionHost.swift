@@ -11,6 +11,10 @@ import Combine
 import Foundation
 import VaktaExtensionKit
 
+struct CallbackFailure: Error, Equatable {
+    let message: String
+}
+
 enum ExtensionRequestError: Error, Equatable {
     case notRunning
     case timedOut
@@ -95,6 +99,26 @@ final class ExtensionHost: ObservableObject {
     ) async throws -> JSONValue {
         guard let runtime = runtimes[extensionID], runtime.phase == .running else { throw ExtensionRequestError.notRunning }
         return try await runtime.request(method: method, params: params, timeout: timeout)
+    }
+
+    /// Sends a button's Callback and returns the Effects, or a short,
+    /// user-presentable reason it failed.
+    func sendCallback(
+        _ extensionID: String, view: String, button: ViewButton, form: [String: JSONValue]?, timeout: TimeInterval
+    ) async -> Result<[Effect], CallbackFailure> {
+        do {
+            let params = CallbackParams(view: view, callback: button.callback, payload: button.payload, form: form)
+            let result = try await request(extensionID, method: ProtocolMethod.callback, params: try ExtensionProtocolCodec.encode(params), timeout: timeout)
+            return .success(try ExtensionProtocolCodec.decode(CallbackResult.self, from: result).effects)
+        } catch ExtensionRequestError.rejected(let error) {
+            return .failure(CallbackFailure(message: error.message))
+        } catch ExtensionRequestError.timedOut {
+            return .failure(CallbackFailure(message: "The extension didn't answer in time."))
+        } catch ExtensionRequestError.notRunning, ExtensionRequestError.interrupted {
+            return .failure(CallbackFailure(message: "The extension isn't running."))
+        } catch {
+            return .failure(CallbackFailure(message: "The extension's answer couldn't be read."))
+        }
     }
 
     func notify(_ extensionID: String, method: String, params: JSONValue?) {
