@@ -83,6 +83,19 @@ final class KataServer {
                 return connection.fail(id, failure)
             }
             respond(id, effects: KataCallbacks.claimed(issue))
+        case KataStart.callback:
+            guard let issue = KataCallbacks.issueID(callback.payload) else { return connection.fail(id, code: -32602, "missing issue id") }
+            var title = issue
+            if case .object(let fields)? = callback.payload, case .string(let given)? = fields["title"] { title = given }
+            // Claim it if nobody has; already owned (by anyone) is fine.
+            _ = KataCLI.mutate(["claim", issue, "--if-unowned"], workspace: workspace)
+            if let session = focused?.sessionKey {
+                var map = KataStorage.sessions()
+                map.record(issue, for: session)
+                KataStorage.save(map)
+            }
+            let command = KataStart.command(template: KataStorage.config().agentCommand, id: issue, title: title)
+            respond(id, effects: KataStart.effects(id: issue, workspace: workspace, command: command))
         case KataForms.commentForm, KataForms.closeForm:
             guard let issue = KataCallbacks.issueID(callback.payload) else { return connection.fail(id, code: -32602, "missing issue id") }
             let form = callback.callback == KataForms.commentForm ? KataForms.comment(issue: issue) : KataForms.close(issue: issue)

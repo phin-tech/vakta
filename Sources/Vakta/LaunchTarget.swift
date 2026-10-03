@@ -67,7 +67,7 @@ struct MultiplexerTarget: Equatable {
     /// addressing every tmux subcommand needs, factored out so
     /// `discoveryArgv`/`workspaceListArgv`/`workspaceFocusArgv` can't drift
     /// on how they honor a custom socket.
-    private func tmuxArgv(_ trailingArgs: [String]) -> [String] {
+    func tmuxArgv(_ trailingArgs: [String]) -> [String] {
         var argv = [executable]
         if let tmuxSocketPath {
             argv += ["-S", tmuxSocketPath]

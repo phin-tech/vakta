@@ -90,8 +90,28 @@ final class Stores {
                 guard let sessionID = sessionStore.selectedID else { return }
                 sessionStore.notifier.deliverExtensionNotice(sessionID: sessionID, title: title, body: body ?? "")
             },
-            openPane: { _, _, _ in "This Vakta can't open panes for extensions yet." },
-            openSession: { _, _, _ in "This Vakta can't open sessions for extensions yet." }
+            openPane: { cwd, command, _ in
+                guard let id = sessionStore.selectedID, let session = sessionStore.sessions.first(where: { $0.id == id }) else {
+                    return "No session is focused."
+                }
+                guard case .multiplexer(let target) = LaunchTargetResolver.resolve(session.profile),
+                      let plan = ExtensionLaunchPlanner.panePlan(
+                          target: target, sessionName: session.sessionName, cwd: cwd, command: command)
+                else { return "The focused session isn't running herdr or tmux, so there's no pane to split." }
+                let environment = target.environment.merging(
+                    ["PATH": sessionStore.resolvedPATH, "HOME": NSHomeDirectory()], uniquingKeysWith: { profile, _ in profile }
+                )
+                return await Task.detached { ExtensionPaneLauncher.launch(plan, environment: environment) }.value
+            },
+            openSession: { cwd, command, title in
+                switch ExtensionLaunchPlanner.sessionProfile(cwd: cwd, command: command, title: title) {
+                case .failure(let error):
+                    return error.message
+                case .success(let profile):
+                    _ = sessionStore.createSession(profile: profile, customName: title, workingDirectory: cwd, isTransient: true)
+                    return nil
+                }
+            }
         )
         workspaceRefreshMonitor = WorkspaceRefreshMonitor(
             sessionStore: sessionStore,

@@ -107,11 +107,11 @@ public enum KataViews {
         let ready = sorted.filter { $0.owner == nil && readyIDs.contains($0.shortID) }
         let blocked = sorted.filter { $0.owner == nil && !readyIDs.contains($0.shortID) }
         let sections = [
-            ("In progress", claimed, "circle.lefthalf.filled"),
-            ("Ready", ready, "circle"),
-            ("Blocked", blocked, "lock"),
-        ].compactMap { title, issues, symbol -> ListSection? in
-            issues.isEmpty ? nil : ListSection(title: title, items: issues.map { row($0, symbol: symbol) })
+            ("In progress", claimed, "circle.lefthalf.filled", true),
+            ("Ready", ready, "circle", true),
+            ("Blocked", blocked, "lock", false),
+        ].compactMap { title, issues, symbol, startable -> ListSection? in
+            issues.isEmpty ? nil : ListSection(title: title, items: issues.map { row($0, symbol: symbol, startable: startable) })
         }
         return .list(ListView(
             title: nil, searchPlaceholder: "Filter issues", emptyText: "No open issues",
@@ -136,7 +136,7 @@ public enum KataViews {
         context?.gitRoot ?? context?.cwd
     }
 
-    private static func row(_ issue: KataIssue, symbol: String) -> ListItem {
+    private static func row(_ issue: KataIssue, symbol: String, startable: Bool) -> ListItem {
         let subtitle = [issue.shortID, issue.priority.map { "P\($0)" }, issue.owner.map { "@\($0)" }]
             .compactMap { $0 }.joined(separator: " · ")
         return ListItem(
@@ -145,12 +145,12 @@ public enum KataViews {
             subtitle: subtitle,
             symbol: symbol,
             accessories: issue.labels.prefix(2).map { Accessory(text: $0, symbol: nil) },
-            detail: detail(issue),
-            buttons: buttons(for: issue)
+            detail: detail(issue, startable: startable),
+            buttons: buttons(for: issue, startable: startable)
         )
     }
 
-    private static func detail(_ issue: KataIssue) -> ViewDocument {
+    private static func detail(_ issue: KataIssue, startable: Bool) -> ViewDocument {
         var fields: [DetailView.Field] = []
         if let priority = issue.priority { fields.append(.init(label: "Priority", value: "P\(priority)")) }
         if let owner = issue.owner { fields.append(.init(label: "Owner", value: owner)) }
@@ -158,12 +158,14 @@ public enum KataViews {
         if let parent = issue.parent { fields.append(.init(label: "Parent", value: parent.shortID)) }
         return .detail(DetailView(
             title: "\(issue.shortID) · \(issue.title)", markdown: issue.body, fields: fields,
-            buttons: buttons(for: issue) + KataForms.detailButtons(issue: issue.shortID)
+            buttons: buttons(for: issue, startable: startable) + KataForms.detailButtons(issue: issue.shortID)
         ))
     }
 
-    private static func buttons(for issue: KataIssue) -> [ViewButton] {
-        issue.owner == nil ? [KataCallbacks.claimButton(issue.shortID)] : []
+    /// Start for work that can begin (claimed or ready); Claim while unowned.
+    private static func buttons(for issue: KataIssue, startable: Bool) -> [ViewButton] {
+        (startable ? [KataStart.button(id: issue.shortID, title: issue.title)] : [])
+            + (issue.owner == nil ? [KataCallbacks.claimButton(issue.shortID)] : [])
     }
 }
 

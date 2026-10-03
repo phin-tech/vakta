@@ -124,6 +124,19 @@ Context changed while pending) drop view Effects but keep `toast` and
   `+N` opening a Popover that lists all of them. Clicking a Badge opens its
   Popover. Session rows only, not Workspace rows.
 
+## Kata Extension configuration
+
+`<support>/extension-data/kata/config.json` (optional):
+
+```json
+{"agentCommand": ["claude", "{prompt}"]}
+```
+
+Each argv word may contain `{id}`, `{title}` and `{prompt}`; values are
+substituted inside words, never split into new ones. *Start* claims the
+issue if it's unowned, records which Session started it in `sessions.json`
+(same directory), and opens the agent in a new pane of the focused Session.
+
 ## Code layout
 
 - `VaktaExtensionKit`: a local Swift package with the protocol types, used

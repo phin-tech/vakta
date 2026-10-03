@@ -108,6 +108,6 @@ final class KataFormsTests: XCTestCase {
         guard case .list(let list) = KataViews.issues(open: [issue], readyIDs: ["rd01"]) else { return XCTFail() }
         XCTAssertEqual(list.buttons.map(\.callback), [KataForms.newForm])
         guard case .detail(let detail)? = list.sections.first?.items.first?.detail else { return XCTFail() }
-        XCTAssertEqual(detail.buttons.map(\.callback), [KataCallbacks.claim, KataForms.commentForm, KataForms.closeForm])
+        XCTAssertEqual(detail.buttons.map(\.callback), [KataStart.callback, KataCallbacks.claim, KataForms.commentForm, KataForms.closeForm])
     }
 }

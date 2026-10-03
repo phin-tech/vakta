@@ -83,7 +83,7 @@ final class KataIssuesTests: XCTestCase {
         XCTAssertEqual(row.subtitle, "cl01 · P1 · @sam")
         XCTAssertEqual(row.symbol, "circle.lefthalf.filled")
         XCTAssertEqual(row.accessories.map(\.text), ["extensions", "epic"])
-        XCTAssertEqual(row.buttons, [], "a claimed issue offers no Claim")
+        XCTAssertEqual(row.buttons.map(\.callback), ["start"], "a claimed issue offers Start, not Claim")
         XCTAssertEqual(row.detail, .detail(DetailView(
             title: "cl01 · Title cl01",
             markdown: "Body text",
@@ -92,7 +92,7 @@ final class KataIssuesTests: XCTestCase {
                 .init(label: "Owner", value: "sam"),
                 .init(label: "Labels", value: "extensions, epic, third"),
             ],
-            buttons: KataForms.detailButtons(issue: "cl01")
+            buttons: [KataStart.button(id: "cl01", title: "Title cl01")] + KataForms.detailButtons(issue: "cl01")
         )))
     }
 
@@ -132,9 +132,9 @@ final class KataButtonsTests: XCTestCase {
     func test_unownedIssues_offerClaim_onTheRowAndInTheDetail() {
         guard case .list(let list) = KataViews.issues(open: [issue("rd01"), issue("bl01")], readyIDs: ["rd01"]) else { return XCTFail() }
         for item in list.sections.flatMap(\.items) {
-            XCTAssertEqual(item.buttons, [claim(item.id)], item.id)
+            XCTAssertEqual(item.buttons.last, claim(item.id), item.id)
             guard case .detail(let detail)? = item.detail else { return XCTFail() }
-            XCTAssertEqual(detail.buttons, [claim(item.id)] + KataForms.detailButtons(issue: item.id), item.id)
+            XCTAssertTrue(detail.buttons.contains(claim(item.id)), item.id)
         }
     }
 
