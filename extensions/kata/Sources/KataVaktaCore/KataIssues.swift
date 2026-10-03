@@ -143,7 +143,7 @@ public enum KataViews {
             symbol: symbol,
             accessories: issue.labels.prefix(2).map { Accessory(text: $0, symbol: nil) },
             detail: detail(issue),
-            buttons: []
+            buttons: buttons(for: issue)
         )
     }
 
@@ -153,6 +153,35 @@ public enum KataViews {
         if let owner = issue.owner { fields.append(.init(label: "Owner", value: owner)) }
         if !issue.labels.isEmpty { fields.append(.init(label: "Labels", value: issue.labels.joined(separator: ", "))) }
         if let parent = issue.parent { fields.append(.init(label: "Parent", value: parent.shortID)) }
-        return .detail(DetailView(title: "\(issue.shortID) · \(issue.title)", markdown: issue.body, fields: fields, buttons: []))
+        return .detail(DetailView(title: "\(issue.shortID) · \(issue.title)", markdown: issue.body, fields: fields, buttons: buttons(for: issue)))
+    }
+
+    private static func buttons(for issue: KataIssue) -> [ViewButton] {
+        issue.owner == nil ? [KataCallbacks.claimButton(issue.shortID)] : []
+    }
+}
+
+public enum KataCallbacks {
+    public static let claim = "claim"
+
+    public static func claimed(_ id: String) -> [Effect] {
+        [.toast(text: "Claimed \(id)"), .refresh]
+    }
+
+    /// The issue id in a button payload, if it's a plausible Kata ref (it is
+    /// passed to `kata` as an argument, so never something flag-like).
+    public static func issueID(_ payload: JSONValue?) -> String? {
+        guard case .object(let fields)? = payload, case .string(let id)? = fields["id"],
+              !id.isEmpty, !id.hasPrefix("-"),
+              id.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "#" || $0 == "-" || $0 == "_" })
+        else { return nil }
+        return id
+    }
+
+    static func claimButton(_ id: String) -> ViewButton {
+        ViewButton(
+            title: "Claim", symbol: "hand.raised", callback: claim, payload: .object(["id": .string(id)]),
+            style: .default, confirm: nil, shortcut: "cmd+return"
+        )
     }
 }

@@ -35,6 +35,11 @@ final class KataServer {
                 return connection.fail(id, code: -32602, "invalid view/render params")
             }
             renderView(render.view, id: id)
+        case let .request(id, ProtocolMethod.callback, params):
+            guard let params, let callback = try? ExtensionProtocolCodec.decode(CallbackParams.self, from: params) else {
+                return connection.fail(id, code: -32602, "invalid callback params")
+            }
+            handleCallback(callback, id: id)
         case let .request(id, ProtocolMethod.shutdown, _):
             watcher?.stop()
             connection.respond(to: id, with: .null)
@@ -65,6 +70,29 @@ final class KataServer {
             watch(projectID: open.first?.projectID)
             respond(id, KataViews.issues(open: open, readyIDs: readyIDs))
         }
+    }
+
+    private func handleCallback(_ callback: CallbackParams, id: JSONRPCID) {
+        guard let workspace = KataViews.workspace(for: focused) else {
+            return connection.fail(id, "No focused session.")
+        }
+        switch callback.callback {
+        case KataCallbacks.claim:
+            guard let issue = KataCallbacks.issueID(callback.payload) else { return connection.fail(id, code: -32602, "missing issue id") }
+            if let failure = KataCLI.mutate(["claim", issue, "--if-unowned"], workspace: workspace) {
+                return connection.fail(id, failure)
+            }
+            respond(id, effects: KataCallbacks.claimed(issue))
+        default:
+            connection.fail(id, code: -32601, "unknown action \(callback.callback)")
+        }
+    }
+
+    private func respond(_ id: JSONRPCID, effects: [Effect]) {
+        guard let result = try? ExtensionProtocolCodec.encode(CallbackResult(effects: effects)) else {
+            return connection.fail(id, "couldn't encode the result")
+        }
+        connection.respond(to: id, with: result)
     }
 
     private func respond(_ id: JSONRPCID, _ document: ViewDocument) {

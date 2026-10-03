@@ -56,9 +56,17 @@ struct PanelViewModel: Equatable {
 
     private(set) var content: Content = .loading
     var filter = ""
+    /// One screen above the root list.
+    enum PathEntry: Equatable {
+        /// A list item's own detail (follows live updates of that item).
+        case item(String)
+        /// A document an Extension pushed.
+        case document(ViewDocument)
+    }
+
     private(set) var selectedItemID: String?
-    /// Item ids whose detail is shown, innermost last.
-    private(set) var detailPath: [String] = []
+    /// Screens shown above the root, innermost last.
+    private(set) var path: [PathEntry] = []
     /// Bumped whenever results from earlier requests become stale.
     private(set) var generation = 0
 
@@ -77,8 +85,11 @@ struct PanelViewModel: Equatable {
         if let selected = selectedItemID, item(selected, in: document) == nil {
             selectedItemID = nil
         }
-        if let index = detailPath.firstIndex(where: { item($0, in: document)?.detail == nil }) {
-            detailPath.removeSubrange(index...)
+        if let index = path.firstIndex(where: { entry in
+            if case .item(let id) = entry { return item(id, in: document)?.detail == nil }
+            return false
+        }) {
+            path.removeSubrange(index...)
         }
         return true
     }
@@ -90,7 +101,7 @@ struct PanelViewModel: Equatable {
 
     mutating func markUnavailable(_ message: String) {
         content = .unavailable(message)
-        detailPath = []
+        path = []
     }
 
     /// The focused Session changed: earlier results are stale and the
@@ -100,7 +111,7 @@ struct PanelViewModel: Equatable {
         content = .loading
         filter = ""
         selectedItemID = nil
-        detailPath = []
+        path = []
     }
 
     mutating func select(_ itemID: String?) {
@@ -111,20 +122,40 @@ struct PanelViewModel: Equatable {
     mutating func openDetail(_ itemID: String) {
         selectedItemID = itemID
         guard case .document(let document) = content, item(itemID, in: document)?.detail != nil else { return }
-        detailPath = [itemID]
+        path = [.item(itemID)]
     }
 
     mutating func back() {
-        _ = detailPath.popLast()
+        _ = path.popLast()
     }
+
+    /// Pushes a document an Extension returned (a `push` Effect).
+    mutating func push(_ document: ViewDocument) {
+        guard case .document = content else { return }
+        path.append(.document(document))
+    }
+
+    /// Replaces what's on screen (a `replace` Effect): the innermost screen,
+    /// else the root.
+    mutating func replaceVisible(_ document: ViewDocument) {
+        if path.isEmpty {
+            content = .document(document)
+        } else {
+            path[path.count - 1] = .document(document)
+        }
+    }
+
+    /// Whether anything is open above the root list (item detail or pushed).
+    var isShowingDetail: Bool { !path.isEmpty }
 
     /// What's on screen: the innermost open detail, else the root document.
     var visibleDocument: ViewDocument? {
         guard case .document(let document) = content else { return nil }
-        if let last = detailPath.last, let detail = item(last, in: document)?.detail {
-            return detail
+        switch path.last {
+        case .document(let pushed)?: return pushed
+        case .item(let id)?: return item(id, in: document)?.detail ?? document
+        case nil: return document
         }
-        return document
     }
 
     /// The root list narrowed by `filter`.

@@ -12,16 +12,42 @@ import Combine
 import Foundation
 import VaktaExtensionKit
 
+/// Where the panel's Effects that leave the panel go. Production opens URLs
+/// with NSWorkspace, notifies through the attention notifier, and launches
+/// panes/sessions; tests record them.
+struct PanelEffectSink {
+    var openURL: (URL) -> Void
+    var notify: (_ title: String, _ body: String?) -> Void
+    /// Returns an error message when the launch couldn't happen.
+    var openPane: (_ cwd: String?, _ command: [String], _ title: String?) -> String?
+    var openSession: (_ cwd: String?, _ command: [String], _ title: String?) -> String?
+
+    static let inert = PanelEffectSink(
+        openURL: { _ in }, notify: { _, _ in },
+        openPane: { _, _, _ in "Vakta can't open panes yet." },
+        openSession: { _, _, _ in "Vakta can't open sessions yet." }
+    )
+}
+
 @MainActor
 final class PanelViewStore: ObservableObject {
     @Published private(set) var model = PanelViewModel()
     @Published private(set) var active: PanelViewRef?
+    @Published private(set) var callbacks = CallbackTracker()
+    /// A short confirmation from a `toast` Effect; cleared after a moment.
+    @Published private(set) var toast: String?
+
+    var effectSink: PanelEffectSink = .inert
 
     private let host: ExtensionHost
     private var subscriptions: Set<AnyCancellable> = []
 
-    init(host: ExtensionHost) {
+    private let callbackTimeout: TimeInterval
+    private var toastGeneration = 0
+
+    init(host: ExtensionHost, callbackTimeout: TimeInterval = 30) {
         self.host = host
+        self.callbackTimeout = callbackTimeout
         host.$focusedContext
             .removeDuplicates()
             .dropFirst()
@@ -44,6 +70,7 @@ final class PanelViewStore: ObservableObject {
         guard ref != active else { return }
         active = ref
         model.reset()
+        callbacks = CallbackTracker()
         guard ref != nil else { return }
         if let unavailable = unavailableMessage(for: host.phases) {
             model.markUnavailable(unavailable)
@@ -54,6 +81,70 @@ final class PanelViewStore: ObservableObject {
 
     func refresh() {
         render()
+    }
+
+    func callbackState(_ button: ViewButton) -> CallbackTracker.State {
+        guard let view = active?.viewID else { return .idle }
+        return callbacks.state(CallbackKey(view: view, button: button))
+    }
+
+    /// Sends the button's Callback and carries out the Effects it returns.
+    /// Confirmation (if the button asks for it) happens before this.
+    func press(_ button: ViewButton, form: [String: JSONValue]? = nil) {
+        guard let ref = active else { return }
+        let key = CallbackKey(view: ref.viewID, button: button)
+        guard callbacks.begin(key) else { return }
+        let generation = model.generation
+        let params = CallbackParams(view: ref.viewID, callback: button.callback, payload: button.payload, form: form)
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let result = try await self.host.request(
+                    ref.extensionID, method: ProtocolMethod.callback,
+                    params: try ExtensionProtocolCodec.encode(params), timeout: self.callbackTimeout
+                )
+                let decoded = try ExtensionProtocolCodec.decode(CallbackResult.self, from: result)
+                self.callbacks.succeed(key)
+                let isStale = self.active != ref || self.model.generation != generation
+                self.perform(EffectPlanner.plan(decoded.effects, isStale: isStale), key: key)
+            } catch ExtensionRequestError.rejected(let error) {
+                self.callbacks.fail(key, error.message)
+            } catch ExtensionRequestError.timedOut {
+                self.callbacks.fail(key, "The extension didn't answer in time.")
+            } catch ExtensionRequestError.notRunning, ExtensionRequestError.interrupted {
+                self.callbacks.fail(key, "The extension isn't running.")
+            } catch {
+                self.callbacks.fail(key, "The extension's answer couldn't be read.")
+            }
+        }
+    }
+
+    private func perform(_ actions: [PanelAction], key: CallbackKey) {
+        for action in actions {
+            switch action {
+            case .refresh: render()
+            case .replace(let document): model.replaceVisible(document)
+            case .push(let document): model.push(document)
+            case .pop: model.back()
+            case .toast(let text): show(toast: text)
+            case let .notify(title, body): effectSink.notify(title, body)
+            case .openURL(let url): effectSink.openURL(url)
+            case let .openPane(cwd, command, title):
+                if let failure = effectSink.openPane(cwd, command, title) { callbacks.fail(key, failure) }
+            case let .openSession(cwd, command, title):
+                if let failure = effectSink.openSession(cwd, command, title) { callbacks.fail(key, failure) }
+            }
+        }
+    }
+
+    private func show(toast text: String) {
+        toastGeneration += 1
+        let current = toastGeneration
+        toast = text
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+            guard let self, self.toastGeneration == current else { return }
+            self.toast = nil
+        }
     }
 
     func setFilter(_ filter: String) { model.filter = filter }
@@ -75,7 +166,9 @@ final class PanelViewStore: ObservableObject {
                 )
                 guard self.active == ref else { return }
                 do {
-                    self.model.apply(try ExtensionProtocolCodec.decode(ViewDocument.self, from: result), generation: generation)
+                    if self.model.apply(try ExtensionProtocolCodec.decode(ViewDocument.self, from: result), generation: generation) {
+                        self.callbacks.clearFailures()
+                    }
                 } catch {
                     self.model.fail("The extension sent a view Vakta can't read.", generation: generation)
                 }

@@ -58,6 +58,17 @@ enum KataCLI {
         return KataOutput.decodeIssues(result.stdout.isEmpty ? result.stderr : result.stdout)
     }
 
+    /// Runs a mutating `kata` command; `nil` on success, else kata's message.
+    static func mutate(_ arguments: [String], workspace: String) -> String? {
+        guard let result = run(arguments + ["--json", "--workspace", workspace]) else {
+            return "Couldn't run kata. Is it installed and on your PATH?"
+        }
+        guard result.status != 0 else { return nil }
+        let output = result.stderr.isEmpty ? result.stdout : result.stderr
+        if case .failed(let message) = KataOutput.decodeIssues(output) { return message }
+        return "kata exited with status \(result.status)."
+    }
+
     private final class Collected: @unchecked Sendable {
         private let lock = NSLock()
         private(set) var data = Data()

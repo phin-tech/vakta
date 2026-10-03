@@ -22,6 +22,46 @@ struct ExtensionPanelView: View {
     private var selection: Color { Color(nsColor: sessionStore.terminalSelectionColor) }
 
     var body: some View {
+        content
+            .overlay(alignment: .bottom) { toast }
+            .panelShortcuts(buttons: shortcutButtons, isShowingDetail: store.model.isShowingDetail, back: store.back, press: press)
+    }
+
+    @ViewBuilder
+    private var toast: some View {
+        if let text = store.toast {
+            Text(text)
+                .font(.system(size: 11))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(.regularMaterial, in: Capsule())
+                .padding(.bottom, 10)
+                .transition(.opacity)
+        }
+    }
+
+    /// Buttons whose shortcuts apply now: the visible detail's, or the
+    /// selected row's.
+    private var shortcutButtons: [ViewButton] {
+        switch store.model.visibleDocument {
+        case .detail(let detail)?:
+            return detail.buttons
+        case .form(let form)?:
+            return [form.submit]
+        case .list(let list)?:
+            guard let id = store.model.selectedItemID else { return [] }
+            return list.sections.lazy.flatMap(\.items).first { $0.id == id }?.buttons ?? []
+        default:
+            return []
+        }
+    }
+
+    private func press(_ button: ViewButton) {
+        store.press(button)
+    }
+
+    @ViewBuilder
+    private var content: some View {
         switch store.model.content {
         case .loading:
             placeholder(symbol: "hourglass", text: "Loading…")
@@ -41,7 +81,7 @@ struct ExtensionPanelView: View {
             }
         case .document:
             if let document = store.model.visibleDocument {
-                if store.model.detailPath.isEmpty {
+                if !store.model.isShowingDetail {
                     root(document)
                 } else {
                     detailScreen(document)
@@ -116,6 +156,8 @@ struct ExtensionPanelView: View {
 
     private func detailScreen(_ document: ViewDocument) -> some View {
         VStack(alignment: .leading, spacing: 0) {
+            // No window-wide key equivalent: Escape belongs to the terminal.
+            // `panelShortcuts` handles it while the panel has focus.
             Button {
                 store.back()
             } label: {
@@ -126,7 +168,6 @@ struct ExtensionPanelView: View {
             .foregroundStyle(accent)
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
-            .keyboardShortcut(.cancelAction)
             Divider().opacity(0.5)
             ScrollView {
                 if case .detail(let detail) = document {
@@ -163,6 +204,7 @@ struct ExtensionPanelView: View {
 }
 
 private struct ItemRow: View {
+    @State private var isHovered = false
     let item: ListItem
     let isSelected: Bool
     let terminalStyle: Bool
@@ -202,12 +244,17 @@ private struct ItemRow: View {
                 .padding(.vertical, 1)
                 .background(RoundedRectangle(cornerRadius: terminalStyle ? 0 : 3).fill(Color.primary.opacity(0.06)))
             }
-            if item.detail != nil {
+            if (isHovered || isSelected) && !item.buttons.isEmpty {
+                ForEach(Array(item.buttons.enumerated()), id: \.offset) { _, button in
+                    DocumentButton(button: button, compact: true)
+                }
+            } else if item.detail != nil {
                 Image(systemName: "chevron.right")
                     .font(.system(size: 9))
                     .foregroundStyle(.tertiary)
             }
         }
+        .onHover { isHovered = $0 }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
         .background(
@@ -244,6 +291,13 @@ struct DocumentDetail: View {
                 }
                 .font(.system(size: 11, design: terminalStyle ? .monospaced : .default))
             }
+            if !detail.buttons.isEmpty {
+                HStack(spacing: 6) {
+                    ForEach(Array(detail.buttons.enumerated()), id: \.offset) { _, button in
+                        DocumentButton(button: button, compact: false)
+                    }
+                }
+            }
             if let markdown = detail.markdown {
                 Text(Self.attributed(markdown))
                     .font(.system(size: 11, design: terminalStyle ? .monospaced : .default))
@@ -260,5 +314,134 @@ struct DocumentDetail: View {
     static func attributed(_ markdown: String) -> AttributedString {
         let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
         return (try? AttributedString(markdown: markdown, options: options)) ?? AttributedString(markdown)
+    }
+}
+
+/// A View Document button: asks for confirmation when the document says so,
+/// shows a spinner while its Callback runs and the failure if it fails.
+struct DocumentButton: View {
+    @EnvironmentObject private var store: PanelViewStore
+    let button: ViewButton
+    let compact: Bool
+    @State private var isConfirming = false
+
+    private var state: CallbackTracker.State { store.callbackState(button) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            control
+            if !compact, case .failed(let message) = state {
+                Text(message).font(.system(size: 10)).foregroundStyle(.red).lineLimit(3)
+            }
+        }
+        .confirmationDialog(
+            button.confirm?.title ?? button.title,
+            isPresented: $isConfirming,
+            titleVisibility: .visible
+        ) {
+            Button(button.confirm?.button ?? button.title, role: button.style == .destructive ? .destructive : nil) {
+                store.press(button)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            if let message = button.confirm?.message { Text(message) }
+        }
+    }
+
+    @ViewBuilder
+    private var control: some View {
+        let styled = Button(role: button.style == .destructive ? .destructive : nil, action: activate) {
+            if state == .pending {
+                ProgressView().controlSize(.mini)
+            } else if compact, let symbol = button.symbol {
+                Image(systemName: symbol)
+            } else if let symbol = button.symbol {
+                Label(button.title, systemImage: symbol)
+            } else {
+                Text(button.title)
+            }
+        }
+        .controlSize(.small)
+        .disabled(state == .pending)
+        .help(helpText)
+        .accessibilityLabel(button.title)
+        if button.style == .primary && !compact {
+            styled.buttonStyle(.borderedProminent)
+        } else if compact {
+            styled.buttonStyle(.borderless)
+        } else {
+            styled.buttonStyle(.bordered)
+        }
+    }
+
+    private var helpText: String {
+        var text = button.title
+        if let shortcut = button.shortcut.flatMap(ButtonShortcut.parse) { text += " (\(shortcut.symbol))" }
+        if case .failed(let message) = state { text += " — \(message)" }
+        return text
+    }
+
+    private func activate() {
+        if button.confirm != nil {
+            isConfirming = true
+        } else {
+            store.press(button)
+        }
+    }
+}
+
+private extension View {
+    /// Button shortcuts and Escape-for-Back, active only while the panel has
+    /// keyboard focus (never as window-wide key equivalents, which would take
+    /// keys from the terminal). Needs macOS 14's key-press handling; on
+    /// macOS 13 buttons work by click only.
+    @ViewBuilder
+    func panelShortcuts(
+        buttons: [ViewButton], isShowingDetail: Bool, back: @escaping () -> Void, press: @escaping (ViewButton) -> Void
+    ) -> some View {
+        if #available(macOS 14.0, *) {
+            self
+                .focusable()
+                .focusEffectDisabled()
+                .onKeyPress { keyPress in
+                    if keyPress.key == .escape, keyPress.modifiers.isEmpty, isShowingDetail {
+                        back()
+                        return .handled
+                    }
+                    for button in buttons {
+                        guard let shortcut = button.shortcut.flatMap(ButtonShortcut.parse),
+                              shortcut.matches(keyPress) else { continue }
+                        press(button)
+                        return .handled
+                    }
+                    return .ignored
+                }
+        } else {
+            self
+        }
+    }
+}
+
+@available(macOS 14.0, *)
+private extension ButtonShortcut {
+    func matches(_ keyPress: KeyPress) -> Bool {
+        var pressed: Modifiers = []
+        if keyPress.modifiers.contains(.command) { pressed.insert(.command) }
+        if keyPress.modifiers.contains(.shift) { pressed.insert(.shift) }
+        if keyPress.modifiers.contains(.option) { pressed.insert(.option) }
+        if keyPress.modifiers.contains(.control) { pressed.insert(.control) }
+        guard pressed == modifiers else { return false }
+        switch key {
+        case .character(let character): return keyPress.characters.lowercased() == String(character)
+        case .return: return keyPress.key == .return
+        case .escape: return keyPress.key == .escape
+        case .delete: return keyPress.key == .delete
+        case .tab: return keyPress.key == .tab
+        case .space: return keyPress.key == .space
+        case .up: return keyPress.key == .upArrow
+        case .down: return keyPress.key == .downArrow
+        case .left: return keyPress.key == .leftArrow
+        case .right: return keyPress.key == .rightArrow
+        }
     }
 }

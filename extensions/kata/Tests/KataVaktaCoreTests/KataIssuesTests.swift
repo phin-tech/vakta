@@ -83,6 +83,7 @@ final class KataIssuesTests: XCTestCase {
         XCTAssertEqual(row.subtitle, "cl01 · P1 · @sam")
         XCTAssertEqual(row.symbol, "circle.lefthalf.filled")
         XCTAssertEqual(row.accessories.map(\.text), ["extensions", "epic"])
+        XCTAssertEqual(row.buttons, [], "a claimed issue offers no Claim")
         XCTAssertEqual(row.detail, .detail(DetailView(
             title: "cl01 · Title cl01",
             markdown: "Body text",
@@ -115,5 +116,36 @@ final class KataIssuesTests: XCTestCase {
         XCTAssertEqual(detail.title, "No Kata project here")
         XCTAssertTrue(detail.markdown?.contains("/tmp/x") == true)
         guard case .detail = KataViews.noFocusedSession else { return XCTFail() }
+    }
+}
+
+final class KataButtonsTests: XCTestCase {
+    private func issue(_ id: String, owner: String? = nil) -> KataIssue {
+        KataIssue(shortID: id, projectID: 5, title: id, status: "open", priority: 1, owner: owner, labels: [], body: nil, parent: nil)
+    }
+
+    private let claim = { (id: String) in
+        ViewButton(title: "Claim", symbol: "hand.raised", callback: "claim", payload: .object(["id": .string(id)]),
+                   style: .default, confirm: nil, shortcut: "cmd+return")
+    }
+
+    func test_unownedIssues_offerClaim_onTheRowAndInTheDetail() {
+        guard case .list(let list) = KataViews.issues(open: [issue("rd01"), issue("bl01")], readyIDs: ["rd01"]) else { return XCTFail() }
+        for item in list.sections.flatMap(\.items) {
+            XCTAssertEqual(item.buttons, [claim(item.id)], item.id)
+            guard case .detail(let detail)? = item.detail else { return XCTFail() }
+            XCTAssertEqual(detail.buttons, [claim(item.id)], item.id)
+        }
+    }
+
+    func test_claimEffects_confirmAndRefresh() {
+        XCTAssertEqual(KataCallbacks.claimed("rd01"), [.toast(text: "Claimed rd01"), .refresh])
+    }
+
+    func test_issueID_fromPayload() {
+        XCTAssertEqual(KataCallbacks.issueID(.object(["id": .string("rd01")])), "rd01")
+        XCTAssertNil(KataCallbacks.issueID(.object(["id": .number(3)])))
+        XCTAssertNil(KataCallbacks.issueID(nil))
+        XCTAssertNil(KataCallbacks.issueID(.object(["id": .string("--force")])), "an id that looks like a flag is refused")
     }
 }

@@ -84,6 +84,15 @@ final class Stores {
         )
         extensionContextMonitor = ExtensionContextMonitor(sessionStore: sessionStore, host: extensionHost)
         panelViewStore = PanelViewStore(host: extensionHost)
+        panelViewStore.effectSink = PanelEffectSink(
+            openURL: { NSWorkspace.shared.open($0) },
+            notify: { title, body in
+                guard let sessionID = sessionStore.selectedID else { return }
+                sessionStore.notifier.deliverExtensionNotice(sessionID: sessionID, title: title, body: body ?? "")
+            },
+            openPane: { _, _, _ in "This Vakta can't open panes for extensions yet." },
+            openSession: { _, _, _ in "This Vakta can't open sessions for extensions yet." }
+        )
         workspaceRefreshMonitor = WorkspaceRefreshMonitor(
             sessionStore: sessionStore,
             herdrPreferences: herdrPreferences,

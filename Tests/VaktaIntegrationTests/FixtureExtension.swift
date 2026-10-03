@@ -76,6 +76,21 @@ enum FixtureExtension {
                         {"type": "toast", "text": json.dumps({"payload": params.get("payload"), "form": params.get("form")}, sort_keys=True)}]}})
                 elif name == "hang":
                     pass
+                elif name == "navigate":
+                    send({"jsonrpc": "2.0", "id": ident, "result": {"effects": [
+                        {"type": "push", "document": {"kind": "detail", "title": "Pushed"}}]}})
+                elif name == "back":
+                    send({"jsonrpc": "2.0", "id": ident, "result": {"effects": [{"type": "pop"}, {"type": "toast", "text": "popped"}]}})
+                elif name == "open":
+                    send({"jsonrpc": "2.0", "id": ident, "result": {"effects": [
+                        {"type": "open_url", "url": "https://example.com/issue"}, {"type": "notify", "title": "Opened", "body": "issue"}]}})
+                elif name == "pane":
+                    send({"jsonrpc": "2.0", "id": ident, "result": {"effects": [
+                        {"type": "open_pane", "cwd": "/tmp", "command": ["echo", "hi; rm -rf /"], "title": "fixture"}]}})
+                elif name == "slow":
+                    import time
+                    time.sleep(0.3)
+                    send({"jsonrpc": "2.0", "id": ident, "result": {"effects": [{"type": "refresh"}, {"type": "toast", "text": "slow done"}]}})
                 else:
                     send({"jsonrpc": "2.0", "id": ident, "result": {"effects": []}})
             elif method == "fixture/push":
