@@ -56,15 +56,7 @@ final class StatusItemStore: ObservableObject {
                 extensionID, view: Self.popoverView, button: button, form: nil, timeout: self.callbackTimeout
             )
             guard case .success(let effects) = result else { return }
-            for action in EffectPlanner.plan(effects, isStale: false) {
-                switch action {
-                case .openURL(let url): self.effectSink.openURL(url)
-                case let .notify(title, body): self.effectSink.notify(title, body)
-                case let .openPane(cwd, command, title): _ = await self.effectSink.openPane(cwd, command, title)
-                case let .openSession(cwd, command, title): _ = await self.effectSink.openSession(cwd, command, title)
-                case .refresh, .replace, .push, .pop, .toast: break
-                }
-            }
+            await self.effectSink.performOutsideView(EffectPlanner.plan(effects, isStale: false))
         }
     }
 
@@ -84,5 +76,22 @@ final class StatusItemStore: ObservableObject {
     private func rebuild() {
         let merged = ExtensionStatusItems.merge(raw, order: order)
         if merged != items { items = merged }
+    }
+}
+
+extension PanelEffectSink {
+    /// Carries out the actions that leave a Popover (it has no navigation
+    /// or room for a toast); view actions are skipped.
+    @MainActor
+    func performOutsideView(_ actions: [PanelAction]) async {
+        for action in actions {
+            switch action {
+            case .openURL(let url): openURL(url)
+            case let .notify(title, body): notify(title, body)
+            case let .openPane(cwd, command, title): _ = await openPane(cwd, command, title)
+            case let .openSession(cwd, command, title): _ = await openSession(cwd, command, title)
+            case .refresh, .replace, .push, .pop, .toast: break
+            }
+        }
     }
 }

@@ -32,6 +32,7 @@ final class KataServer {
             contexts = decoded.contexts
             connection.log(.debug, KataServerCore.describe(contexts))
             if KataViews.workspace(for: focused) != previous { refreshStatus() }
+            refreshBadges()
         case let .request(id, ProtocolMethod.viewRender, params):
             guard let params, let render = try? ExtensionProtocolCodec.decode(ViewRenderParams.self, from: params) else {
                 return connection.fail(id, code: -32602, "invalid view/render params")
@@ -104,6 +105,32 @@ final class KataServer {
         _ = load(workspace)
     }
 
+    private var badges: [SessionKey: BadgeSetParams] = [:]
+
+    /// Badges every Session working on an open issue of its own repository.
+    func refreshBadges() {
+        let map = KataStorage.sessions()
+        var openByWorkspace: [String: [KataIssue]] = [:]
+        var next: [SessionKey: BadgeSetParams] = [:]
+        for context in contexts {
+            guard let workspace = KataViews.workspace(for: context) else { continue }
+            if openByWorkspace[workspace] == nil {
+                if case .issues(let open) = KataCLI.issues(["list"], workspace: workspace) {
+                    openByWorkspace[workspace] = open
+                } else {
+                    openByWorkspace[workspace] = []
+                }
+            }
+            let open = openByWorkspace[workspace] ?? []
+            guard let id = KataBadges.issueID(
+                branch: context.branch, sessionKey: context.sessionKey, map: map, openIDs: Set(open.map(\.shortID))
+            ), let issue = open.first(where: { $0.shortID == id }) else { continue }
+            next[context.sessionKey] = KataBadges.badge(for: issue, sessionKey: context.sessionKey)
+        }
+        for message in KataBadges.changes(from: badges, to: next) { connection.send(message) }
+        badges = next
+    }
+
     private var lastStatus: StatusSetParams??
 
     private func sendStatus(_ status: StatusSetParams?) {
@@ -140,6 +167,7 @@ final class KataServer {
             }
             let command = KataStart.command(template: KataStorage.config().agentCommand, id: issue, title: title)
             respond(id, effects: KataStart.effects(id: issue, workspace: workspace, command: command))
+            refreshBadges()
         case KataForms.commentForm, KataForms.closeForm:
             guard let issue = KataCallbacks.issueID(callback.payload) else { return connection.fail(id, code: -32602, "missing issue id") }
             let form = callback.callback == KataForms.commentForm ? KataForms.comment(issue: issue) : KataForms.close(issue: issue)
@@ -190,7 +218,10 @@ final class KataServer {
         let next = KataEventWatcher(projectID: projectID) { [weak self] in
             guard let params = try? ExtensionProtocolCodec.encode(ViewInvalidateParams(view: KataViews.issuesViewID)) else { return }
             connection.send(.notification(method: ProtocolMethod.viewInvalidate, params: params))
-            connection.queue.async { self?.refreshStatus() }
+            connection.queue.async {
+                self?.refreshStatus()
+                self?.refreshBadges()
+            }
         }
         watcher = next
         next.start()

@@ -1,6 +1,6 @@
 # Plan: Extensions
 
-Status: **designed 2026-09-24, not started; tracked as `vakta#3kav`**. Vocabulary is in
+Status: **implemented 2026-10-03 on branch `extensions` (all nine slices, `vakta#3kav`); desktop checks pending** (see [testing.md](testing.md), desktop step 13). Follow-up: `vakta#b3hb` (CLI linking). Vocabulary is in
 [CONTEXT.md](../CONTEXT.md), and the architectural decision is in
 [ADR 0001](adr/0001-out-of-process-extensions.md). Kata is the first
 Extension, and its needs set v1 scope: nothing is added to the protocol

@@ -102,6 +102,7 @@ counts calls is an interaction mock, not a state-based substitute.
 | Extension forms — `yejf` | `PanelFormsTests` -- values seeded from the document, required fields block submit (whitespace doesn't count) with problems shown after an attempt, submission carries every field (text, toggle, picker), an unselected optional picker sends nothing, unsupported fields skipped unless required, edits can't change a field's kind. `ProtocolFixtureTests`/`ProtocolToleranceTests` cover the new list header `buttons` | `PanelViewCallbackShellTests` -- a pushed form blocks an incomplete submit and sends nothing, then sends the edited values with the submit Callback; edits reset when a different form shows. Kata: `KataFormsTests` (Comment/Close/New forms, argv per submission with evidence flags, flag-looking titles after `--`, out-of-range priority dropped, effects, created id decoding, header/detail buttons) plus a stdio smoke run (forms open, validation errors, one real comment posted). Form rendering and text entry are desktop checks |
 | Extension launches — `pd91` | `ExtensionLaunchPlannerTests` -- tmux `split-window -c <cwd> -- argv…` (no shell; cwd optional), herdr `pane split --current --cwd --focus` then `pane run <new id> argv…`, empty command has no plan, herdr split output → new pane id (errors/garbage → nil), new-Session profile shell-quotes every word, defaults its name to the program, rejects empty commands and `{name}` | `ExtensionPaneLauncherShellTests` -- against a real tmux server on a private `-L` socket: the command runs in a new pane, in the requested directory, with `it's; $(not run)` passed through literally; a missing session reports a failure (skipped explicitly when tmux isn't installed). The herdr two-step and `open_session` are desktop checks. Kata: `KataStartTests` (config default/override, prompt, placeholders substituted inside argv words, Start Effects, Session map record/lookup/round trip, Start on ready and claimed issues only) plus a stdio smoke run (custom agent command, sessions.json written, issue claimed) |
 | Extension Status Items — `474s` | `ExtensionStatusItemsTests` -- link order, unknown Extensions dropped, text trimmed and truncated to 20 characters, blank items dropped, items count as content for Automatic visibility (not for Never). Existing `StatusBar*` tests unchanged | `StatusItemStoreShellTests` (real `FixtureExtension`) -- `status/set` shows the item with its Popover, `status/clear` removes it, disabling the Extension removes it, activating a Popover row runs its first button's Callback (open_pane reaches the sink). `PanelViewCallbackShellTests` still pass on the shared `sendCallback` helper. Kata: `KataStatusTests` (count of ready unowned issues, priority order, rows start on activation, none → no item) plus a stdio smoke run (status on focus, clear on a non-Kata directory). Status bar rendering, hover/pin and keyboard Return on a pinned Popover are desktop checks |
+| Extension Session Badges — `ep66` | `SessionBadgesTests` -- the first linked Extension's badge shows, the rest count as `+N`, all listed in link order; text trimmed and truncated to 8 characters with the full text kept for the tooltip; unknown Sessions, unlinked Extensions and blank text show nothing | `SessionBadgeStoreShellTests` (real `FixtureExtension`) -- `badge/set` shows on that Session Key only, `badge/clear` removes it, disabling the Extension removes all its badges, activating a badge Popover row runs its first button. Kata: `KataBadgesTests` (an open issue named in the branch wins, then the issue the Session started while it's open, closed issues drop off, badge text/symbol/detail, set/clear diff) plus a stdio smoke run (a `3kav-…` branch badges `3kav`, switching to `main` clears it). Sidebar badge rendering and its Popover are desktop checks |
 
 ## Desktop regression checklist
 
@@ -235,6 +236,28 @@ configuration. Record the macOS/toolchain/app revision and which steps were chec
     "Mac-style shortcuts" step shows the table and applies the preset; the
     Panes step's shortcut chip then reads ⌘D. Upgrading from 0.3.3 to a 0.3.4
     build shows the new What's New note.
+
+13. Extensions (`vakta#3kav`). Build the Kata Extension once
+    (`swift build -c release --package-path extensions/kata`), then
+    Preferences ▸ Extensions ▸ Link Extension… → `extensions/kata`. Review
+    shows the command, build step and "Approval covers the manifest and
+    ./.build/release/kata-vakta"; approve (developer mode optional) and the
+    row reads Running; View Log opens `extension-logs/kata.log`. Rebuild the
+    Extension with developer mode off: the row asks for approval again. In a
+    session in this repository: the right panel's toggle has a checklist
+    button; Issues lists In progress / Ready / Blocked, filtering works,
+    a row opens its detail (Back returns; Escape goes back only while the
+    panel has focus and never leaves the terminal). Claim, Comment…, Close…
+    and New Issue… work against a disposable Kata project; form fields take
+    normal typing and the terminal keeps every key while it's focused.
+    Start opens the agent in a new pane (herdr and tmux) in the repo root.
+    `kata label add`/`remove` in a terminal updates the panel within a
+    second. The status bar shows "N ready" (Automatic shows the bar for it);
+    hover/click opens the Popover, Return on a pinned row starts it. A
+    session on a `<issue>-…` branch gets that issue's badge in the sidebar,
+    with `+N` when another Extension badges it too. Disable the Extension:
+    its panel shows the unavailable state, and its status item and badges
+    disappear. Quit Vakta: no `kata-vakta` or `kata events` process remains.
 
 Where automated desktop integration exists, record its results in place of the
 equivalent manual step. Keep tests isolated from the user's live sessions.
