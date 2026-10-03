@@ -31,7 +31,8 @@ final class ExtensionContextMonitor {
             sessionStore.fileSidebarRefreshed.eraseToAnyPublisher(),
         ]
         Publishers.MergeMany(changes)
-            .debounce(for: .milliseconds(400), scheduler: DispatchQueue.main)
+            // Just enough to coalesce one switch's burst of publishes.
+            .debounce(for: .milliseconds(50), scheduler: DispatchQueue.main)
             .sink { [weak self] in self?.refresh() }
             .store(in: &subscriptions)
 
@@ -49,14 +50,27 @@ final class ExtensionContextMonitor {
         periodic?.invalidate()
     }
 
+    /// Last gathered context per Session, for the quick first snapshot.
+    private var known: [UUID: ExtensionContext] = [:]
+
+    /// Two passes: the focused Session first (what the panel shows), sent
+    /// at once with the others as last known; then every Session in
+    /// parallel. A newer refresh supersedes both.
     func refresh() {
         generation += 1
         let current = generation
         let inputs = snapshot()
         let path = sessionStore.resolvedPATH
         Task { [weak self] in
+            if let focused = inputs.first(where: \.focused) {
+                let fresh = await Self.gather(focused, path: path)
+                guard let self, self.generation == current else { return }
+                self.known[focused.sessionID] = fresh
+                self.host.updateContexts(ExtensionContextPlanner.focusedFirst(inputs: inputs, fresh: fresh, previous: self.known))
+            }
             let contexts = await Self.gather(inputs, path: path)
             guard let self, self.generation == current else { return }
+            self.known = Dictionary(uniqueKeysWithValues: zip(inputs.map(\.sessionID), contexts))
             self.host.updateContexts(contexts)
         }
     }
@@ -64,6 +78,10 @@ final class ExtensionContextMonitor {
     /// Nonisolated, so the blocking queries run off the main actor.
     private nonisolated static func gather(_ inputs: [ExtensionSessionInput], path: String) async -> [ExtensionContext] {
         ExtensionContextGatherer.gather(inputs, path: path)
+    }
+
+    private nonisolated static func gather(_ input: ExtensionSessionInput, path: String) async -> ExtensionContext {
+        ExtensionContextGatherer.gather(input, path: path)
     }
 
     private func snapshot() -> [ExtensionSessionInput] {

@@ -35,7 +35,7 @@ final class KataServer: @unchecked Sendable {
             contexts = decoded.contexts
             connection.log(.debug, KataServerCore.describe(contexts))
             if KataViews.workspace(for: focused) != previous { refreshStatus() }
-            refreshBadges()
+            scheduleBadges()
         case let .request(id, ProtocolMethod.viewRender, params):
             guard let params, let render = try? ExtensionProtocolCodec.decode(ViewRenderParams.self, from: params) else {
                 return connection.fail(id, code: -32602, "invalid view/render params")
@@ -108,17 +108,24 @@ final class KataServer: @unchecked Sendable {
     /// Open and ready issues for `workspace`, from the cache when fresh.
     private func query(_ workspace: String) -> Result<KataQueryCache.Value, QueryFailure> {
         if let cached = cache.value(for: workspace, at: Date()) { return .success(cached) }
+        // `list` and `ready` are independent: run them side by side.
+        var ready: KataOutput = .issues([])
+        let readyDone = DispatchSemaphore(value: 0)
+        DispatchQueue.global(qos: .userInitiated).async {
+            ready = KataCLI.issues(["ready"], workspace: workspace)
+            readyDone.signal()
+        }
+        let list = KataCLI.issues(["list"], workspace: workspace)
+        readyDone.wait()
         let value: KataQueryCache.Value
-        switch KataCLI.issues(["list"], workspace: workspace) {
+        switch list {
         case .notInitialized:
             value = .notInitialized
         case .failed(let message):
             return .failure(QueryFailure(message: message))
         case .issues(let open):
             var readyIDs: Set<String> = []
-            if case .issues(let ready) = KataCLI.issues(["ready"], workspace: workspace) {
-                readyIDs = Set(ready.map(\.shortID))
-            }
+            if case .issues(let readyIssues) = ready { readyIDs = Set(readyIssues.map(\.shortID)) }
             value = .loaded(open: open, readyIDs: readyIDs)
         }
         cache.store(value, for: workspace, at: Date())
@@ -135,6 +142,19 @@ final class KataServer: @unchecked Sendable {
     }
 
     private var badges: [SessionKey: BadgeSetParams] = [:]
+    private var badgeGeneration = 0
+
+    /// Badges can query every Session's repository; doing that before the
+    /// render request that follows a focus switch would delay the panel.
+    /// Refresh shortly after the burst instead.
+    private func scheduleBadges() {
+        badgeGeneration += 1
+        let generation = badgeGeneration
+        connection.queue.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            guard let self, self.badgeGeneration == generation else { return }
+            self.refreshBadges()
+        }
+    }
 
     /// Badges every Session working on an open issue of its own repository.
     func refreshBadges() {

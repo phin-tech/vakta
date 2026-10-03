@@ -21,8 +21,17 @@ final class ExtensionLog: @unchecked Sendable {
         self.maxBytes = maxBytes
     }
 
+    private static let timestamp: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "HH:mm:ss.SSS"
+        return formatter
+    }()
+
     func append(_ text: String) {
-        let data = Data((text.hasSuffix("\n") ? text : text + "\n").utf8)
+        let stamp = Self.timestamp.string(from: Date())
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: true).map { "\(stamp) \($0)" }
+        let data = Data((lines.joined(separator: "\n") + "\n").utf8)
         queue.async { [url, maxBytes] in
             let manager = FileManager.default
             try? manager.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)

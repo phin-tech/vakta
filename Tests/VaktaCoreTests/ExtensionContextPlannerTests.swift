@@ -77,4 +77,25 @@ final class ExtensionContextPlannerTests: XCTestCase {
         XCTAssertEqual(context.gitRoot, "/repo")
         XCTAssertNil(context.branch)
     }
+
+    func test_focusedFirst_usesTheFreshFocusedContext_andLastKnownOthers_inOrder() {
+        let a = UUID(), b = UUID(), c = UUID()
+        func input(_ id: UUID, _ name: String, focused: Bool) -> ExtensionSessionInput {
+            ExtensionSessionInput(sessionID: id, target: nil, sessionName: name, terminalReportedWorkingDirectory: nil,
+                                  profileWorkingDirectory: nil, focusedWorkspace: nil, focused: focused)
+        }
+        func context(_ id: UUID, cwd: String, focused: Bool) -> ExtensionContext {
+            ExtensionContext(sessionKey: SessionKey(backend: "shell", sessionName: id.uuidString), cwd: cwd, gitRoot: nil,
+                             branch: nil, workspace: nil, focused: focused)
+        }
+        let previous = [a: context(a, cwd: "/old-a", focused: true), b: context(b, cwd: "/b", focused: false)]
+        let fresh = context(b, cwd: "/new-b", focused: true)
+
+        let merged = ExtensionContextPlanner.focusedFirst(
+            inputs: [input(a, "a", focused: false), input(b, "b", focused: true), input(c, "c", focused: false)],
+            fresh: fresh, previous: previous
+        )
+
+        XCTAssertEqual(merged, [context(a, cwd: "/old-a", focused: false), fresh], "c was never gathered, so it waits for the full pass")
+    }
 }

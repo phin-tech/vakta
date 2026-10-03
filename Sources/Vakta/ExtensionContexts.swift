@@ -62,17 +62,46 @@ enum ExtensionContextPlanner {
     }
 }
 
+extension ExtensionContextPlanner {
+    /// The quick first snapshot after a change: the focused Session freshly
+    /// gathered, every other Session as last known (its focus flag updated),
+    /// in `inputs` order. Sessions never gathered yet are left out until the
+    /// full pass.
+    static func focusedFirst(
+        inputs: [ExtensionSessionInput], fresh: ExtensionContext, previous: [UUID: ExtensionContext]
+    ) -> [ExtensionContext] {
+        let focusedID = inputs.first(where: \.focused)?.sessionID
+        return inputs.compactMap { input in
+            if input.sessionID == focusedID { return fresh }
+            guard var known = previous[input.sessionID] else { return nil }
+            known.focused = input.focused
+            return known
+        }
+    }
+}
+
 enum ExtensionContextGatherer {
     /// Blocks on one multiplexer query and up to three git runs per Session.
+    /// Sessions are queried in parallel; the result keeps `inputs` order.
     static func gather(_ inputs: [ExtensionSessionInput], path: String) -> [ExtensionContext] {
-        let environment = ["PATH": path, "HOME": NSHomeDirectory()]
-        return inputs.map { input in
-            let multiplexer = input.target.flatMap {
-                ActivePaneWorkingDirectoryQuery.query(sessionName: input.sessionName, target: $0, path: path)
-            }
-            let cwd = ExtensionContextPlanner.workingDirectory(for: input, multiplexerWorkingDirectory: multiplexer)
-            let checkout = cwd.flatMap { RepoCheckoutQuery.query(directory: $0, environment: environment) }
-            return ExtensionContextPlanner.context(for: input, multiplexerWorkingDirectory: multiplexer, checkout: checkout)
+        var results = [ExtensionContext?](repeating: nil, count: inputs.count)
+        let lock = NSLock()
+        DispatchQueue.concurrentPerform(iterations: inputs.count) { index in
+            let context = gather(inputs[index], path: path)
+            lock.lock()
+            results[index] = context
+            lock.unlock()
         }
+        return results.compactMap { $0 }
+    }
+
+    static func gather(_ input: ExtensionSessionInput, path: String) -> ExtensionContext {
+        let environment = ["PATH": path, "HOME": NSHomeDirectory()]
+        let multiplexer = input.target.flatMap {
+            ActivePaneWorkingDirectoryQuery.query(sessionName: input.sessionName, target: $0, path: path)
+        }
+        let cwd = ExtensionContextPlanner.workingDirectory(for: input, multiplexerWorkingDirectory: multiplexer)
+        let checkout = cwd.flatMap { RepoCheckoutQuery.query(directory: $0, environment: environment) }
+        return ExtensionContextPlanner.context(for: input, multiplexerWorkingDirectory: multiplexer, checkout: checkout)
     }
 }
