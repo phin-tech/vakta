@@ -26,7 +26,8 @@ let package = Package(
             name: "KataVakta",
             dependencies: [
                 "KataVaktaCore",
-                .product(name: "VaktaExtensionKit", package: "VaktaExtensionKit")
+                .product(name: "VaktaExtensionKit", package: "VaktaExtensionKit"),
+                .product(name: "VaktaExtensionServer", package: "VaktaExtensionKit")
             ],
             path: "Sources/KataVakta"
         ),

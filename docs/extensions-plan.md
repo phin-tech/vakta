@@ -151,11 +151,54 @@ issue if it's unowned, records which Session started it in `sessions.json`
 ## Code layout
 
 - `VaktaExtensionKit`: a local Swift package with the protocol types, used
-  by the app and the Kata Extension.
+  by the app and every Swift Extension.
+- `VaktaExtensionServer`: a library in the same package for writing a Swift
+  Extension (see below). Vakta itself doesn't link it.
 - `extensions/protocol/fixtures/*.json`: golden JSON, the real contract.
   Both the kit and the host decoder are tested against it.
-- `extensions/kata/`: a separate SwiftPM package (`kata-vakta`), never a
-  target in the root `Package.swift` or `project.yml`.
+- `extensions/kata/`, `extensions/github/`: separate SwiftPM packages
+  (`kata-vakta`, `vakta-github`), never targets in the root `Package.swift`
+  or `project.yml`.
+
+## Writing a Swift Extension with VaktaExtensionServer
+
+`VaktaExtensionServer` is the stdio runtime shared by the Kata and GitHub
+Extensions, so a new one doesn't copy the protocol loop:
+
+```swift
+import VaktaExtensionServer
+
+let server = ExtensionServer(name: "Kata")
+let kata = KataServer(server: server) // registers handlers in init
+server.run() // reads stdin until Vakta closes it; never returns
+```
+
+Inside the handler object, register against the server rather than parsing
+JSON-RPC directly:
+
+- `server.onRender(viewID) { try renderMyView() }` answers `view/render`.
+- `server.onCallback(name) { params throws -> [Effect] in … }` answers a
+  button's Callback; a thrown `ExtensionError` becomes the error response.
+- `server.onContexts = { previous, current in … }` runs on every Extension
+  Context snapshot; `server.contexts` and `server.focusedContext` hold the
+  latest one between callbacks.
+- `server.onReady` / `server.onShutdown` run around the handshake and
+  `shutdown`.
+
+Publish helpers send a protocol message only when the value actually
+changed, so handlers can call them unconditionally after any state change:
+`setStatus(_:)`, `setBadges(_:)`, `setCommands(_:)`, `notify(title:body:sessionKey:)`,
+`invalidate(view:)`, `update(view:document:)`, `log(_:_:)`. `after(_:_:)`
+schedules work on the server's serial `queue` — the same queue every
+message and callback runs on, so an Extension's state never needs its own
+locking.
+
+Test against `ExtensionHarness` (in the same library) instead of spawning
+the real process: it drives an `ExtensionServer` in memory, feeding it
+JSON-RPC lines and asserting on the lines it would have written to stdout.
+`VaktaExtensionServerTests` in `Packages/VaktaExtensionKit/Tests` shows the
+pattern — routing, error responses, dedupe/diff publishing, and the
+handshake/shutdown lifecycle.
 
 ## Functional core / imperative shell
 

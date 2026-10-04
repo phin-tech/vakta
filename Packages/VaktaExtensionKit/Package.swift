@@ -11,9 +11,14 @@ let package = Package(
         .macOS(.v13)
     ],
     products: [
-        .library(name: "VaktaExtensionKit", targets: ["VaktaExtensionKit"])
+        .library(name: "VaktaExtensionKit", targets: ["VaktaExtensionKit"]),
+        // For writing Swift Extensions: the stdio loop, typed handlers,
+        // publish helpers and a test harness. Vakta itself doesn't link it.
+        .library(name: "VaktaExtensionServer", targets: ["VaktaExtensionServer"])
     ],
     targets: [
-        .target(name: "VaktaExtensionKit", path: "Sources/VaktaExtensionKit")
+        .target(name: "VaktaExtensionKit", path: "Sources/VaktaExtensionKit"),
+        .target(name: "VaktaExtensionServer", dependencies: ["VaktaExtensionKit"], path: "Sources/VaktaExtensionServer"),
+        .testTarget(name: "VaktaExtensionServerTests", dependencies: ["VaktaExtensionServer"], path: "Tests/VaktaExtensionServerTests")
     ]
 )

@@ -28,7 +28,8 @@ let package = Package(
             name: "VaktaGitHub",
             dependencies: [
                 "GitHubCore",
-                .product(name: "VaktaExtensionKit", package: "VaktaExtensionKit")
+                .product(name: "VaktaExtensionKit", package: "VaktaExtensionKit"),
+                .product(name: "VaktaExtensionServer", package: "VaktaExtensionKit")
             ],
             path: "Sources/VaktaGitHub"
         ),
