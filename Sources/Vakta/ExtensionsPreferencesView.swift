@@ -113,6 +113,7 @@ private struct ExtensionSection: View {
                 get: { entry.record.enabled },
                 set: { registry.setEnabled($0, for: entry.record.directory) }
             ))
+            if !entry.record.builtIn {
             Toggle(isOn: Binding(
                 get: { entry.record.developerMode },
                 set: { registry.setDeveloperMode($0, for: entry.record.directory) }
@@ -123,6 +124,7 @@ private struct ExtensionSection: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+            }
             }
             Toggle("Notifications", isOn: Binding(
                 get: { entry.record.notifications },
@@ -144,8 +146,12 @@ private struct ExtensionSection: View {
                     NSWorkspace.shared.activateFileViewerSelecting([entry.directoryURL])
                 }
                 Spacer()
-                Button("Unlink", role: .destructive) {
-                    registry.unlink(entry.record.directory)
+                if entry.record.builtIn {
+                    Text("Built in").font(.caption).foregroundStyle(.secondary)
+                } else {
+                    Button("Unlink", role: .destructive) {
+                        registry.unlink(entry.record.directory)
+                    }
                 }
             }
         } header: {

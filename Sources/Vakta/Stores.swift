@@ -82,7 +82,19 @@ final class Stores {
             pathResolver: resolvedPATH
         )
         let sessionStore = sessionStore
-        extensionRegistry = ExtensionRegistryStore(root: root, path: { sessionStore.resolvedPATH })
+        let isAppBundle = Bundle.main.bundleURL.pathExtension == "app"
+        extensionRegistry = ExtensionRegistryStore(
+            root: root, path: { sessionStore.resolvedPATH },
+            builtInRoots: BuiltInExtensions.roots(
+                bundleURL: Bundle.main.bundleURL,
+                executableURL: Bundle.main.executableURL ?? Bundle.main.bundleURL,
+                fileExists: { FileManager.default.fileExists(atPath: $0) }
+            ),
+            // In a development checkout, only manifests marked builtIn count.
+            builtInsRequireMarker: !isAppBundle
+        )
+        let extensionRegistry = extensionRegistry
+        Task { await extensionRegistry.prepareBuiltIns() }
         extensionHost = ExtensionHost(
             registry: extensionRegistry,
             supportRoot: root,

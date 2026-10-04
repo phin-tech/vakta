@@ -62,7 +62,13 @@ final class ExtensionRegistryStore: ObservableObject {
     /// `path` supplies PATH for build commands, read when a build starts
     /// (the login shell's PATH may still be resolving at launch). It must not
     /// block: it runs on the main actor.
-    init(root: URL, path: @escaping @MainActor () -> String, buildTimeout: TimeInterval = 900) {
+    /// `builtInRoots` are searched for Built-in Extensions (directories with
+    /// a manifest; under a repo `extensions/`, only manifests marked
+    /// `builtIn`).
+    init(
+        root: URL, path: @escaping @MainActor () -> String, buildTimeout: TimeInterval = 900,
+        builtInRoots: [URL] = [], builtInsRequireMarker: Bool = false
+    ) {
         self.root = root
         self.path = path
         self.buildTimeout = buildTimeout
@@ -74,6 +80,40 @@ final class ExtensionRegistryStore: ObservableObject {
             registry = loaded
         } else {
             registry = ExtensionRegistry(records: [])
+        }
+        let builtIns = Self.builtInDirectories(in: builtInRoots, requireMarker: builtInsRequireMarker)
+        let reconciled = BuiltInExtensions.reconcile(registry.records, builtInDirectories: builtIns)
+        if reconciled != registry.records {
+            registry.records = reconciled
+            persist()
+        } else {
+            reload()
+        }
+    }
+
+    private static func builtInDirectories(in roots: [URL], requireMarker: Bool) -> [String] {
+        roots.flatMap { root -> [String] in
+            let children = (try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? []
+            return children.sorted { $0.path < $1.path }.compactMap { child in
+                guard let data = try? Data(contentsOf: child.appendingPathComponent(ExtensionManifest.fileName)),
+                      let manifest = ExtensionManifest.decode(data),
+                      !requireMarker || manifest.builtIn
+                else { return nil }
+                return child.standardizedFileURL.path
+            }
+        }
+    }
+
+    /// Builds Built-in Extensions whose executable is missing (development
+    /// checkouts); they're trusted, so no approval is needed.
+    func prepareBuiltIns() async {
+        for record in registry.records where record.builtIn && record.enabled {
+            guard let data = try? Data(contentsOf: Self.manifestURL(record.directory)),
+                  let manifest = ExtensionManifest.decode(data),
+                  let executable = manifest.executableURL(in: URL(fileURLWithPath: record.directory, isDirectory: true)),
+                  !FileManager.default.fileExists(atPath: executable.path)
+            else { continue }
+            _ = await runBuild(manifest, in: record.directory)
         }
         reload()
     }
@@ -94,8 +134,9 @@ final class ExtensionRegistryStore: ObservableObject {
         return nil
     }
 
+    /// Built-in Extensions can't be unlinked (only disabled).
     func unlink(_ directory: String) {
-        registry.records.removeAll { $0.directory == directory }
+        registry.records.removeAll { $0.directory == directory && !$0.builtIn }
         persist()
     }
 
@@ -125,19 +166,7 @@ final class ExtensionRegistryStore: ObservableObject {
         guard manifest.problems.isEmpty else { return .invalidManifest(manifest.problems) }
 
         let directoryURL = URL(fileURLWithPath: directory, isDirectory: true)
-        let environment = ["PATH": path(), "HOME": NSHomeDirectory()]
-        let timeout = buildTimeout
-        for command in manifest.build {
-            let result = await Task.detached {
-                BoundedProcessRunner.run(
-                    executable: "/usr/bin/env", arguments: command, environment: environment,
-                    timeout: timeout, currentDirectory: directoryURL
-                )
-            }.value
-            if let reason = Self.buildFailure(result) {
-                return .buildFailed(command: command.joined(separator: " "), reason: reason)
-            }
-        }
+        if let failure = await runBuild(manifest, in: directory) { return failure }
 
         guard let executableURL = manifest.executableURL(in: directoryURL),
               let executable = try? Data(contentsOf: executableURL)
@@ -177,6 +206,8 @@ final class ExtensionRegistryStore: ObservableObject {
             return ExtensionEntry(record: record, manifest: manifest, status: .invalid(problems))
         }
         guard record.enabled else { return ExtensionEntry(record: record, manifest: manifest, status: .disabled) }
+        // Built-ins ship inside Vakta and are trusted by its signature.
+        if record.builtIn { return ExtensionEntry(record: record, manifest: manifest, status: .ready) }
 
         let executable = manifest.executableURL(in: URL(fileURLWithPath: record.directory, isDirectory: true))
             .flatMap { try? Data(contentsOf: $0) }
@@ -185,6 +216,24 @@ final class ExtensionRegistryStore: ObservableObject {
         case .trusted: return ExtensionEntry(record: record, manifest: manifest, status: .ready)
         case .needsApproval(let reason): return ExtensionEntry(record: record, manifest: manifest, status: .needsApproval(reason))
         }
+    }
+
+    private func runBuild(_ manifest: ExtensionManifest, in directory: String) async -> ExtensionTrustError? {
+        let directoryURL = URL(fileURLWithPath: directory, isDirectory: true)
+        let environment = ["PATH": path(), "HOME": NSHomeDirectory()]
+        let timeout = buildTimeout
+        for command in manifest.build {
+            let result = await Task.detached {
+                BoundedProcessRunner.run(
+                    executable: "/usr/bin/env", arguments: command, environment: environment,
+                    timeout: timeout, currentDirectory: directoryURL
+                )
+            }.value
+            if let reason = Self.buildFailure(result) {
+                return .buildFailed(command: command.joined(separator: " "), reason: reason)
+            }
+        }
+        return nil
     }
 
     private static func buildFailure(_ result: ProcessResult) -> String? {

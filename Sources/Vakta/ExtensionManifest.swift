@@ -33,6 +33,9 @@ struct ExtensionManifest: Equatable {
     var wantsPanes = false
     /// The raw `contexts` value, kept to report an unknown one.
     var contextsValue: String?
+    /// Marks a repo `extensions/` folder as built in during development
+    /// (`swift run`); honored only inside a built-in root.
+    var builtIn = false
 
     /// Decodes manifest bytes; `nil` when they aren't a manifest at all.
     static func decode(_ data: Data) -> ExtensionManifest? {
@@ -40,7 +43,7 @@ struct ExtensionManifest: Equatable {
         return ExtensionManifest(
             id: file.id, name: file.name, description: file.description, command: file.command,
             build: file.build ?? [], panelViews: file.panelViews ?? [], environment: file.environment ?? [],
-            wantsPanes: file.contexts == "panes", contextsValue: file.contexts
+            wantsPanes: file.contexts == "panes", contextsValue: file.contexts, builtIn: file.builtIn ?? false
         )
     }
 
@@ -100,5 +103,6 @@ struct ExtensionManifest: Equatable {
         var panelViews: [PanelViewDeclaration]?
         var environment: [String]?
         var contexts: String?
+        var builtIn: Bool?
     }
 }

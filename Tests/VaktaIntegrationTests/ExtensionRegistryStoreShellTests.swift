@@ -202,4 +202,58 @@ final class ExtensionRegistryStoreShellTests: XCTestCase {
         XCTAssertTrue(store.entries.isEmpty)
         XCTAssertEqual(try Data(contentsOf: file), garbage)
     }
+
+    // MARK: - Built-in Extensions
+
+    private func makeBuiltIn(_ name: String, marker: Bool, buildScript: String = "printf '#!/bin/sh\\necho hi\\n' > run && chmod +x run") throws -> URL {
+        let builtIns = extensionsDirectory.appendingPathComponent("builtins", isDirectory: true)
+        let directory = builtIns.appendingPathComponent(name, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let manifest = """
+            {"id": "\(name)", "name": "\(name.capitalized)", "command": ["./run"], "builtIn": \(marker),
+             "build": [["sh", "-c", "\(buildScript.replacingOccurrences(of: "\"", with: "\\\""))"]]}
+            """
+        try manifest.write(to: directory.appendingPathComponent(ExtensionManifest.fileName), atomically: true, encoding: .utf8)
+        return builtIns
+    }
+
+    func test_builtIn_isLinkedAutomatically_andReadyWithoutApproval_afterPreparing() async throws {
+        let roots = try makeBuiltIn("github", marker: true)
+        let store = ExtensionRegistryStore(root: root, path: { "/usr/bin:/bin" }, buildTimeout: 30, builtInRoots: [roots], builtInsRequireMarker: true)
+        XCTAssertEqual(store.entries.map(\.manifest?.id), ["github"])
+        XCTAssertTrue(store.entries.first?.record.builtIn == true)
+
+        await store.prepareBuiltIns()
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: roots.appendingPathComponent("github/run").path), "missing executable was built")
+        XCTAssertEqual(store.entries.first?.status, .ready)
+    }
+
+    func test_builtIn_canBeDisabled_butNotUnlinked() throws {
+        let roots = try makeBuiltIn("github", marker: true)
+        let store = ExtensionRegistryStore(root: root, path: { "/usr/bin:/bin" }, builtInRoots: [roots], builtInsRequireMarker: true)
+        let directory = try XCTUnwrap(store.entries.first?.record.directory)
+
+        store.unlink(directory)
+        XCTAssertEqual(store.entries.count, 1)
+
+        store.setEnabled(false, for: directory)
+        let relaunched = ExtensionRegistryStore(root: root, path: { "/usr/bin:/bin" }, builtInRoots: [roots], builtInsRequireMarker: true)
+        XCTAssertEqual(relaunched.entries.first?.status, .disabled)
+    }
+
+    func test_developmentRoot_requiresTheBuiltInMarker() throws {
+        let roots = try makeBuiltIn("kata", marker: false)
+        let store = ExtensionRegistryStore(root: root, path: { "/usr/bin:/bin" }, builtInRoots: [roots], builtInsRequireMarker: true)
+        XCTAssertTrue(store.entries.isEmpty)
+        let bundled = ExtensionRegistryStore(root: root, path: { "/usr/bin:/bin" }, builtInRoots: [roots], builtInsRequireMarker: false)
+        XCTAssertEqual(bundled.entries.map(\.manifest?.id), ["kata"], "inside the app bundle everything there is built in")
+    }
+
+    func test_builtInNoLongerShipped_isDropped() throws {
+        let roots = try makeBuiltIn("github", marker: true)
+        _ = ExtensionRegistryStore(root: root, path: { "/usr/bin:/bin" }, builtInRoots: [roots], builtInsRequireMarker: true)
+        let without = ExtensionRegistryStore(root: root, path: { "/usr/bin:/bin" }, builtInRoots: [], builtInsRequireMarker: true)
+        XCTAssertTrue(without.entries.isEmpty)
+    }
 }
