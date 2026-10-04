@@ -5,7 +5,12 @@
     "gitRoot": "/Users/sam/src/vakta",
     "branch": "3kav-extensions",
     "workspace": {"id": "w2C", "label": "agents"},
-    "focused": true
+    "focused": true,
+    "panes": [
+      {"paneID": "w2C:p1", "workspace": {"id": "w2C", "label": "agents"}, "cwd": "/Users/sam/src/vakta/Sources",
+       "gitRoot": "/Users/sam/src/vakta", "branch": "3kav-extensions", "focused": true},
+      {"paneID": "w2D:p1", "cwd": "/tmp", "focused": false}
+    ]
   },
   {
     "sessionKey": {"backend": "tmux", "sessionName": "scratch"},

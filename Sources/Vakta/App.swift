@@ -380,9 +380,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             sessionStore.$selectedID
         )
         let statusItemStore = stores.statusItemStore
-        statusBarModel.activateExtensionRow = { extensionID, itemID in
-            statusItemStore.activate(extensionID: extensionID, itemID: itemID)
-        }
+        statusBarModel.activateExtensionRow = { key, itemID in statusItemStore.activate(key, itemID: itemID) }
+        statusBarModel.pressExtensionSegment = { key in statusItemStore.pressSegment(key) }
         statusBarObserver = Publishers.CombineLatest4(
             statusBarPreferences.$visibility,
             pullRequestState,

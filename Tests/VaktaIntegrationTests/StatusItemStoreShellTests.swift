@@ -73,7 +73,9 @@ final class StatusItemStoreShellTests: XCTestCase {
     func test_statusSet_showsTheItem_andClearRemovesIt() async throws {
         push(ProtocolMethod.statusSet, try ExtensionProtocolCodec.encode(StatusSetParams(text: "3 ready", symbol: "checklist", popover: popover)))
         try await waitFor("item") { !self.store.items.isEmpty }
-        XCTAssertEqual(store.items, [StatusBarExtensionItem(extensionID: "fixture", text: "3 ready", symbol: "checklist", popover: popover)])
+        XCTAssertEqual(store.items.first?.segments.first?.text, "3 ready")
+        XCTAssertEqual(store.items.first?.segments.first?.popover, popover)
+        XCTAssertEqual(store.items.first?.placement, .trailing)
 
         push(ProtocolMethod.statusClear, nil)
         try await waitFor("cleared") { self.store.items.isEmpty }
@@ -92,7 +94,7 @@ final class StatusItemStoreShellTests: XCTestCase {
         push(ProtocolMethod.statusSet, try ExtensionProtocolCodec.encode(StatusSetParams(text: "1 ready", symbol: nil, popover: popover)))
         try await waitFor("item") { !self.store.items.isEmpty }
 
-        store.activate(extensionID: "fixture", itemID: "one")
+        store.activate(StatusSegmentKey(extensionID: "fixture", index: 0), itemID: "one")
 
         try await waitFor("pane opened") { !self.panes.isEmpty }
         XCTAssertEqual(panes, [["echo", "hi; rm -rf /"]])

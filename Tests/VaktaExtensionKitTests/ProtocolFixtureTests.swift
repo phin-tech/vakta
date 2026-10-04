@@ -39,7 +39,12 @@ final class ProtocolFixtureTests: XCTestCase {
                 gitRoot: "/Users/sam/src/vakta",
                 branch: "3kav-extensions",
                 workspace: WorkspaceRef(id: "w2C", label: "agents"),
-                focused: true
+                focused: true,
+                panes: [
+                    PaneContext(paneID: "w2C:p1", workspace: WorkspaceRef(id: "w2C", label: "agents"), cwd: "/Users/sam/src/vakta/Sources",
+                                gitRoot: "/Users/sam/src/vakta", branch: "3kav-extensions", focused: true),
+                    PaneContext(paneID: "w2D:p1", workspace: nil, cwd: "/tmp", gitRoot: nil, branch: nil, focused: false),
+                ]
             ),
             ExtensionContext(
                 sessionKey: SessionKey(backend: "tmux", sessionName: "scratch"),
@@ -181,13 +186,37 @@ final class ProtocolFixtureTests: XCTestCase {
         ))
     }
 
+    func test_statusSet_leadingSegments_withTintsClickAndAttention() throws {
+        try assertFixture("status-set.segments", .notification(ProtocolMethod.statusSet), StatusSetParams(placement: .leading, segments: [
+            StatusSegment(text: "#42", symbol: "xmark.circle.fill", tint: .failure, help: "Fix login race — checks failing",
+                          url: "https://github.com/phin-tech/vakta/pull/42", attention: true),
+            StatusSegment(text: "3/4", tint: .neutral,
+                          action: ViewButton(title: "Re-run failed", symbol: nil, callback: "rerun", payload: .object(["pr": .number(42)]),
+                                             style: .default, confirm: nil, shortcut: nil),
+                          popover: .detail(DetailView(title: "Checks", markdown: nil, fields: [.init(label: "lint", value: "failing")], buttons: []))),
+        ]))
+    }
+
+    func test_notify() throws {
+        try assertFixture("notify", .notification(ProtocolMethod.notify), NotifyParams(
+            title: "Checks failing on #42", body: "lint, test", sessionKey: vaktaSession
+        ))
+    }
+
+    func test_commandsSet() throws {
+        try assertFixture("commands-set", .notification(ProtocolMethod.commandsSet), CommandsSetParams(commands: [
+            ExtensionCommand(id: "open-42", title: "Open PR #42", symbol: "safari", callback: "open", payload: .object(["pr": .number(42)])),
+            ExtensionCommand(id: "rerun-42", title: "Re-run failed checks on #42", symbol: nil, callback: "rerun", payload: nil),
+        ]))
+    }
+
     func test_statusClear_hasNoParams() throws {
         try assertParamless("status-clear", .notification(method: ProtocolMethod.statusClear, params: nil))
     }
 
     func test_badgeSet_withoutPopover() throws {
         try assertFixture("badge-set", .notification(ProtocolMethod.badgeSet), BadgeSetParams(
-            sessionKey: vaktaSession, text: "fcae", symbol: "circle.fill", popover: nil
+            sessionKey: vaktaSession, text: "fcae", symbol: "circle.fill", tint: .success, popover: nil
         ))
     }
 
@@ -209,7 +238,7 @@ final class ProtocolFixtureTests: XCTestCase {
             "initialize.request", "contexts-changed", "view-render.request", "callback.request", "cancel",
             "shutdown.request", "initialize.response", "view-render.response.list", "view-update.detail",
             "view-invalidate", "callback.response", "error.response", "status-set", "status-clear",
-            "badge-set", "badge-clear", "log",
+            "badge-set", "badge-clear", "log", "status-set.segments", "notify", "commands-set",
         ]
         XCTAssertEqual(Set(ProtocolFixture.allNames), covered)
     }

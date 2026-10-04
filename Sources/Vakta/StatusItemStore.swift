@@ -40,13 +40,23 @@ final class StatusItemStore: ObservableObject {
             .store(in: &subscriptions)
     }
 
-    /// Runs the first button of `itemID`'s row in that Extension's Popover.
-    func activate(extensionID: String, itemID: String) {
-        guard case .list(let list)? = items.first(where: { $0.extensionID == extensionID })?.popover,
+    private func segment(_ key: StatusSegmentKey) -> StatusBarSegment? {
+        items.first(where: { $0.extensionID == key.extensionID })?.segments.first(where: { $0.index == key.index })
+    }
+
+    /// Runs the first button of `itemID`'s row in that segment's Popover.
+    func activate(_ key: StatusSegmentKey, itemID: String) {
+        guard case .list(let list)? = segment(key)?.popover,
               let item = list.sections.lazy.flatMap(\.items).first(where: { $0.id == itemID }),
               let button = item.buttons.first
         else { return }
-        press(extensionID: extensionID, button: button)
+        press(extensionID: key.extensionID, button: button)
+    }
+
+    /// A click on a segment that has an action.
+    func pressSegment(_ key: StatusSegmentKey) {
+        guard let button = segment(key)?.action else { return }
+        press(extensionID: key.extensionID, button: button)
     }
 
     func press(extensionID: String, button: ViewButton) {

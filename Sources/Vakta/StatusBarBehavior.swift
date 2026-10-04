@@ -150,6 +150,7 @@ enum StatusBarPeekPolicy {
     static func shouldPeek(from previous: StatusBarContent?, to current: StatusBarContent) -> Bool {
         guard let previous else { return false }
         if current.attentionElsewhere > previous.attentionElsewhere { return true }
+        if ExtensionStatusItems.gainedAttention(from: previous.extensionItems, to: current.extensionItems) { return true }
         guard let before = previous.pullRequest, let after = current.pullRequest, before.number == after.number else {
             return false
         }

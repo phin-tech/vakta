@@ -39,3 +39,21 @@ final class ExtensionRegistryCodecTests: XCTestCase {
         }
     }
 }
+
+final class ExtensionNotificationPolicyTests: XCTestCase {
+    func test_omittedNotificationsFlag_defaultsOn() {
+        let registry = ExtensionRegistryFileCodec().decode(Data(#"{"version": 1, "records": [{"directory": "/opt/ext"}]}"#.utf8))
+        XCTAssertEqual(registry?.records.first?.notifications, true)
+    }
+
+    func test_shouldDeliver() {
+        func deliver(_ allows: Bool, _ allowed: Bool, aboutSelected: Bool, active: Bool) -> Bool {
+            ExtensionNotificationPolicy.shouldDeliver(extensionAllows: allows, notificationsAllowed: allowed, isAboutSelectedSession: aboutSelected, appActive: active)
+        }
+        XCTAssertTrue(deliver(true, true, aboutSelected: false, active: true))
+        XCTAssertTrue(deliver(true, true, aboutSelected: true, active: false), "you're not looking: Vakta is in the background")
+        XCTAssertFalse(deliver(true, true, aboutSelected: true, active: true), "you're already looking at that Session")
+        XCTAssertFalse(deliver(false, true, aboutSelected: false, active: true), "this Extension's notifications are off")
+        XCTAssertFalse(deliver(true, false, aboutSelected: false, active: true), "notifications are off in Vakta")
+    }
+}

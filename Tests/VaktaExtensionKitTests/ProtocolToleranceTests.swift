@@ -92,6 +92,30 @@ final class ProtocolToleranceTests: XCTestCase {
         )
     }
 
+    // MARK: - Status Items
+
+    func test_legacySingleTextStatus_decodesAsOneNeutralTrailingSegment() throws {
+        XCTAssertEqual(
+            try decode(StatusSetParams.self, #"{"text":"3 ready","symbol":"checklist"}"#),
+            StatusSetParams(placement: .trailing, segments: [StatusSegment(text: "3 ready", symbol: "checklist")])
+        )
+    }
+
+    func test_unknownTintAndPlacement_fallBackToNeutralAndTrailing() throws {
+        XCTAssertEqual(
+            try decode(StatusSetParams.self, #"{"placement":"center","segments":[{"text":"x","tint":"rainbow"}]}"#),
+            StatusSetParams(placement: .trailing, segments: [StatusSegment(text: "x")])
+        )
+        XCTAssertEqual(
+            try decode(BadgeSetParams.self, #"{"sessionKey":{"backend":"herdr","sessionName":"v"},"text":"x","tint":"glow"}"#).tint,
+            .neutral
+        )
+    }
+
+    func test_contextWithoutPanes_hasNilPanes() throws {
+        XCTAssertNil(try decode(ExtensionContext.self, #"{"sessionKey":{"backend":"herdr","sessionName":"v"},"focused":true}"#).panes)
+    }
+
     // MARK: - Shape errors
 
     func test_documentWithoutKind_orEffectWithoutType_isPayloadMismatch() {

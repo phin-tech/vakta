@@ -14,16 +14,19 @@ struct LinkedExtensionRecord: Codable, Equatable {
     var enabled: Bool
     var developerMode: Bool
     var approved: TrustFingerprint?
+    /// Whether the Extension's `notify` messages may show (default on).
+    var notifications: Bool
 
-    init(directory: String, enabled: Bool, developerMode: Bool, approved: TrustFingerprint?) {
+    init(directory: String, enabled: Bool, developerMode: Bool, approved: TrustFingerprint?, notifications: Bool = true) {
         self.directory = directory
         self.enabled = enabled
         self.developerMode = developerMode
         self.approved = approved
+        self.notifications = notifications
     }
 
     private enum CodingKeys: String, CodingKey {
-        case directory, enabled, developerMode, approved
+        case directory, enabled, developerMode, approved, notifications
     }
 
     init(from decoder: Decoder) throws {
@@ -32,7 +35,8 @@ struct LinkedExtensionRecord: Codable, Equatable {
             directory: try container.decode(String.self, forKey: .directory),
             enabled: try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? true,
             developerMode: try container.decodeIfPresent(Bool.self, forKey: .developerMode) ?? false,
-            approved: try container.decodeIfPresent(TrustFingerprint.self, forKey: .approved)
+            approved: try container.decodeIfPresent(TrustFingerprint.self, forKey: .approved),
+            notifications: try container.decodeIfPresent(Bool.self, forKey: .notifications) ?? true
         )
     }
 }

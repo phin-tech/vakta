@@ -107,6 +107,10 @@ final class ExtensionRegistryStore: ObservableObject {
         update(directory) { $0.developerMode = developerMode }
     }
 
+    func setNotifications(_ notifications: Bool, for directory: String) {
+        update(directory) { $0.notifications = notifications }
+    }
+
     /// Runs the manifest's build commands, then records approval of what is
     /// on disk. Only call after the user approved the manifest.
     /// `nil` on success.

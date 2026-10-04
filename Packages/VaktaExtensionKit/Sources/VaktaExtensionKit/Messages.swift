@@ -24,6 +24,8 @@ public enum ProtocolMethod {
     public static let badgeSet = "badge/set"
     public static let badgeClear = "badge/clear"
     public static let log = "log"
+    public static let notify = "notify"
+    public static let commandsSet = "commands/set"
 }
 
 // MARK: - initialize
@@ -97,6 +99,26 @@ public struct WorkspaceRef: Codable, Equatable, Sendable {
     }
 }
 
+/// One pane's location, sent only to Extensions whose manifest asks for
+/// panes (`"contexts": "panes"`).
+public struct PaneContext: Codable, Equatable, Sendable {
+    public var paneID: String
+    public var workspace: WorkspaceRef?
+    public var cwd: String?
+    public var gitRoot: String?
+    public var branch: String?
+    public var focused: Bool
+
+    public init(paneID: String, workspace: WorkspaceRef?, cwd: String?, gitRoot: String?, branch: String?, focused: Bool) {
+        self.paneID = paneID
+        self.workspace = workspace
+        self.cwd = cwd
+        self.gitRoot = gitRoot
+        self.branch = branch
+        self.focused = focused
+    }
+}
+
 public struct ExtensionContext: Codable, Equatable, Sendable {
     public var sessionKey: SessionKey
     public var cwd: String?
@@ -104,10 +126,12 @@ public struct ExtensionContext: Codable, Equatable, Sendable {
     public var branch: String?
     public var workspace: WorkspaceRef?
     public var focused: Bool
+    /// Every pane in the Session; `nil` unless the Extension opted in.
+    public var panes: [PaneContext]?
 
     public init(
         sessionKey: SessionKey, cwd: String?, gitRoot: String?, branch: String?,
-        workspace: WorkspaceRef?, focused: Bool
+        workspace: WorkspaceRef?, focused: Bool, panes: [PaneContext]? = nil
     ) {
         self.sessionKey = sessionKey
         self.cwd = cwd
@@ -115,6 +139,7 @@ public struct ExtensionContext: Codable, Equatable, Sendable {
         self.branch = branch
         self.workspace = workspace
         self.focused = focused
+        self.panes = panes
     }
 }
 
@@ -188,28 +213,74 @@ public struct ViewInvalidateParams: Codable, Equatable, Sendable {
 
 // MARK: - Status Item, Session Badges, log
 
-public struct StatusSetParams: Codable, Equatable, Sendable {
+/// One piece of a Status Item.
+public struct StatusSegment: Equatable, Sendable {
+    /// Vakta picks the actual colors (green stays reserved for "ready").
+    public enum Tint: String, Sendable {
+        case neutral, success, warning, failure
+    }
+
     public var text: String
     public var symbol: String?
+    public var tint: Tint
+    public var help: String?
+    /// Clicking the segment sends this button's Callback.
+    public var action: ViewButton?
+    /// Clicking the segment opens this http(s) URL (when there's no action).
+    public var url: String?
     public var popover: ViewDocument?
+    /// Turning this on peeks an Auto-hide status bar.
+    public var attention: Bool
 
-    public init(text: String, symbol: String?, popover: ViewDocument?) {
+    public init(
+        text: String, symbol: String? = nil, tint: Tint = .neutral, help: String? = nil, action: ViewButton? = nil,
+        url: String? = nil, popover: ViewDocument? = nil, attention: Bool = false
+    ) {
         self.text = text
         self.symbol = symbol
+        self.tint = tint
+        self.help = help
+        self.action = action
+        self.url = url
         self.popover = popover
+        self.attention = attention
     }
 }
 
-public struct BadgeSetParams: Codable, Equatable, Sendable {
+public struct StatusSetParams: Equatable, Sendable {
+    public enum Placement: String, Sendable {
+        /// Beside the focused pane's branch, on the left.
+        case leading
+        /// The right side, for summaries.
+        case trailing
+    }
+
+    public var placement: Placement
+    public var segments: [StatusSegment]
+
+    public init(placement: Placement, segments: [StatusSegment]) {
+        self.placement = placement
+        self.segments = segments
+    }
+
+    /// The original single-text item: one neutral trailing segment.
+    public init(text: String, symbol: String?, popover: ViewDocument?) {
+        self.init(placement: .trailing, segments: [StatusSegment(text: text, symbol: symbol, popover: popover)])
+    }
+}
+
+public struct BadgeSetParams: Equatable, Sendable {
     public var sessionKey: SessionKey
     public var text: String
     public var symbol: String?
+    public var tint: StatusSegment.Tint
     public var popover: ViewDocument?
 
-    public init(sessionKey: SessionKey, text: String, symbol: String?, popover: ViewDocument?) {
+    public init(sessionKey: SessionKey, text: String, symbol: String?, tint: StatusSegment.Tint = .neutral, popover: ViewDocument?) {
         self.sessionKey = sessionKey
         self.text = text
         self.symbol = symbol
+        self.tint = tint
         self.popover = popover
     }
 }
@@ -219,6 +290,46 @@ public struct BadgeClearParams: Codable, Equatable, Sendable {
 
     public init(sessionKey: SessionKey) {
         self.sessionKey = sessionKey
+    }
+}
+
+/// A notification an Extension asks for; Vakta decides whether to show it.
+public struct NotifyParams: Codable, Equatable, Sendable {
+    public var title: String
+    public var body: String?
+    /// The Session it's about (clicking surfaces it; suppressed while you're looking at it).
+    public var sessionKey: SessionKey?
+
+    public init(title: String, body: String?, sessionKey: SessionKey?) {
+        self.title = title
+        self.body = body
+        self.sessionKey = sessionKey
+    }
+}
+
+/// A ⌘K Command an Extension offers while it applies.
+public struct ExtensionCommand: Codable, Equatable, Sendable {
+    public var id: String
+    public var title: String
+    public var symbol: String?
+    public var callback: String
+    public var payload: JSONValue?
+
+    public init(id: String, title: String, symbol: String?, callback: String, payload: JSONValue?) {
+        self.id = id
+        self.title = title
+        self.symbol = symbol
+        self.callback = callback
+        self.payload = payload
+    }
+}
+
+/// The full set of an Extension's current Commands (replaces the previous set).
+public struct CommandsSetParams: Codable, Equatable, Sendable {
+    public var commands: [ExtensionCommand]
+
+    public init(commands: [ExtensionCommand]) {
+        self.commands = commands
     }
 }
 

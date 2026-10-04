@@ -8,13 +8,16 @@
 //
 
 import SwiftUI
+import VaktaExtensionKit
 
 @MainActor
 final class StatusBarViewModel: ObservableObject {
     @Published var content = StatusBarContent(branch: nil, pullRequest: nil, attentionElsewhere: 0)
     var openURL: (String) -> Void = { _ in }
     /// Runs an Extension Popover row (its first button).
-    var activateExtensionRow: (_ extensionID: String, _ itemID: String) -> Void = { _, _ in }
+    var activateExtensionRow: (_ segment: StatusSegmentKey, _ itemID: String) -> Void = { _, _ in }
+    /// A click on an Extension segment with an action.
+    var pressExtensionSegment: (_ segment: StatusSegmentKey) -> Void = { _ in }
 
     /// True while any list is open (hovered or pinned); Auto-hide holds the
     /// bar revealed meanwhile. Hover-opened lists are tracked per popover, so
@@ -73,8 +76,8 @@ final class StatusBarViewModel: ObservableObject {
             let rows = rows(for: pinned)
             if let index = StatusBarListKey.moved(selection, by: 0, count: rows.count), selection != nil,
                let row = rows[index] {
-                if case .extension(let extensionID) = pinned {
-                    activateExtensionRow(extensionID, row)
+                if case .extensionSegment(let key) = pinned {
+                    activateExtensionRow(key, row)
                 } else {
                     openURL(row)
                 }
@@ -90,8 +93,9 @@ final class StatusBarViewModel: ObservableObject {
         switch popover {
         case .checks: return content.pullRequest?.checks.map(\.url) ?? []
         case .pullRequests: return content.pullRequestGroups.flatMap { $0.pullRequests.map { Optional($0.url) } }
-        case .extension(let extensionID):
-            guard case .list(let list)? = content.extensionItems.first(where: { $0.extensionID == extensionID })?.popover else { return [] }
+        case .extensionSegment(let key):
+            guard case .list(let list)? = content.extensionItems.first(where: { $0.extensionID == key.extensionID })?
+                .segments.first(where: { $0.index == key.index })?.popover else { return [] }
             return list.sections.flatMap { $0.items.map { Optional($0.id) } }
         }
     }
@@ -105,8 +109,8 @@ final class StatusBarViewModel: ObservableObject {
 enum StatusBarPopover: Hashable {
     case checks
     case pullRequests
-    /// An Extension Status Item's Popover, by manifest id.
-    case `extension`(String)
+    /// An Extension Status Segment's Popover.
+    case extensionSegment(StatusSegmentKey)
 }
 
 struct StatusBarView: View {
@@ -161,22 +165,9 @@ struct StatusBarView: View {
                     )
                 }
             }
+            extensionSegments(content.extensionItems.filter { $0.placement == .leading })
             Spacer(minLength: 8)
-            ForEach(content.extensionItems) { item in
-                HStack(spacing: 3) {
-                    if let symbol = item.symbol { Image(systemName: symbol) }
-                    Text(item.text)
-                }
-                .foregroundStyle(.secondary)
-                .accessibilityElement(children: .combine)
-                .listPopover(.extension(item.extensionID), model: model, isEnabled: item.popover != nil) {
-                    ExtensionStatusPopover(
-                        item: item,
-                        selection: model.pinned == .extension(item.extensionID) ? model.selection : nil,
-                        activate: { itemID in model.activateExtensionRow(item.extensionID, itemID) }
-                    )
-                }
-            }
+            extensionSegments(content.extensionItems.filter { $0.placement == .trailing })
             if content.showsPullRequestList || model.pinned == .pullRequests {
                 let glyph = content.listGlyph ?? .noChecks
                 HStack(spacing: 3) {
@@ -203,6 +194,40 @@ struct StatusBarView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .overlay(alignment: .top) {
             Rectangle().fill(Color(nsColor: .separatorColor)).frame(height: 0.5)
+        }
+    }
+
+    @ViewBuilder
+    private func extensionSegments(_ items: [StatusBarExtensionItem]) -> some View {
+        ForEach(items) { item in
+            HStack(spacing: 5) {
+                ForEach(item.segments) { segment in
+                    let key = StatusSegmentKey(extensionID: item.extensionID, index: segment.index)
+                    ExtensionSegmentLabel(segment: segment) {
+                        if segment.action != nil {
+                            model.pressExtensionSegment(key)
+                        } else if let url = segment.url {
+                            model.openURL(url.absoluteString)
+                        }
+                    }
+                    .listPopover(.extensionSegment(key), model: model, isEnabled: segment.popover != nil) {
+                        ExtensionStatusPopover(
+                            popover: segment.popover,
+                            selection: model.pinned == .extensionSegment(key) ? model.selection : nil,
+                            activate: { itemID in model.activateExtensionRow(key, itemID) }
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    static func color(for tint: StatusSegment.Tint) -> Color {
+        switch tint {
+        case .success: return .green
+        case .warning: return .yellow
+        case .failure: return .red
+        case .neutral: return .secondary
         }
     }
 
@@ -549,14 +574,41 @@ final class StatusBarHoverStrip: NSView {
 /// An Extension Status Item's Popover: its list (or detail) View Document.
 /// Clicking a row, or Return on the selected one, runs the row's first
 /// button.
+/// One Extension Status Segment: tinted symbol and text; clickable when the
+/// segment has an action or a URL.
+private struct ExtensionSegmentLabel: View {
+    let segment: StatusBarSegment
+    let click: () -> Void
+
+    var body: some View {
+        let label = HStack(spacing: 3) {
+            if let symbol = segment.symbol {
+                Image(systemName: symbol).foregroundStyle(StatusBarView.color(for: segment.tint))
+            }
+            Text(segment.text)
+                .foregroundStyle(segment.tint == .neutral ? Color.secondary : Color.primary)
+        }
+        Group {
+            if segment.action != nil || segment.url != nil {
+                Button(action: click) { label }.buttonStyle(.plain)
+            } else {
+                label
+            }
+        }
+        .help(segment.popover == nil ? (segment.help ?? "") : "")
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(segment.help ?? segment.text)
+    }
+}
+
 private struct ExtensionStatusPopover: View {
-    let item: StatusBarExtensionItem
+    let popover: ViewDocument?
     let selection: Int?
     let activate: (String) -> Void
 
     var body: some View {
         Group {
-            switch item.popover {
+            switch popover {
             case .list(let list)?:
                 let rows = list.sections.flatMap { section in section.items.map { (section.title, $0) } }
                 ScrollView {

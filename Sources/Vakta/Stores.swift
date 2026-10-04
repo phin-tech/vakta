@@ -33,6 +33,7 @@ final class Stores {
     let panelViewStore: PanelViewStore
     let statusItemStore: StatusItemStore
     let sessionBadgeStore: SessionBadgeStore
+    let extensionNotifier: ExtensionNotifier
     let persistenceFailures = PersistenceFailureCenter()
     let preferencesRouter = PreferencesRouter()
 
@@ -123,6 +124,22 @@ final class Stores {
                     _ = sessionStore.createSession(profile: profile, customName: title, workingDirectory: cwd, isTransient: true)
                     return nil
                 }
+            }
+        )
+        let notificationSettings = notificationSettings
+        extensionNotifier = ExtensionNotifier(
+            host: extensionHost,
+            registry: extensionRegistry,
+            notifier: sessionStore.notifier,
+            notificationsAllowed: { notificationSettings.notifyOnAttention },
+            selectedSessionID: { sessionStore.selectedID },
+            appActive: { NSApp.isActive },
+            sessionID: { key in
+                sessionStore.sessions.first { session in
+                    let backend: MultiplexerTarget.Backend?
+                    if case .multiplexer(let target) = LaunchTargetResolver.resolve(session.profile) { backend = target.backend } else { backend = nil }
+                    return ExtensionContextPlanner.sessionKey(backend: backend, sessionName: session.sessionName, sessionID: session.id) == key
+                }?.id
             }
         )
         panelViewStore.effectSink = effectSink

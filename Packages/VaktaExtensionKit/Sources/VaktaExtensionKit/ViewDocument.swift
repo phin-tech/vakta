@@ -605,3 +605,89 @@ extension Effect: Codable {
         }
     }
 }
+
+extension StatusSegment: Codable {
+    private enum CodingKeys: String, CodingKey {
+        case text, symbol, tint, help, action, url, popover, attention
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            text: try container.decode(String.self, forKey: .text),
+            symbol: try container.decodeIfPresent(String.self, forKey: .symbol),
+            tint: (try container.decodeIfPresent(String.self, forKey: .tint)).flatMap(Tint.init(rawValue:)) ?? .neutral,
+            help: try container.decodeIfPresent(String.self, forKey: .help),
+            action: try container.decodeIfPresent(ViewButton.self, forKey: .action),
+            url: try container.decodeIfPresent(String.self, forKey: .url),
+            popover: try container.decodeIfPresent(ViewDocument.self, forKey: .popover),
+            attention: try container.decodeIfPresent(Bool.self, forKey: .attention) ?? false
+        )
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(text, forKey: .text)
+        try container.encodeIfPresent(symbol, forKey: .symbol)
+        try container.encode(tint.rawValue, forKey: .tint)
+        try container.encodeIfPresent(help, forKey: .help)
+        try container.encodeIfPresent(action, forKey: .action)
+        try container.encodeIfPresent(url, forKey: .url)
+        try container.encodeIfPresent(popover, forKey: .popover)
+        try container.encode(attention, forKey: .attention)
+    }
+}
+
+extension StatusSetParams: Codable {
+    private enum CodingKeys: String, CodingKey {
+        case placement, segments, text, symbol, popover
+    }
+
+    /// Accepts the original single-text shape (`text`, `symbol`, `popover`)
+    /// as one neutral trailing segment.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let placement = (try container.decodeIfPresent(String.self, forKey: .placement)).flatMap(Placement.init(rawValue:)) ?? .trailing
+        if let segments = try container.decodeIfPresent([StatusSegment].self, forKey: .segments) {
+            self.init(placement: placement, segments: segments)
+        } else {
+            self.init(placement: placement, segments: [StatusSegment(
+                text: try container.decode(String.self, forKey: .text),
+                symbol: try container.decodeIfPresent(String.self, forKey: .symbol),
+                popover: try container.decodeIfPresent(ViewDocument.self, forKey: .popover)
+            )])
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(placement.rawValue, forKey: .placement)
+        try container.encode(segments, forKey: .segments)
+    }
+}
+
+extension BadgeSetParams: Codable {
+    private enum CodingKeys: String, CodingKey {
+        case sessionKey, text, symbol, tint, popover
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            sessionKey: try container.decode(SessionKey.self, forKey: .sessionKey),
+            text: try container.decode(String.self, forKey: .text),
+            symbol: try container.decodeIfPresent(String.self, forKey: .symbol),
+            tint: (try container.decodeIfPresent(String.self, forKey: .tint)).flatMap(StatusSegment.Tint.init(rawValue:)) ?? .neutral,
+            popover: try container.decodeIfPresent(ViewDocument.self, forKey: .popover)
+        )
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(sessionKey, forKey: .sessionKey)
+        try container.encode(text, forKey: .text)
+        try container.encodeIfPresent(symbol, forKey: .symbol)
+        try container.encode(tint.rawValue, forKey: .tint)
+        try container.encodeIfPresent(popover, forKey: .popover)
+    }
+}

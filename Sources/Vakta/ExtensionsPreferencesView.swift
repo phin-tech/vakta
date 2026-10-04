@@ -124,6 +124,10 @@ private struct ExtensionSection: View {
                         .foregroundStyle(.secondary)
                 }
             }
+            Toggle("Notifications", isOn: Binding(
+                get: { entry.record.notifications },
+                set: { registry.setNotifications($0, for: entry.record.directory) }
+            ))
             HStack {
                 if let id = entry.manifest?.id, entry.status == .ready {
                     Button("Restart") { host.restart(id) }
