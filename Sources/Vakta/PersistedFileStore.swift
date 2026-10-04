@@ -181,6 +181,54 @@ struct JSONCodec<Payload: Codable>: FilePayloadCodec {
 struct StoredKeybindingsPayload: Codable, Equatable {
     var version: Int
     var bindings: [Keybinding]
+
+    init(version: Int, bindings: [Keybinding]) {
+        self.version = version
+        self.bindings = bindings
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case version, bindings
+    }
+
+    /// Bindings for a retired command (see `LossyKeybinding`) are dropped;
+    /// any other unknown command still fails the file, so an older build
+    /// never discards (and later overwrites) a newer build's bindings.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        version = try container.decode(Int.self, forKey: .version)
+        bindings = try container.decode([LossyKeybinding].self, forKey: .bindings).compactMap(\.binding)
+    }
+}
+
+/// Decodes a binding, or nothing when its command was retired; a binding
+/// that fails for any other reason still throws.
+struct LossyKeybinding: Decodable {
+    /// Commands removed from Vakta whose saved bindings are dropped on load.
+    /// The pull request commands moved to the GitHub Extension (⌘K Commands).
+    static let retiredCommands: Set<String> = ["openPullRequest", "showPullRequests"]
+
+    let binding: Keybinding?
+
+    private struct AnyKey: CodingKey {
+        var stringValue: String
+        var intValue: Int? { nil }
+        init?(stringValue: String) { self.stringValue = stringValue }
+        init?(intValue: Int) { nil }
+    }
+
+    init(from decoder: Decoder) throws {
+        do {
+            binding = try Keybinding(from: decoder)
+        } catch {
+            let container = try decoder.container(keyedBy: AnyKey.self)
+            let action = try? container.nestedContainer(keyedBy: AnyKey.self, forKey: AnyKey(stringValue: "action")!)
+            guard let names = action?.allKeys.map(\.stringValue), !names.isEmpty,
+                  names.allSatisfy(Self.retiredCommands.contains)
+            else { throw error }
+            binding = nil
+        }
+    }
 }
 
 /// Decodes/migrates the keybindings file for `PersistedFileStore`, replacing
@@ -202,8 +250,8 @@ struct KeybindingFileCodec: FilePayloadCodec {
             return stored
         }
         // Legacy: a bare array written before the versioned envelope existed.
-        if let legacy = try? JSONDecoder().decode([Keybinding].self, from: data) {
-            return StoredKeybindingsPayload(version: 1, bindings: legacy)
+        if let legacy = try? JSONDecoder().decode([LossyKeybinding].self, from: data) {
+            return StoredKeybindingsPayload(version: 1, bindings: legacy.compactMap(\.binding))
         }
         return nil
     }

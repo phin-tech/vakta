@@ -144,16 +144,10 @@ enum StatusBarDockPlanner {
 }
 
 enum StatusBarPeekPolicy {
-    /// Peek when the focused PR settles into a different state (not when it
-    /// merely goes back to pending), or when more other PRs need attention.
-    /// Never on first observation or when focus moves to another PR.
+    /// Peek when an Extension's segment newly asks for attention (for
+    /// example a PR whose checks just failed). Never on first observation.
     static func shouldPeek(from previous: StatusBarContent?, to current: StatusBarContent) -> Bool {
         guard let previous else { return false }
-        if current.attentionElsewhere > previous.attentionElsewhere { return true }
-        if ExtensionStatusItems.gainedAttention(from: previous.extensionItems, to: current.extensionItems) { return true }
-        guard let before = previous.pullRequest, let after = current.pullRequest, before.number == after.number else {
-            return false
-        }
-        return after.glyph != before.glyph && after.glyph != .pending && after.glyph != .noChecks
+        return ExtensionStatusItems.gainedAttention(from: previous.extensionItems, to: current.extensionItems)
     }
 }

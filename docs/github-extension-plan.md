@@ -1,6 +1,6 @@
 # Plan: GitHub PR Extension
 
-Status: **designed 2026-10-03, not started; tracked as `vakta#szqg`.** Builds on the Extensions
+Status: **implemented 2026-10-03 on branch `extensions` (`vakta#szqg`); desktop checks pending (testing.md step 11).** The built-in PR status is gone. Builds on the Extensions
 platform ([extensions-plan.md](extensions-plan.md)); vocabulary in
 [CONTEXT.md](../CONTEXT.md).
 
@@ -26,6 +26,7 @@ adds a panel, badges, actions and ⌘K Commands.
 | 8 | Panel View "Pull Requests": PRs for branches open in any pane, grouped by repo, focused repo first. A repo-wide inbox is later work. |
 | 9 | Actions (no merge in v1): open, check out in a new pane, re-run failed checks, fix with an agent (configurable command, like Kata's Start), copy link, mark ready / convert to draft. |
 | 10 | **Commands**: Extensions push ⌘K Commands live (`commands/set`); a Command exists only while it applies and runs a Callback. |
+| — | Found while building: a Status Segment may override its item's placement (PR status needs a leading part and a trailing summary); a `copy_text` Effect for Copy Link; saved key bindings for the removed PR commands are dropped, while other unknown commands still keep the file untouched. |
 | 12 | Session Badge: the focused pane's PR (`#42` + tinted state), else the Session's worst-state PR; its Popover lists the Session's PRs. Badges gain the semantic tint. |
 | — | Defaults taken without a question: the app's own PR commands are removed (stale key bindings dropped by migration); per-Extension notification switch, on by default; code in `extensions/github` on `VaktaExtensionKit`. |
 

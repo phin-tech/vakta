@@ -44,7 +44,7 @@ final class ExtensionContextPlannerTests: XCTestCase {
         let context = ExtensionContextPlanner.context(
             for: input(terminal: "/osc7", profile: "/profile", workspace: Workspace(id: "w2C", label: "agents", focused: true), focused: true),
             multiplexerWorkingDirectory: .workingDirectory("/repo/Sources"),
-            checkout: RepoCheckout(root: "/repo", branch: "3kav-extensions", config: [:])
+            checkout: RepoCheckout(root: "/repo", branch: "3kav-extensions")
         )
         XCTAssertEqual(context, ExtensionContext(
             sessionKey: SessionKey(backend: "shell", sessionName: sessionID.uuidString),
@@ -72,7 +72,7 @@ final class ExtensionContextPlannerTests: XCTestCase {
     func test_context_detachedHead_hasRootButNoBranch() {
         let context = ExtensionContextPlanner.context(
             for: input(terminal: "/repo"), multiplexerWorkingDirectory: nil,
-            checkout: RepoCheckout(root: "/repo", branch: nil, config: [:])
+            checkout: RepoCheckout(root: "/repo", branch: nil)
         )
         XCTAssertEqual(context.gitRoot, "/repo")
         XCTAssertNil(context.branch)

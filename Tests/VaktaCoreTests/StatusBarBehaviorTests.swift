@@ -187,33 +187,4 @@ final class StatusBarBehaviorTests: XCTestCase {
         XCTAssertFalse(docked(dockedState, wants: false, 0.1, visibility: .hide).isDocked)
         XCTAssertFalse(docked(dockedState, wants: false, 0.1, visibility: .autoHide).isDocked)
     }
-
-    // MARK: peek policy
-
-    private func content(number: Int?, glyph: StatusBarGlyph = .pending, attention: Int = 0) -> StatusBarContent {
-        StatusBarContent(
-            branch: "b",
-            pullRequest: number.map { StatusBarPullRequest(number: $0, url: "u", title: "t", isDraft: false, glyph: glyph) },
-            attentionElsewhere: attention
-        )
-    }
-
-    func test_peek_whenFocusedPullRequestSettlesIntoANewState() {
-        XCTAssertTrue(StatusBarPeekPolicy.shouldPeek(from: content(number: 1, glyph: .pending), to: content(number: 1, glyph: .failing)))
-        XCTAssertTrue(StatusBarPeekPolicy.shouldPeek(from: content(number: 1, glyph: .failing), to: content(number: 1, glyph: .passing)))
-        XCTAssertTrue(StatusBarPeekPolicy.shouldPeek(from: content(number: 1, glyph: .pending), to: content(number: 1, glyph: .changesRequested)))
-    }
-
-    func test_noPeek_forPendingSameStateOrADifferentPullRequest() {
-        XCTAssertFalse(StatusBarPeekPolicy.shouldPeek(from: content(number: 1, glyph: .passing), to: content(number: 1, glyph: .pending)))
-        XCTAssertFalse(StatusBarPeekPolicy.shouldPeek(from: content(number: 1, glyph: .failing), to: content(number: 1, glyph: .failing)))
-        XCTAssertFalse(StatusBarPeekPolicy.shouldPeek(from: content(number: 1, glyph: .pending), to: content(number: 2, glyph: .failing)))
-        XCTAssertFalse(StatusBarPeekPolicy.shouldPeek(from: nil, to: content(number: 1, glyph: .failing)))
-        XCTAssertFalse(StatusBarPeekPolicy.shouldPeek(from: content(number: nil), to: content(number: 1, glyph: .failing)))
-    }
-
-    func test_peek_whenMoreOtherPullRequestsNeedAttention() {
-        XCTAssertTrue(StatusBarPeekPolicy.shouldPeek(from: content(number: nil, attention: 0), to: content(number: nil, attention: 1)))
-        XCTAssertFalse(StatusBarPeekPolicy.shouldPeek(from: content(number: nil, attention: 2), to: content(number: nil, attention: 1)))
-    }
 }

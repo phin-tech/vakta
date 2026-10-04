@@ -39,6 +39,20 @@ final class KeybindingFileCodecTests: XCTestCase {
         XCTAssertEqual(codec.decode(data), StoredKeybindingsPayload(version: 2, bindings: []))
     }
 
+    /// A binding for a command this build no longer has (the removed "Open
+    /// Pull Request" / "Show Pull Requests") is dropped; the rest load.
+    func test_decode_dropsBindingsForRemovedCommands_keepingTheRest() throws {
+        let kept = try String(decoding: JSONEncoder().encode(binding(5)), as: UTF8.self)
+        let json = """
+            {"version": \(KeybindingFileCodec.currentVersion), "bindings": [
+              {"modifierMask": 1048576, "keyCode": 15, "action": {"openPullRequest": {}}},
+              \(kept),
+              {"modifierMask": 1048576, "keyCode": 37, "action": {"showPullRequests": {}}}
+            ]}
+            """
+        XCTAssertEqual(codec.decode(Data(json.utf8)), StoredKeybindingsPayload(version: KeybindingFileCodec.currentVersion, bindings: [binding(5)]))
+    }
+
     func test_decode_malformedJSON_returnsNil() {
         let data = Data("not json at all {".utf8)
         XCTAssertNil(codec.decode(data))

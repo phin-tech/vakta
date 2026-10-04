@@ -74,7 +74,7 @@ final class ExtensionStatusItemsTests: XCTestCase {
     }
 
     func test_extensionItems_countAsContent_forAutomaticVisibility() {
-        var content = StatusBarContent(branch: nil, pullRequest: nil, attentionElsewhere: 0)
+        var content = StatusBarContent()
         XCTAssertTrue(content.isEmpty)
         content.extensionItems = ExtensionStatusItems.merge(["kata": item("3 ready")], order: ["kata"])
         XCTAssertFalse(content.isEmpty)
@@ -83,7 +83,7 @@ final class ExtensionStatusItemsTests: XCTestCase {
     }
 
     func test_peekPolicy_peeksWhenAnExtensionSegmentGainsAttention() {
-        var before = StatusBarContent(branch: "main", pullRequest: nil, attentionElsewhere: 0)
+        var before = StatusBarContent()
         before.extensionItems = ExtensionStatusItems.merge(["gh": StatusSetParams(placement: .leading, segments: [StatusSegment(text: "#1")])], order: ["gh"])
         var after = before
         after.extensionItems = ExtensionStatusItems.merge(["gh": StatusSetParams(placement: .leading, segments: [StatusSegment(text: "#1", attention: true)])], order: ["gh"])

@@ -28,7 +28,7 @@ final class PaneContextsTests: XCTestCase {
         ]
         let contexts = ExtensionContextPlanner.paneContexts(
             panes: panes,
-            checkouts: ["/repo/Sources": RepoCheckout(root: "/repo", branch: "fix-login", config: [:]), "/tmp": nil],
+            checkouts: ["/repo/Sources": RepoCheckout(root: "/repo", branch: "fix-login"), "/tmp": nil],
             workspaces: [Workspace(id: "w2C", label: "agents", focused: true)]
         )
         XCTAssertEqual(contexts, [
