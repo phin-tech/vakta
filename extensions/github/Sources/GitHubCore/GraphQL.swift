@@ -86,6 +86,17 @@ public enum PullRequestResponse {
         guard let root = object["data"] as? [String: Any] else {
             return .failure(.graphQL((errors.first?["message"] as? String) ?? "GitHub returned no data."))
         }
+        // A field-level error (one aliased repository/branch failed inside an
+        // otherwise-successful response) leaves that field null; without this,
+        // it reads as GitHub confirming no open PR, overwriting a previously
+        // known one and flickering the panel every time it recurs.
+        let erroredPaths: [[String]] = errors.compactMap { ($0["path"] as? [Any])?.compactMap { $0 as? String } }
+        func erroredAlias(_ parts: [String]) -> Bool {
+            erroredPaths.contains { path in
+                let shared = min(path.count, parts.count)
+                return shared > 0 && Array(path.prefix(shared)) == Array(parts.prefix(shared))
+            }
+        }
         var result = PullRequestResult(pullRequests: [:], rateRemaining: nil, rateResetsAt: nil)
         if let rate = root["rateLimit"] as? [String: Any] {
             result.rateRemaining = rate["remaining"] as? Int
@@ -93,6 +104,7 @@ public enum PullRequestResponse {
         }
         for (alias, target) in query.targets {
             let parts = alias.split(separator: ".").map(String.init)
+            guard !erroredAlias(parts) else { continue }
             let nodes = ((root[parts[0]] as? [String: Any])?[parts[1]] as? [String: Any])?["nodes"] as? [[String: Any]] ?? []
             let match = nodes.compactMap(pullRequest).first {
                 $0.headBranch == target.branch && $0.headOwner.caseInsensitiveCompare(target.headOwner) == .orderedSame

@@ -63,6 +63,28 @@ final class GraphQLAndPlannerTests: XCTestCase {
         XCTAssertNotNil(result.rateResetsAt)
     }
 
+    /// A field-level GraphQL error (one aliased repository/branch timed out
+    /// or hit a transient resolver error) must not be read as "confirmed no
+    /// open PR" -- that overwrites a previously-known PR and causes the
+    /// panel to flicker every time GitHub partially fails a batched query.
+    func test_parse_fieldLevelError_omitsThatTarget_butStillResolvesTheOthers() throws {
+        let fix = PullRequestTarget(repository: vakta, branch: "fix", headOwner: "sam")
+        let lonely = PullRequestTarget(repository: vakta, branch: "lonely", headOwner: "sam")
+        let query = PullRequestQuery(targets: [fix, lonely])
+        let body = #"""
+            {"data": {"rateLimit": {"remaining": 4990, "resetAt": "2026-10-03T21:00:00Z"},
+              "r0": {
+                "b0": null,
+                "b1": {"nodes": []}
+              }},
+             "errors": [{"message": "Something went wrong while executing your query.", "path": ["r0", "b0"]}]}
+            """#
+        let result = try PullRequestResponse.parse(Data(body.utf8), for: query).get()
+        XCTAssertFalse(result.pullRequests.keys.contains(fix), "a field error must leave the target out entirely, not resolve it to \"no PR\"")
+        let lonelyResult = try XCTUnwrap(result.pullRequests[lonely], "the alias without an error still resolves")
+        XCTAssertNil(lonelyResult, "queried and confirmed to have no PR")
+    }
+
     func test_parse_errors() {
         let query = PullRequestQuery(targets: [PullRequestTarget(repository: vakta, branch: "b", headOwner: "o")])
         XCTAssertEqual(PullRequestResponse.parse(Data(#"{"message": "Bad credentials"}"#.utf8), for: query).failure, .unauthorized)
