@@ -38,6 +38,13 @@ targets:
         NSHighResolutionCapable: true
         NSPrincipalClass: NSApplication
         LSApplicationCategoryType: public.app-category.developer-tools
+    postBuildScripts:
+      # Built-in Extensions (docs/github-extension-plan.md): build each and
+      # copy it into Contents/Extensions, signed with the app's identity.
+      - name: Embed Built-in Extensions
+        basedOnDependencyAnalysis: false
+        script: |
+          "$SRCROOT/scripts/embed_builtin_extensions.sh" "$SRCROOT" "$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH" "${EXPANDED_CODE_SIGN_IDENTITY:--}"
     entitlements:
       path: Vakta/Vakta.entitlements
       properties:
