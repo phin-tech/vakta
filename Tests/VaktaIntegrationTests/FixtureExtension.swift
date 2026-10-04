@@ -49,7 +49,9 @@ enum FixtureExtension {
             elif method == "contexts/changed":
                 names = [c["sessionKey"]["sessionName"] for c in params.get("contexts", [])]
                 focused = next((c["sessionKey"]["sessionName"] for c in params.get("contexts", []) if c.get("focused")), "none")
+                panes = [c.get("panes") for c in params.get("contexts", [])]
                 log("contexts:" + ",".join(names))
+                log("panes:" + ",".join("none" if p is None else str(len(p)) for p in panes))
                 flag = os.path.join(root, ".crashed-once")
                 if mode == "crash-once" and not os.path.exists(flag):
                     open(flag, "w").close()
@@ -110,14 +112,16 @@ enum FixtureExtension {
 
     /// Writes the fixture Extension (manifest + script) into `directory`.
     @discardableResult
-    static func make(in directory: URL, id: String = "fixture", environment: [String] = []) throws -> ExtensionFixturePaths {
+    static func make(
+        in directory: URL, id: String = "fixture", environment: [String] = [], contexts: String? = nil
+    ) throws -> ExtensionFixturePaths {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let scriptURL = directory.appendingPathComponent("run.py")
         try script.write(to: scriptURL, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
         let environmentJSON = "[" + environment.map { "\"\($0)\"" }.joined(separator: ",") + "]"
         let manifest = """
-            {"id": "\(id)", "name": "Fixture", "command": ["./run.py"], "environment": \(environmentJSON),
+            {"id": "\(id)", "name": "Fixture", "command": ["./run.py"], "environment": \(environmentJSON),\(contexts.map { " \"contexts\": \"\($0)\"," } ?? "")
              "panelViews": [{"id": "items", "title": "Items", "symbol": "list.bullet"}]}
             """
         try manifest.write(to: directory.appendingPathComponent("vakta-extension.json"), atomically: true, encoding: .utf8)

@@ -121,7 +121,8 @@ final class ExtensionContextMonitor {
                 self.known[focused.sessionID] = fresh
                 self.host.updateContexts(ExtensionContextPlanner.focusedFirst(inputs: inputs, fresh: fresh, previous: self.known))
             }
-            let contexts = await Self.gather(inputs, path: path)
+            let includingPanes = self?.host.wantsPanes ?? false
+            let contexts = await Self.gather(inputs, path: path, includingPanes: includingPanes)
             guard let self, self.generation == current else { return }
             self.known = Dictionary(uniqueKeysWithValues: zip(inputs.map(\.sessionID), contexts))
             self.host.updateContexts(contexts)
@@ -129,8 +130,10 @@ final class ExtensionContextMonitor {
     }
 
     /// Nonisolated, so the blocking queries run off the main actor.
-    private nonisolated static func gather(_ inputs: [ExtensionSessionInput], path: String) async -> [ExtensionContext] {
-        ExtensionContextGatherer.gather(inputs, path: path)
+    private nonisolated static func gather(
+        _ inputs: [ExtensionSessionInput], path: String, includingPanes: Bool
+    ) async -> [ExtensionContext] {
+        ExtensionContextGatherer.gather(inputs, path: path, includingPanes: includingPanes)
     }
 
     private nonisolated static func gather(_ input: ExtensionSessionInput, path: String) async -> ExtensionContext {
@@ -152,7 +155,8 @@ final class ExtensionContextMonitor {
                 terminalReportedWorkingDirectory: session.viewState.workingDirectory,
                 profileWorkingDirectory: session.profile.workingDirectory,
                 focusedWorkspace: sessionStore.workspaces[session.id]?.first(where: \.focused),
-                focused: session.id == sessionStore.selectedID
+                focused: session.id == sessionStore.selectedID,
+                workspaces: sessionStore.workspaces[session.id] ?? []
             )
         }
     }

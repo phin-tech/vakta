@@ -70,6 +70,28 @@ final class ExtensionPaneLauncherShellTests: XCTestCase {
         XCTAssertEqual(paneCount(), 2)
     }
 
+    func test_gatherWithPanes_listsEveryPane_withItsCheckout() throws {
+        let repo = directory.appendingPathComponent("repo", isDirectory: true)
+        try FileManager.default.createDirectory(at: repo, withIntermediateDirectories: true)
+        _ = BoundedProcessRunner.run(executable: "/usr/bin/env", arguments: ["git", "-C", repo.path, "init", "-q", "-b", "fix-login"],
+                                     environment: environment, timeout: 10)
+        _ = BoundedProcessRunner.run(executable: "/usr/bin/env",
+                                     arguments: ["tmux", "-L", socket, "split-window", "-t", "work", "-c", repo.path, "sleep 30"],
+                                     environment: environment, timeout: 5)
+        let input = ExtensionSessionInput(sessionID: UUID(), target: try target(), sessionName: "work",
+                                          terminalReportedWorkingDirectory: nil, profileWorkingDirectory: nil,
+                                          focusedWorkspace: nil, focused: true)
+
+        let contexts = ExtensionContextGatherer.gather([input], path: environment["PATH"]!, includingPanes: true)
+
+        let panes = try XCTUnwrap(contexts.first?.panes)
+        XCTAssertEqual(panes.count, 2)
+        let repoPane = try XCTUnwrap(panes.first { $0.cwd.map { URL(fileURLWithPath: $0).resolvingSymlinksInPath().path } == repo.path })
+        XCTAssertEqual(repoPane.branch, "fix-login")
+        XCTAssertNotNil(repoPane.workspace)
+        XCTAssertNil(ExtensionContextGatherer.gather([input], path: environment["PATH"]!).first?.panes, "not listed unless asked")
+    }
+
     func test_openPane_inAMissingSession_reportsWhy() throws {
         let plan = try XCTUnwrap(ExtensionLaunchPlanner.panePlan(target: try target(), sessionName: "nope", cwd: nil, command: ["true"]))
         XCTAssertNotNil(ExtensionPaneLauncher.launch(plan, environment: environment))

@@ -78,12 +78,18 @@ final class ExtensionHost: ObservableObject {
         let focused = contexts.first(where: \.focused)
         if focused != focusedContext { focusedContext = focused }
         for runtime in runtimes.values where runtime.phase == .running {
-            runtime.sendContexts(contexts)
+            runtime.sendContexts(ExtensionContextPlanner.contexts(contexts, includingPanes: runtime.wantsPanes))
         }
     }
 
     func restart(_ extensionID: String) {
         runtimes[extensionID]?.restart()
+    }
+
+    /// Whether any running Extension asked for Pane Contexts (so they're
+    /// worth gathering).
+    var wantsPanes: Bool {
+        runtimes.values.contains { $0.wantsPanes && $0.isActive }
     }
 
     /// The login-shell environment changed (it finished resolving): restart
@@ -172,6 +178,7 @@ final class ExtensionHost: ObservableObject {
                 arguments: Array(manifest.command.dropFirst()),
                 approval: entry.record.approved,
                 declaredEnvironment: manifest.environment,
+                wantsPanes: manifest.wantsPanes,
                 environment: childEnvironment(for: id, directory: entry.directoryURL, declared: manifest.environment),
                 log: ExtensionLog(url: logURL(for: id)),
                 supervisor: ExtensionSupervisor(policy: policy, initialize: initializeParams)
@@ -180,7 +187,7 @@ final class ExtensionHost: ObservableObject {
                 guard let self, let runtime, self.runtimes[id] === runtime else { return }
                 self.phases[id] = phase
                 if phase == .running {
-                    runtime.sendContexts(self.contexts)
+                    runtime.sendContexts(ExtensionContextPlanner.contexts(self.contexts, includingPanes: runtime.wantsPanes))
                     self.ready.send(id)
                 } else {
                     self.stopped.send(id)
@@ -246,6 +253,7 @@ final class ExtensionRuntime {
     let directory: URL
     let approval: TrustFingerprint?
     let declaredEnvironment: [String]
+    let wantsPanes: Bool
     var onPhase: ((ExtensionSupervisor.Phase) -> Void)?
     var onMessage: ((JSONRPCMessage) -> Void)?
 
@@ -271,9 +279,11 @@ final class ExtensionRuntime {
 
     init(
         id: String, directory: URL, executable: URL, arguments: [String], approval: TrustFingerprint?,
-        declaredEnvironment: [String] = [], environment: [String: String], log: ExtensionLog, supervisor: ExtensionSupervisor
+        declaredEnvironment: [String] = [], wantsPanes: Bool = false, environment: [String: String], log: ExtensionLog,
+        supervisor: ExtensionSupervisor
     ) {
         self.declaredEnvironment = declaredEnvironment
+        self.wantsPanes = wantsPanes
         self.id = id
         self.directory = directory
         self.executable = executable

@@ -182,6 +182,41 @@ final class ExtensionHostShellTests: XCTestCase {
         XCTAssertEqual(seen?["PATH"] as? String, "/usr/bin:/bin")
     }
 
+    // MARK: - Pane Contexts
+
+    private func contextWithPanes(_ name: String) -> ExtensionContext {
+        ExtensionContext(
+            sessionKey: SessionKey(backend: "herdr", sessionName: name), cwd: "/tmp", gitRoot: nil, branch: nil, workspace: nil,
+            focused: true, panes: [PaneContext(paneID: "p1", workspace: nil, cwd: "/tmp", gitRoot: nil, branch: nil, focused: true)]
+        )
+    }
+
+    func test_panes_reachOnlyExtensionsThatAskForThem() async throws {
+        let host = try await startHost()
+        try await waitFor("running") { phase(host) == .running }
+        XCTAssertFalse(host.wantsPanes)
+        host.updateContexts([contextWithPanes("vakta")])
+        // The handshake's empty snapshot logs a bare "panes:"; wait for ours.
+        try await waitFor("contexts logged") { log(host).contains("panes:none") || log(host).contains("panes:1") }
+        XCTAssertFalse(log(host).contains("panes:1"), "a sessions-only Extension never sees panes")
+    }
+
+    func test_optedInExtension_receivesPanes() async throws {
+        let paths = try FixtureExtension.make(in: base.appendingPathComponent("fixture"), contexts: "panes")
+        XCTAssertNil(registry.link(directory: paths.directory))
+        let error = await registry.trust(paths.directory.standardizedFileURL.path)
+        XCTAssertNil(error)
+        let host = ExtensionHost(
+            registry: registry, supportRoot: base.appendingPathComponent("support"), hostVersion: "test", policy: fastPolicy,
+            environment: { ["PATH": "/usr/bin:/bin", "HOME": NSHomeDirectory()] }
+        )
+        self.host = host
+        try await waitFor("running") { phase(host) == .running }
+        XCTAssertTrue(host.wantsPanes)
+        host.updateContexts([contextWithPanes("vakta")])
+        try await waitFor("panes logged") { log(host).contains("panes:1") }
+    }
+
     // MARK: - Messages
 
     func test_request_returnsTheResult() async throws {

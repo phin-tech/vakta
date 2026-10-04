@@ -29,13 +29,18 @@ struct ExtensionManifest: Equatable {
     /// Environment variables the Extension receives from the user's login
     /// shell: exact names or `PREFIX_*`. Everything else is withheld.
     var environment: [String] = []
+    /// `true` when the manifest asks for Pane Contexts (`"contexts": "panes"`).
+    var wantsPanes = false
+    /// The raw `contexts` value, kept to report an unknown one.
+    var contextsValue: String?
 
     /// Decodes manifest bytes; `nil` when they aren't a manifest at all.
     static func decode(_ data: Data) -> ExtensionManifest? {
         guard let file = try? JSONDecoder().decode(File.self, from: data) else { return nil }
         return ExtensionManifest(
             id: file.id, name: file.name, description: file.description, command: file.command,
-            build: file.build ?? [], panelViews: file.panelViews ?? [], environment: file.environment ?? []
+            build: file.build ?? [], panelViews: file.panelViews ?? [], environment: file.environment ?? [],
+            wantsPanes: file.contexts == "panes", contextsValue: file.contexts
         )
     }
 
@@ -67,6 +72,9 @@ struct ExtensionManifest: Equatable {
                 found.append("Panel view \(view.id) needs a title and a symbol.")
             }
         }
+        if let contextsValue, !["sessions", "panes"].contains(contextsValue) {
+            found.append("Contexts must be \"sessions\" or \"panes\".")
+        }
         return found + ExtensionEnvironment.problems(environment)
     }
 
@@ -91,5 +99,6 @@ struct ExtensionManifest: Equatable {
         var build: [[String]]?
         var panelViews: [PanelViewDeclaration]?
         var environment: [String]?
+        var contexts: String?
     }
 }

@@ -20,6 +20,8 @@ struct ExtensionSessionInput: Equatable {
     var profileWorkingDirectory: String?
     var focusedWorkspace: Workspace?
     var focused: Bool
+    /// The Session's Workspaces as the sidebar knows them (for labels).
+    var workspaces: [Workspace] = []
 }
 
 enum ExtensionContextPlanner {
@@ -72,7 +74,12 @@ extension ExtensionContextPlanner {
     ) -> [ExtensionContext] {
         let focusedID = inputs.first(where: \.focused)?.sessionID
         return inputs.compactMap { input in
-            if input.sessionID == focusedID { return fresh }
+            if input.sessionID == focusedID {
+                // The quick pass doesn't list panes; keep the last known ones.
+                var merged = fresh
+                if merged.panes == nil { merged.panes = previous[input.sessionID]?.panes }
+                return merged
+            }
             guard var known = previous[input.sessionID] else { return nil }
             known.focused = input.focused
             return known
@@ -80,19 +87,62 @@ extension ExtensionContextPlanner {
     }
 }
 
+extension ExtensionContextPlanner {
+    /// Pane Contexts from a Session's pane listing and the checkouts of
+    /// their directories; Workspace labels come from what the sidebar knows,
+    /// else the id.
+    static func paneContexts(panes: [Pane], checkouts: [String: RepoCheckout?], workspaces: [Workspace]) -> [PaneContext] {
+        panes.map { pane in
+            let checkout = pane.workingDirectory.flatMap { checkouts[$0] ?? nil }
+            let workspace = pane.workspaceID.map { id in
+                WorkspaceRef(id: id, label: workspaces.first(where: { $0.id == id })?.label ?? id)
+            }
+            return PaneContext(
+                paneID: pane.id, workspace: workspace, cwd: pane.workingDirectory,
+                gitRoot: checkout?.root, branch: checkout?.branch, focused: pane.focused
+            )
+        }
+    }
+
+    /// Strips Pane Contexts for an Extension that didn't ask for them.
+    static func contexts(_ contexts: [ExtensionContext], includingPanes: Bool) -> [ExtensionContext] {
+        includingPanes ? contexts : contexts.map { context in
+            var stripped = context
+            stripped.panes = nil
+            return stripped
+        }
+    }
+}
+
 enum ExtensionContextGatherer {
     /// Blocks on one multiplexer query and up to three git runs per Session.
     /// Sessions are queried in parallel; the result keeps `inputs` order.
-    static func gather(_ inputs: [ExtensionSessionInput], path: String) -> [ExtensionContext] {
+    /// With `includingPanes`, each Session's panes are listed too.
+    static func gather(_ inputs: [ExtensionSessionInput], path: String, includingPanes: Bool = false) -> [ExtensionContext] {
         var results = [ExtensionContext?](repeating: nil, count: inputs.count)
         let lock = NSLock()
         DispatchQueue.concurrentPerform(iterations: inputs.count) { index in
-            let context = gather(inputs[index], path: path)
+            var context = gather(inputs[index], path: path)
+            if includingPanes { context.panes = panes(inputs[index], path: path) }
             lock.lock()
             results[index] = context
             lock.unlock()
         }
         return results.compactMap { $0 }
+    }
+
+    /// Every pane of a multiplexer Session with its checkout; `nil` for a
+    /// plain shell or when the listing fails.
+    static func panes(_ input: ExtensionSessionInput, path: String) -> [PaneContext]? {
+        guard let target = input.target,
+              let panes = PaneQuery.panes(sessionName: input.sessionName, target: target, path: path)
+        else { return nil }
+        let environment = ["PATH": path, "HOME": NSHomeDirectory()]
+        var checkouts: [String: RepoCheckout?] = [:]
+        for directory in Set(panes.compactMap(\.workingDirectory)) {
+            checkouts[directory] = RepoCheckoutQuery.query(directory: directory, environment: environment)
+        }
+        return ExtensionContextPlanner.paneContexts(panes: panes, checkouts: checkouts, workspaces: input.workspaces)
     }
 
     static func gather(_ input: ExtensionSessionInput, path: String) -> ExtensionContext {
