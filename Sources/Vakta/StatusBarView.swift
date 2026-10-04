@@ -165,9 +165,9 @@ struct StatusBarView: View {
                     )
                 }
             }
-            extensionSegments(content.extensionItems.filter { $0.placement == .leading })
+            extensionSegments(content.extensionItems.compactMap { $0.placed(.leading) })
             Spacer(minLength: 8)
-            extensionSegments(content.extensionItems.filter { $0.placement == .trailing })
+            extensionSegments(content.extensionItems.compactMap { $0.placed(.trailing) })
             if content.showsPullRequestList || model.pinned == .pullRequests {
                 let glyph = content.listGlyph ?? .noChecks
                 HStack(spacing: 3) {

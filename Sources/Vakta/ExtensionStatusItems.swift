@@ -20,6 +20,8 @@ struct StatusBarSegment: Equatable, Identifiable {
     var url: URL?
     var popover: ViewDocument?
     var attention: Bool
+    /// The segment's own placement, else its item's.
+    var placement: StatusSetParams.Placement
     var id: Int { index }
 }
 
@@ -28,6 +30,13 @@ struct StatusBarExtensionItem: Equatable, Identifiable {
     var placement: StatusSetParams.Placement
     var segments: [StatusBarSegment]
     var id: String { extensionID }
+
+    /// This item's segments shown at `placement`, or nil when it has none there.
+    func placed(_ placement: StatusSetParams.Placement) -> StatusBarExtensionItem? {
+        let placed = segments.filter { $0.placement == placement }
+        guard !placed.isEmpty else { return nil }
+        return StatusBarExtensionItem(extensionID: extensionID, placement: placement, segments: placed)
+    }
 }
 
 /// Which segment's Popover or attention: Extension plus segment index.
@@ -60,7 +69,8 @@ enum ExtensionStatusItems {
                     action: segment.action,
                     url: segment.url.flatMap(safeURL),
                     popover: segment.popover,
-                    attention: segment.attention
+                    attention: segment.attention,
+                    placement: segment.placement ?? item.placement
                 )
             }
             guard !segments.isEmpty else { return nil }

@@ -608,7 +608,7 @@ extension Effect: Codable {
 
 extension StatusSegment: Codable {
     private enum CodingKeys: String, CodingKey {
-        case text, symbol, tint, help, action, url, popover, attention
+        case text, symbol, tint, help, action, url, popover, attention, placement
     }
 
     public init(from decoder: Decoder) throws {
@@ -621,7 +621,8 @@ extension StatusSegment: Codable {
             action: try container.decodeIfPresent(ViewButton.self, forKey: .action),
             url: try container.decodeIfPresent(String.self, forKey: .url),
             popover: try container.decodeIfPresent(ViewDocument.self, forKey: .popover),
-            attention: try container.decodeIfPresent(Bool.self, forKey: .attention) ?? false
+            attention: try container.decodeIfPresent(Bool.self, forKey: .attention) ?? false,
+            placement: (try container.decodeIfPresent(String.self, forKey: .placement)).flatMap(StatusSetParams.Placement.init(rawValue:))
         )
     }
 
@@ -635,6 +636,7 @@ extension StatusSegment: Codable {
         try container.encodeIfPresent(url, forKey: .url)
         try container.encodeIfPresent(popover, forKey: .popover)
         try container.encode(attention, forKey: .attention)
+        try container.encodeIfPresent(placement?.rawValue, forKey: .placement)
     }
 }
 

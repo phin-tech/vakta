@@ -231,11 +231,15 @@ public struct StatusSegment: Equatable, Sendable {
     public var popover: ViewDocument?
     /// Turning this on peeks an Auto-hide status bar.
     public var attention: Bool
+    /// Overrides the item's placement for this segment (an item can show a
+    /// leading part and a trailing summary).
+    public var placement: StatusSetParams.Placement?
 
     public init(
         text: String, symbol: String? = nil, tint: Tint = .neutral, help: String? = nil, action: ViewButton? = nil,
-        url: String? = nil, popover: ViewDocument? = nil, attention: Bool = false
+        url: String? = nil, popover: ViewDocument? = nil, attention: Bool = false, placement: StatusSetParams.Placement? = nil
     ) {
+        self.placement = placement
         self.text = text
         self.symbol = symbol
         self.tint = tint

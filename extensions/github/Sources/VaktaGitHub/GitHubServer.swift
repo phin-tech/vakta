@@ -35,19 +35,13 @@ final class GitHubServer: @unchecked Sendable {
 
     var focusedContext: ExtensionContext? { contexts.first(where: \.focused) }
 
-    /// Targets with their panes, Sessions and current PRs.
-    struct Placement {
-        var sessionKey: SessionKey
-        var pane: PaneContext
-        var target: PullRequestTarget
-        var pullRequest: PullRequest?
-    }
-
-    var placements: [Placement] {
+    /// Panes on PR branches with their Sessions and current PRs.
+    var placements: [PullRequestPlacement] {
         contexts.flatMap { context in
-            (context.panes ?? []).compactMap { pane -> Placement? in
+            (context.panes ?? []).compactMap { pane -> PullRequestPlacement? in
                 guard let target = targetsByPane[pane.paneID] else { return nil }
-                return Placement(sessionKey: context.sessionKey, pane: pane, target: target, pullRequest: pullRequests[target] ?? nil)
+                return PullRequestPlacement(sessionKey: context.sessionKey, sessionFocused: context.focused, pane: pane,
+                                            target: target, pullRequest: pullRequests[target] ?? nil)
             }
         }
     }
@@ -82,7 +76,33 @@ final class GitHubServer: @unchecked Sendable {
     /// Requests other than the lifecycle ones (views, Callbacks): slices
     /// add handlers here.
     func handleRequest(id: JSONRPCID, method: String, message: JSONRPCMessage) {
-        connection.fail(id, code: -32601, "vakta-github doesn't handle \(method)")
+        guard case let .request(_, _, params) = message else { return }
+        switch method {
+        case ProtocolMethod.callback:
+            guard let params, let callback = try? ExtensionProtocolCodec.decode(CallbackParams.self, from: params) else {
+                return connection.fail(id, code: -32602, "invalid callback params")
+            }
+            handleCallback(callback, id: id)
+        default:
+            connection.fail(id, code: -32601, "vakta-github doesn't handle \(method)")
+        }
+    }
+
+    func handleCallback(_ callback: CallbackParams, id: JSONRPCID) {
+        switch callback.callback {
+        case GitHubCallbacks.openURL:
+            guard case .object(let fields)? = callback.payload, case .string(let url)? = fields["url"] else {
+                return connection.fail(id, code: -32602, "missing url")
+            }
+            respond(id, effects: [.openURL(url)])
+        default:
+            connection.fail(id, code: -32601, "unknown action \(callback.callback)")
+        }
+    }
+
+    func respond(_ id: JSONRPCID, effects: [Effect]) {
+        guard let result = try? ExtensionProtocolCodec.encode(CallbackResult(effects: effects)) else { return }
+        connection.respond(to: id, with: result)
     }
 
     // MARK: - Targets
@@ -173,9 +193,37 @@ final class GitHubServer: @unchecked Sendable {
 
     // MARK: - Publishing (filled in by the status, panel and badge slices)
 
+    private var lastStates: [String: PullRequestState] = [:]
+    private var lastStatus: StatusSetParams??
+
     func publish() {
-        let summary = placements.map { "\($0.target.repository.slug)@\($0.target.branch)=\($0.pullRequest.map { "#\($0.number) \($0.state)" } ?? "none")" }
+        let current = placements
+        let summary = current.map { "\($0.target.repository.slug)@\($0.target.branch)=\($0.pullRequest.map { "#\($0.number) \($0.state)" } ?? "none")" }
         connection.log(.debug, "prs: \(Set(summary).sorted().joined(separator: ", "))")
+
+        let prs = GitHubStatus.distinct(current)
+        let changed = GitHubNotices.transitions(previous: lastStates, current: prs)
+        for pr in prs { lastStates[pr.url] = pr.state }
+        for pr in changed {
+            let session = current.first { $0.pullRequest?.url == pr.url }?.sessionKey
+            send(ProtocolMethod.notify, GitHubNotices.notice(for: pr, sessionKey: session))
+        }
+        sendStatus(GitHubStatus.statusItem(contexts: contexts, placements: current, attention: Set(changed.map(\.url))))
+    }
+
+    private func sendStatus(_ status: StatusSetParams?) {
+        guard lastStatus != .some(status) else { return }
+        lastStatus = .some(status)
+        if let status {
+            send(ProtocolMethod.statusSet, status)
+        } else {
+            connection.send(.notification(method: ProtocolMethod.statusClear, params: nil))
+        }
+    }
+
+    func send<Params: Encodable>(_ method: String, _ params: Params) {
+        guard let encoded = try? ExtensionProtocolCodec.encode(params) else { return }
+        connection.send(.notification(method: method, params: encoded))
     }
 
     static func configFile() -> Data? {

@@ -194,6 +194,7 @@ final class ProtocolFixtureTests: XCTestCase {
                           action: ViewButton(title: "Re-run failed", symbol: nil, callback: "rerun", payload: .object(["pr": .number(42)]),
                                              style: .default, confirm: nil, shortcut: nil),
                           popover: .detail(DetailView(title: "Checks", markdown: nil, fields: [.init(label: "lint", value: "failing")], buttons: []))),
+            StatusSegment(text: "5 PRs", symbol: "clock.fill", tint: .warning, placement: .trailing),
         ]))
     }
 

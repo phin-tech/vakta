@@ -5,6 +5,7 @@
      "url": "https://github.com/phin-tech/vakta/pull/42", "attention": true},
     {"text": "3/4", "tint": "neutral", "attention": false,
      "action": {"title": "Re-run failed", "callback": "rerun", "payload": {"pr": 42}, "style": "default"},
-     "popover": {"kind": "detail", "title": "Checks", "fields": [{"label": "lint", "value": "failing"}], "buttons": []}}
+     "popover": {"kind": "detail", "title": "Checks", "fields": [{"label": "lint", "value": "failing"}], "buttons": []}},
+    {"text": "5 PRs", "symbol": "clock.fill", "tint": "warning", "attention": false, "placement": "trailing"}
   ]
 }}

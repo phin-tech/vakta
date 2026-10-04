@@ -26,6 +26,16 @@ final class ExtensionStatusItemsTests: XCTestCase {
         XCTAssertEqual(merged.map(\.placement), [.leading, .trailing])
     }
 
+    func test_segmentPlacement_overridesTheItems() {
+        let merged = ExtensionStatusItems.merge(["gh": StatusSetParams(placement: .leading, segments: [
+            StatusSegment(text: "#42"), StatusSegment(text: "5 PRs", placement: .trailing),
+        ])], order: ["gh"])
+        let item = try? XCTUnwrap(merged.first)
+        XCTAssertEqual(item?.placed(.leading)?.segments.map(\.text), ["#42"])
+        XCTAssertEqual(item?.placed(.trailing)?.segments.map(\.text), ["5 PRs"])
+        XCTAssertEqual(item?.placed(.trailing)?.segments.first?.index, 1, "keys keep the original index")
+    }
+
     func test_merge_trimsTruncatesAndCapsSegments_andDropsBlankOnes() {
         let segments = ["  a very long status item text indeed  ", "   ", "b", "c", "d", "e"].map { StatusSegment(text: $0) }
         let merged = ExtensionStatusItems.merge(["x": StatusSetParams(placement: .trailing, segments: segments)], order: ["x"])
