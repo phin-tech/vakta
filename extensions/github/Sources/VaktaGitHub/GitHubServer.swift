@@ -266,6 +266,10 @@ final class GitHubServer: @unchecked Sendable {
             send(ProtocolMethod.commandsSet, CommandsSetParams(commands: commands))
         }
 
+        let nextBadges = GitHubBadges.badges(current)
+        for message in GitHubBadges.changes(from: badges, to: nextBadges) { connection.send(message) }
+        badges = nextBadges
+
         // Keep the panel live: re-render when what it shows changed.
         let panel = GitHubPanel.view(current, focusedRepository: focusedTarget?.repository.slug)
         if panel != lastPanel {
@@ -275,6 +279,7 @@ final class GitHubServer: @unchecked Sendable {
     }
 
     private var lastCommands: [ExtensionCommand]?
+    private var badges: [SessionKey: BadgeSetParams] = [:]
     private var lastPanel: ViewDocument?
 
     private func sendStatus(_ status: StatusSetParams?) {

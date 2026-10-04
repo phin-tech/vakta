@@ -1135,7 +1135,10 @@ private struct SessionBadgeView: View {
                 isShowingPopover.toggle()
             } label: {
                 HStack(spacing: 2) {
-                    if let symbol = display.shown.symbol { Image(systemName: symbol).font(.system(size: 8)) }
+                    if let symbol = display.shown.symbol {
+                        Image(systemName: symbol).font(.system(size: 8))
+                            .foregroundStyle(display.shown.tint == .neutral ? Color.secondary : StatusBarView.color(for: display.shown.tint))
+                    }
                     Text(display.shown.text)
                     if display.hiddenCount > 0 {
                         Text("+\(display.hiddenCount)").foregroundStyle(.tertiary)

@@ -26,6 +26,11 @@ final class SessionBadgesTests: XCTestCase {
         XCTAssertEqual(display.all.map(\.extensionID), ["kata", "gh", "todo"])
     }
 
+    func test_display_carriesTheTint() throws {
+        let tinted = BadgeSetParams(sessionKey: vakta, text: "#42", symbol: "xmark.circle.fill", tint: .failure, popover: nil)
+        XCTAssertEqual(SessionBadges.display(for: vakta, badges: ["github": [vakta: tinted]], order: ["github"])?.shown.tint, .failure)
+    }
+
     func test_display_singleBadge_hasNoOverflow() throws {
         let display = try XCTUnwrap(SessionBadges.display(for: other, badges: ["kata": [other: badge("7cq8")]], order: ["kata"]))
         XCTAssertEqual(display.hiddenCount, 0)

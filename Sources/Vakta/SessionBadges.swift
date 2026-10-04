@@ -14,6 +14,7 @@ struct SessionBadge: Equatable, Identifiable {
     var text: String
     var fullText: String
     var symbol: String?
+    var tint: StatusSegment.Tint = .neutral
     var popover: ViewDocument?
     var id: String { extensionID }
 }
@@ -38,7 +39,7 @@ enum SessionBadges {
             guard !text.isEmpty else { return nil }
             return SessionBadge(
                 extensionID: id, text: ExtensionStatusItems.truncate(text, to: maxTextLength), fullText: text,
-                symbol: params.symbol, popover: params.popover
+                symbol: params.symbol, tint: params.tint, popover: params.popover
             )
         }
         guard let first = all.first else { return nil }
