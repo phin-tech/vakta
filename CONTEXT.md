@@ -23,6 +23,10 @@ _Avoid_: Plugin (reserved for herdr plugins), add-on, integration
 **Extension Context**:
 A Session's location as given to an Extension: its Session Key, its active pane's working directory, that directory's git repository root and branch (if any), its Workspace, and whether it is the focused Session. An Extension receives one per Session.
 
+**Pane Context**:
+One pane's location inside an Extension Context: its pane id, Workspace, working directory, git repository root and branch, and whether it's focused. Sent only to Extensions whose manifest asks for panes.
+_Avoid_: Pane info, pane state
+
 **Session Key**:
 The identity of a Session that stays the same across Vakta restarts: its multiplexer backend plus the multiplexer's session name.
 _Avoid_: Session id (changes every launch)
@@ -32,24 +36,36 @@ _Avoid_: Workspace, scope, root
 An Extension registered with Vakta by pointing at a local directory holding its manifest.
 _Avoid_: Installed extension
 
+**Built-in Extension**:
+An Extension shipped inside Vakta.app and linked automatically; trusted through the app's own signature, so it can be disabled but not unlinked.
+_Avoid_: Bundled plugin, default extension
+
 **Trust**:
 The user's explicit approval for a Linked Extension to run. It is lost when what was approved changes.
 _Avoid_: Permission, consent
 
 **Contribution**:
-Something an Extension puts into Vakta's interface: a Panel View, a Status Item, or a Session Badge.
+Something an Extension puts into Vakta's interface: a Panel View, a Status Item, a Session Badge, or a Command.
 
 **Panel View**:
 An Extension's view shown as a mode of the right-hand panel, alongside Files and Changes.
 _Avoid_: Tab, sidebar
 
 **Status Item**:
-An Extension's segment in the status bar; it may open a Popover.
+An Extension's presence in the status bar: one or more Status Segments, placed leading (beside the focused pane's branch) or trailing (the right side).
 _Avoid_: Widget, indicator
+
+**Status Segment**:
+One piece of a Status Item: text and symbol with a semantic tint, optionally clickable or opening a Popover.
+_Avoid_: Chip, label
 
 **Session Badge**:
 A short label an Extension attaches to one Session's row in the sidebar; it may open a Popover.
 _Avoid_: Tag (collides with git and Kata labels), annotation
+
+**Command**:
+An action an Extension offers in the ⌘K palette while it applies (like "Merge #42" only when #42 is ready); choosing it sends a Callback.
+_Avoid_: Action (overloaded), palette item
 
 **Popover**:
 A transient list or detail shown from a Status Item or Session Badge, drawn from a View Document.
