@@ -100,6 +100,7 @@ extension PanelEffectSink {
             case let .notify(title, body): notify(title, body)
             case let .openPane(cwd, command, title): _ = await openPane(cwd, command, title)
             case let .openSession(cwd, command, title): _ = await openSession(cwd, command, title)
+            case .copy(let text): copy(text)
             case .refresh, .replace, .push, .pop, .toast: break
             }
         }

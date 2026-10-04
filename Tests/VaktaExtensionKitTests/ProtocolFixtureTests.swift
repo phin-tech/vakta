@@ -162,6 +162,7 @@ final class ProtocolFixtureTests: XCTestCase {
             .openURL("https://github.com/phin-tech/vakta/pull/3"),
             .openPane(cwd: "/Users/sam/src/vakta", command: ["claude", "work on kata fcae"], title: "fcae"),
             .openSession(cwd: nil, command: ["kata", "tui"], title: nil),
+            .copyText("https://github.com/phin-tech/vakta/pull/42"),
         ]))
     }
 

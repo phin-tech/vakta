@@ -21,6 +21,7 @@ struct PanelEffectSink {
     /// Returns an error message when the launch couldn't happen.
     var openPane: @MainActor (_ cwd: String?, _ command: [String], _ title: String?) async -> String?
     var openSession: @MainActor (_ cwd: String?, _ command: [String], _ title: String?) async -> String?
+    var copy: (String) -> Void = { _ in }
 
     static let inert = PanelEffectSink(
         openURL: { _ in }, notify: { _, _ in },
@@ -168,6 +169,8 @@ final class PanelViewStore: ObservableObject {
             case let .openSession(cwd, command, title):
                 let open = effectSink.openSession
                 Task { if let failure = await open(cwd, command, title) { self.callbacks.fail(key, failure) } }
+            case .copy(let text):
+                effectSink.copy(text)
             }
         }
     }

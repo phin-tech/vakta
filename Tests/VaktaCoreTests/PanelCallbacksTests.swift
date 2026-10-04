@@ -75,13 +75,13 @@ final class PanelCallbacksTests: XCTestCase {
                 .toast(text: "Claimed"), .refresh, .push(list), .pop, .replace(list),
                 .notify(title: "Done", body: nil), .openURL("https://example.com/pr/3"),
                 .openPane(cwd: "/r", command: ["claude", "go"], title: "fcae"),
-                .openSession(cwd: nil, command: ["kata", "tui"], title: nil),
+                .openSession(cwd: nil, command: ["kata", "tui"], title: nil), .copyText("link"),
             ], isStale: false),
             [
                 .toast("Claimed"), .refresh, .push(list), .pop, .replace(list),
                 .notify(title: "Done", body: nil), .openURL(URL(string: "https://example.com/pr/3")!),
                 .openPane(cwd: "/r", command: ["claude", "go"], title: "fcae"),
-                .openSession(cwd: nil, command: ["kata", "tui"], title: nil),
+                .openSession(cwd: nil, command: ["kata", "tui"], title: nil), .copy("link"),
             ]
         )
     }

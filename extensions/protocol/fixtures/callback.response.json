@@ -18,5 +18,6 @@
   {"type": "notify", "title": "fcae closed", "body": "By sphinizy"},
   {"type": "open_url", "url": "https://github.com/phin-tech/vakta/pull/3"},
   {"type": "open_pane", "cwd": "/Users/sam/src/vakta", "command": ["claude", "work on kata fcae"], "title": "fcae"},
-  {"type": "open_session", "command": ["kata", "tui"]}
+  {"type": "open_session", "command": ["kata", "tui"]},
+  {"type": "copy_text", "text": "https://github.com/phin-tech/vakta/pull/42"}
 ]}}

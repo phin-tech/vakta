@@ -78,6 +78,13 @@ final class GitHubServer: @unchecked Sendable {
     func handleRequest(id: JSONRPCID, method: String, message: JSONRPCMessage) {
         guard case let .request(_, _, params) = message else { return }
         switch method {
+        case ProtocolMethod.viewRender:
+            guard let params, let render = try? ExtensionProtocolCodec.decode(ViewRenderParams.self, from: params),
+                  render.view == GitHubPanel.viewID else {
+                return connection.fail(id, code: -32602, "no such view")
+            }
+            let document = GitHubPanel.view(placements, focusedRepository: focusedTarget?.repository.slug)
+            if let result = try? ExtensionProtocolCodec.encode(document) { connection.respond(to: id, with: result) }
         case ProtocolMethod.callback:
             guard let params, let callback = try? ExtensionProtocolCodec.decode(CallbackParams.self, from: params) else {
                 return connection.fail(id, code: -32602, "invalid callback params")
@@ -95,9 +102,48 @@ final class GitHubServer: @unchecked Sendable {
                 return connection.fail(id, code: -32602, "missing url")
             }
             respond(id, effects: [.openURL(url)])
+        case GitHubActions.checkout, GitHubActions.fix, GitHubActions.copy, GitHubActions.ready, GitHubActions.draft, GitHubActions.rerun:
+            guard let ref = PullRequestRef.decode(callback.payload) else { return connection.fail(id, code: -32602, "invalid pull request") }
+            perform(callback.callback, ref, id: id)
         default:
             connection.fail(id, code: -32601, "unknown action \(callback.callback)")
         }
+    }
+
+    private func perform(
+        _ action: String, _ ref: (url: String, number: Int, title: String, repository: String, branch: String, cwd: String?), id: JSONRPCID
+    ) {
+        switch action {
+        case GitHubActions.checkout:
+            respond(id, effects: GitHubActions.checkoutEffects(repository: ref.repository, number: ref.number, cwd: ref.cwd))
+        case GitHubActions.fix:
+            let state = placements.first { $0.pullRequest?.url == ref.url }?.pullRequest?.state
+            let prompt = GitHubActions.fixPrompt(number: ref.number, title: ref.title, repository: ref.repository, branch: ref.branch, state: state)
+            let command = GitHubActions.agentCommand(template: GitHubConfig.decode(Self.configFile()).agentCommand, prompt: prompt)
+            respond(id, effects: [.openPane(cwd: ref.cwd, command: command, title: "fix #\(ref.number)"), .toast(text: "Agent started on #\(ref.number)")])
+        case GitHubActions.copy:
+            respond(id, effects: [.copyText(ref.url), .toast(text: "Copied link to #\(ref.number)")])
+        case GitHubActions.ready, GitHubActions.draft:
+            let ready = action == GitHubActions.ready
+            guard let output = Tool.run(GitHubActions.readyArgv(repository: ref.repository, number: ref.number, ready: ready)), output.status == 0 else {
+                return connection.fail(id, "gh couldn't change #\(ref.number).")
+            }
+            respond(id, effects: [.toast(text: ready ? "#\(ref.number) is ready for review" : "#\(ref.number) is a draft"), .refresh])
+            refreshNow()
+        case GitHubActions.rerun:
+            let runs = Tool.run(GitHubActions.failedRunsArgv(repository: ref.repository, branch: ref.branch)).map { GitHubActions.runIDs($0.stdout) } ?? []
+            guard !runs.isEmpty else { return connection.fail(id, "No failed workflow runs found for \(ref.branch).") }
+            let rerun = runs.filter { Tool.run(GitHubActions.rerunArgv(repository: ref.repository, runID: $0))?.status == 0 }.count
+            respond(id, effects: [.toast(text: "Re-running \(rerun) failed run\(rerun == 1 ? "" : "s")"), .refresh])
+            refreshNow()
+        default:
+            break
+        }
+    }
+
+    /// The focused pane's PR target.
+    private var focusedTarget: PullRequestTarget? {
+        GitHubStatus.focusedPane(contexts).flatMap { targetsByPane[$0.paneID] }
     }
 
     func respond(_ id: JSONRPCID, effects: [Effect]) {
@@ -209,7 +255,27 @@ final class GitHubServer: @unchecked Sendable {
             send(ProtocolMethod.notify, GitHubNotices.notice(for: pr, sessionKey: session))
         }
         sendStatus(GitHubStatus.statusItem(contexts: contexts, placements: current, attention: Set(changed.map(\.url))))
+
+        let focusedPlacement = GitHubStatus.focusedPane(contexts).flatMap { pane in current.first { $0.pane.paneID == pane.paneID } }
+        let ref = focusedPlacement.flatMap { placement in
+            placement.pullRequest.map { PullRequestRef($0, target: placement.target, cwd: placement.pane.gitRoot) }
+        }
+        let commands = GitHubActions.commands(ref)
+        if commands != lastCommands {
+            lastCommands = commands
+            send(ProtocolMethod.commandsSet, CommandsSetParams(commands: commands))
+        }
+
+        // Keep the panel live: re-render when what it shows changed.
+        let panel = GitHubPanel.view(current, focusedRepository: focusedTarget?.repository.slug)
+        if panel != lastPanel {
+            lastPanel = panel
+            send(ProtocolMethod.viewInvalidate, ViewInvalidateParams(view: GitHubPanel.viewID))
+        }
     }
+
+    private var lastCommands: [ExtensionCommand]?
+    private var lastPanel: ViewDocument?
 
     private func sendStatus(_ status: StatusSetParams?) {
         guard lastStatus != .some(status) else { return }

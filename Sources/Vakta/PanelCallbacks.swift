@@ -69,6 +69,7 @@ enum PanelAction: Equatable {
     case openURL(URL)
     case openPane(cwd: String?, command: [String], title: String?)
     case openSession(cwd: String?, command: [String], title: String?)
+    case copy(String)
 }
 
 enum EffectPlanner {
@@ -92,6 +93,7 @@ enum EffectPlanner {
                 return .openURL(url)
             case let .openPane(cwd, command, title): return .openPane(cwd: cwd, command: command, title: title)
             case let .openSession(cwd, command, title): return .openSession(cwd: cwd, command: command, title: title)
+            case .copyText(let text): return .copy(text)
             case .unsupported: return nil
             }
         }

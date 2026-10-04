@@ -111,7 +111,7 @@ final class Stores {
         statusItemStore = StatusItemStore(host: extensionHost, registry: extensionRegistry)
         sessionBadgeStore = SessionBadgeStore(host: extensionHost, registry: extensionRegistry)
         extensionCommandStore = ExtensionCommandStore(host: extensionHost, registry: extensionRegistry)
-        let effectSink = PanelEffectSink(
+        var effectSink = PanelEffectSink(
             openURL: { NSWorkspace.shared.open($0) },
             notify: { title, body in
                 guard let sessionID = sessionStore.selectedID else { return }
@@ -156,6 +156,10 @@ final class Stores {
                 }?.id
             }
         )
+        effectSink.copy = { text in
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(text, forType: .string)
+        }
         panelViewStore.effectSink = effectSink
         statusItemStore.effectSink = effectSink
         sessionBadgeStore.effectSink = effectSink

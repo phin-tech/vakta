@@ -200,6 +200,8 @@ public indirect enum Effect: Equatable, Sendable {
     /// `command` is argv, never shell text.
     case openPane(cwd: String?, command: [String], title: String?)
     case openSession(cwd: String?, command: [String], title: String?)
+    /// Puts text on the clipboard.
+    case copyText(String)
     case unsupported(type: String)
 }
 
@@ -546,6 +548,7 @@ extension Effect: Codable {
                 title: try container.decode(String.self, forKey: .title),
                 body: try container.decodeIfPresent(String.self, forKey: .body))
         case "open_url": self = .openURL(try container.decode(String.self, forKey: .url))
+        case "copy_text": self = .copyText(try container.decode(String.self, forKey: .text))
         case "open_pane":
             self = .openPane(
                 cwd: try container.decodeIfPresent(String.self, forKey: .cwd),
@@ -600,6 +603,9 @@ extension Effect: Codable {
             try container.encodeIfPresent(cwd, forKey: .cwd)
             try container.encode(command, forKey: .command)
             try container.encodeIfPresent(title, forKey: .title)
+        case .copyText(let text):
+            try container.encode("copy_text", forKey: .type)
+            try container.encode(text, forKey: .text)
         case .unsupported(let type):
             try container.encode(type, forKey: .type)
         }
