@@ -1176,7 +1176,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             workspaces: [:],
             workspaceStatus: sessionStore.paneStatusByWorkspaceID,
             commands: commands,
-            leaderSequences: paletteLeaderSequences()
+            leaderSequences: paletteLeaderSequences(),
+            extensionCommands: stores.extensionCommandStore.entries
         )
         let generation = switcherModel.reset(items: items)
         switcherModel.onNavigation = nil
@@ -1385,6 +1386,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             activateSession(sessionID)
         case .command(let command):
             perform(command)
+        case let .extensionCommand(extensionID, commandID):
+            stores.extensionCommandStore.run(extensionID: extensionID, commandID: commandID)
         }
     }
 
