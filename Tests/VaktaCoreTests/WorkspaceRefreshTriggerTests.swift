@@ -133,10 +133,4 @@ final class WorkspaceRefreshDebouncerTests: XCTestCase {
 
     // MARK: status bar (switching panes updates the focused PR)
 
-    func test_pullRequestGate_firesOnInputInTheFocusedSessionWhileEnabled() {
-        XCTAssertTrue(PullRequestStatusRefreshGate.shouldTrigger(eventIsKeyDownOrLeftMouseDown: true, sessionIsFocused: true, statusBarEnabled: true))
-        XCTAssertFalse(PullRequestStatusRefreshGate.shouldTrigger(eventIsKeyDownOrLeftMouseDown: false, sessionIsFocused: true, statusBarEnabled: true))
-        XCTAssertFalse(PullRequestStatusRefreshGate.shouldTrigger(eventIsKeyDownOrLeftMouseDown: true, sessionIsFocused: false, statusBarEnabled: true))
-        XCTAssertFalse(PullRequestStatusRefreshGate.shouldTrigger(eventIsKeyDownOrLeftMouseDown: true, sessionIsFocused: true, statusBarEnabled: false))
-    }
 }

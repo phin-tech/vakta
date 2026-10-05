@@ -33,12 +33,21 @@ enum PaletteItemAssembler {
     ///     appended last.
     ///   - leaderSequences: each command's leader-key sequence, if any (empty
     ///     while leader keys are off).
+    /// One Extension Command as the palette lists it.
+    struct ExtensionCommandEntry: Equatable {
+        var extensionID: String
+        var extensionName: String
+        var id: String
+        var title: String
+    }
+
     static func assemble(
         sessions: [SessionEntry],
         workspaces: [UUID: [Workspace]],
         workspaceStatus: [String: AgentStatus],
         commands: [AppCommand],
-        leaderSequences: [AppCommand: String] = [:]
+        leaderSequences: [AppCommand: String] = [:],
+        extensionCommands: [ExtensionCommandEntry] = []
     ) -> [PaletteItem] {
         var items: [PaletteItem] = []
 
@@ -72,6 +81,19 @@ enum PaletteItemAssembler {
                 status: .none,
                 kind: .command(command),
                 leaderSequence: leaderSequences[command]
+            ))
+        }
+
+        // Extension Commands come after Vakta's own, labelled with their
+        // Extension so a title can't pass for a built-in action.
+        for command in extensionCommands {
+            items.append(PaletteItem(
+                id: "extension:\(command.extensionID):\(command.id)",
+                title: command.title,
+                subtitle: command.extensionName,
+                category: .action,
+                status: .none,
+                kind: .extensionCommand(extensionID: command.extensionID, commandID: command.id)
             ))
         }
 

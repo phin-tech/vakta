@@ -156,6 +156,12 @@ final class AttentionNotifier: NSObject, ObservableObject, UNUserNotificationCen
         }
     }
 
+    /// A banner an Extension asked for (`notify` Effect), attributed to
+    /// `sessionID` so clicking it surfaces that Session. Silent.
+    func deliverExtensionNotice(sessionID: UUID, title: String, body: String) {
+        deliver(sessionID: sessionID, title: title, body: body, sound: false)
+    }
+
     private func deliver(sessionID: UUID, title: String, body: String, sound: Bool) {
         guard bannersAvailable else { return }
         delivery.deliver(sessionID: sessionID, title: title, body: body, sound: sound) { [weak self] error in

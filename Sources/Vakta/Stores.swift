@@ -8,6 +8,7 @@
 //  by type via `@EnvironmentObject` (SwiftUI observes per-type); this only
 //  bundles construction and injection.
 
+import Combine
 import SwiftUI
 
 @MainActor
@@ -24,6 +25,16 @@ final class Stores {
     let editorPreferences: EditorPreferencesStore
     let sessionStore: SessionStore
     let workspaceRefreshMonitor: WorkspaceRefreshMonitor
+    let extensionRegistry: ExtensionRegistryStore
+    let extensionHost: ExtensionHost
+    let loginEnvironment = LoginEnvironmentSnapshot()
+    private var loginEnvironmentObserver: AnyCancellable?
+    let extensionContextMonitor: ExtensionContextMonitor
+    let panelViewStore: PanelViewStore
+    let statusItemStore: StatusItemStore
+    let sessionBadgeStore: SessionBadgeStore
+    let extensionNotifier: ExtensionNotifier
+    let extensionCommandStore: ExtensionCommandStore
     let persistenceFailures = PersistenceFailureCenter()
     let preferencesRouter = PreferencesRouter()
 
@@ -70,6 +81,89 @@ final class Stores {
             root: root,
             pathResolver: resolvedPATH
         )
+        let sessionStore = sessionStore
+        let isAppBundle = Bundle.main.bundleURL.pathExtension == "app"
+        extensionRegistry = ExtensionRegistryStore(
+            root: root, path: { sessionStore.resolvedPATH },
+            builtInRoots: BuiltInExtensions.roots(
+                bundleURL: Bundle.main.bundleURL,
+                executableURL: Bundle.main.executableURL ?? Bundle.main.bundleURL,
+                fileExists: { FileManager.default.fileExists(atPath: $0) }
+            ),
+            // In a development checkout, only manifests marked builtIn count.
+            builtInsRequireMarker: !isAppBundle
+        )
+        let extensionRegistry = extensionRegistry
+        Task { await extensionRegistry.prepareBuiltIns() }
+        extensionHost = ExtensionHost(
+            registry: extensionRegistry,
+            supportRoot: root,
+            hostVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev",
+            environment: { ["PATH": sessionStore.resolvedPATH, "HOME": NSHomeDirectory(), "LANG": "en_US.UTF-8"] },
+            loginEnvironment: { [loginEnvironment] in loginEnvironment.current }
+        )
+        extensionContextMonitor = ExtensionContextMonitor(sessionStore: sessionStore, host: extensionHost)
+        let extensionHost = extensionHost
+        loginEnvironmentObserver = loginEnvironment.$isResolved
+            .filter { $0 }
+            .sink { _ in extensionHost.loginEnvironmentChanged() }
+        panelViewStore = PanelViewStore(host: extensionHost)
+        statusItemStore = StatusItemStore(host: extensionHost, registry: extensionRegistry)
+        sessionBadgeStore = SessionBadgeStore(host: extensionHost, registry: extensionRegistry)
+        extensionCommandStore = ExtensionCommandStore(host: extensionHost, registry: extensionRegistry)
+        var effectSink = PanelEffectSink(
+            openURL: { NSWorkspace.shared.open($0) },
+            notify: { title, body in
+                guard let sessionID = sessionStore.selectedID else { return }
+                sessionStore.notifier.deliverExtensionNotice(sessionID: sessionID, title: title, body: body ?? "")
+            },
+            openPane: { cwd, command, _ in
+                guard let id = sessionStore.selectedID, let session = sessionStore.sessions.first(where: { $0.id == id }) else {
+                    return "No session is focused."
+                }
+                guard case .multiplexer(let target) = LaunchTargetResolver.resolve(session.profile),
+                      let plan = ExtensionLaunchPlanner.panePlan(
+                          target: target, sessionName: session.sessionName, cwd: cwd, command: command)
+                else { return "The focused session isn't running herdr or tmux, so there's no pane to split." }
+                let environment = target.environment.merging(
+                    ["PATH": sessionStore.resolvedPATH, "HOME": NSHomeDirectory()], uniquingKeysWith: { profile, _ in profile }
+                )
+                return await Task.detached { ExtensionPaneLauncher.launch(plan, environment: environment) }.value
+            },
+            openSession: { cwd, command, title in
+                switch ExtensionLaunchPlanner.sessionProfile(cwd: cwd, command: command, title: title) {
+                case .failure(let error):
+                    return error.message
+                case .success(let profile):
+                    _ = sessionStore.createSession(profile: profile, customName: title, workingDirectory: cwd, isTransient: true)
+                    return nil
+                }
+            }
+        )
+        let notificationSettings = notificationSettings
+        extensionNotifier = ExtensionNotifier(
+            host: extensionHost,
+            registry: extensionRegistry,
+            notifier: sessionStore.notifier,
+            notificationsAllowed: { notificationSettings.notifyOnAttention },
+            selectedSessionID: { sessionStore.selectedID },
+            appActive: { NSApp.isActive },
+            sessionID: { key in
+                sessionStore.sessions.first { session in
+                    let backend: MultiplexerTarget.Backend?
+                    if case .multiplexer(let target) = LaunchTargetResolver.resolve(session.profile) { backend = target.backend } else { backend = nil }
+                    return ExtensionContextPlanner.sessionKey(backend: backend, sessionName: session.sessionName, sessionID: session.id) == key
+                }?.id
+            }
+        )
+        effectSink.copy = { text in
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(text, forType: .string)
+        }
+        panelViewStore.effectSink = effectSink
+        statusItemStore.effectSink = effectSink
+        sessionBadgeStore.effectSink = effectSink
+        extensionCommandStore.effectSink = effectSink
         workspaceRefreshMonitor = WorkspaceRefreshMonitor(
             sessionStore: sessionStore,
             herdrPreferences: herdrPreferences,
@@ -95,5 +189,10 @@ extension View {
             .environmentObject(stores.sessionStore.notifier)
             .environmentObject(stores.persistenceFailures)
             .environmentObject(stores.preferencesRouter)
+            .environmentObject(stores.extensionRegistry)
+            .environmentObject(stores.extensionHost)
+            .environmentObject(stores.panelViewStore)
+            .environmentObject(stores.sessionBadgeStore)
+            .environmentObject(stores.statusItemStore)
     }
 }

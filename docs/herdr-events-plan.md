@@ -245,11 +245,17 @@ aggregation logic, no per-pane status cache.
   spike below. Still open: a real `workspace.*` subscription would (a) catch
   a switch driven from outside Vakta (another attached client, a script) and
   (b) drop the passthrough heuristic's per-keystroke subprocess cost for
-  herdr specifically. Next step, unstarted: run `herdr api schema --json`
-  for candidate event types, then a raw-socket `events.subscribe` spike
-  against a live session while switching workspaces by hand (same method as
-  the 2026-09-16 spikes above), including checking whether
-  `pane.agent_status_changed` already fires on focus change.
+  herdr specifically. **Spiked 2026-10-03, negative:** `herdr api schema
+  --json` (protocol 22) lists `workspace.focused`, `tab.focused` and
+  `pane.focused` as subscription types, and `events.subscribe` with them
+  is acknowledged (`subscription_started`), but a raw-socket subscriber on
+  the session's `herdr.sock` received nothing while workspaces were switched
+  by hand in the herdr TUI (focus verified to have moved, e.g. tanker →
+  ignatious, across ~3 minutes of listening in three runs). So these events
+  don't reach subscribers for interactive switches; the input heuristic
+  (and, for Extensions, `ExtensionContextMonitor`'s focused-Session refresh
+  100 ms after input) remains the detection path. Revisit if a herdr release
+  notes emitting focus events.
 - `pane.output_matched` for a "notify when this pane's output matches X"
   primitive, if a future feature wants it (e.g. "notify when the build
   finishes" independent of agent status).

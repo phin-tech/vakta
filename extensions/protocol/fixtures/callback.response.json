@@ -1,0 +1,23 @@
+{"jsonrpc": "2.0", "id": 12, "result": {"effects": [
+  {"type": "refresh"},
+  {"type": "replace", "document": {"kind": "list", "buttons": [], "sections": []}},
+  {"type": "push", "document": {
+    "kind": "form",
+    "title": "Close fcae",
+    "fields": [
+      {"id": "message", "label": "Message", "required": true, "kind": "multiline", "placeholder": "What was done"},
+      {"id": "summary", "label": "Summary", "required": false, "kind": "text", "value": "done"},
+      {"id": "reason", "label": "Reason", "required": true, "kind": "picker",
+       "options": [{"value": "done", "label": "Done"}, {"value": "wontfix", "label": "Won't fix"}], "selected": "done"},
+      {"id": "notify", "label": "Notify", "required": false, "kind": "toggle", "isOn": true}
+    ],
+    "submit": {"title": "Close", "callback": "close-submit", "payload": {"id": "fcae"}, "style": "primary"}
+  }},
+  {"type": "pop"},
+  {"type": "toast", "text": "Claimed fcae"},
+  {"type": "notify", "title": "fcae closed", "body": "By sphinizy"},
+  {"type": "open_url", "url": "https://github.com/phin-tech/vakta/pull/3"},
+  {"type": "open_pane", "cwd": "/Users/sam/src/vakta", "command": ["claude", "work on kata fcae"], "title": "fcae"},
+  {"type": "open_session", "command": ["kata", "tui"]},
+  {"type": "copy_text", "text": "https://github.com/phin-tech/vakta/pull/42"}
+]}}

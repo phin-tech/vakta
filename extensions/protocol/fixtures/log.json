@@ -1,0 +1,1 @@
+{"jsonrpc": "2.0", "method": "log", "params": {"level": "warning", "message": "kata daemon not reachable; retrying"}}

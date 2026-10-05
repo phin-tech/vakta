@@ -1,0 +1,290 @@
+# Plan: Extensions
+
+Status: **implemented 2026-10-03 on branch `extensions` (all nine slices, `vakta#3kav`); desktop checks pending** (see [testing.md](testing.md), desktop step 13). Follow-up: `vakta#b3hb` (CLI linking). Vocabulary is in
+[CONTEXT.md](../CONTEXT.md), and the architectural decision is in
+[ADR 0001](adr/0001-out-of-process-extensions.md). Kata is the first
+Extension, and its needs set v1 scope: nothing is added to the protocol
+until a real Extension uses it.
+
+## Goal
+
+Show Kata issues for whatever you're working on (Panel View, Status Item,
+Session Badges), and act on them natively (claim, close, comment, create,
+start an agent in a pane), without compiling Kata into Vakta.
+
+## Model
+
+- **Linked Extension**: a local directory with `vakta-extension.json`,
+  registered in Preferences ▸ Extensions (a `vakta extension link <dir>`
+  CLI is a follow-up). v1 does not install from GitHub.
+- **Trust**: approval is pinned to the manifest's hash plus the hash of the
+  executable `command[0]` resolves to, inside the Extension directory. Any
+  change asks again. **Developer mode** (per Linked Extension) pins only
+  the manifest. The Trust prompt says which of the two is being approved.
+- **Process**: one long-lived child per trusted, enabled Extension, started
+  at app launch. Newline-delimited JSON-RPC 2.0 over stdin/stdout; stderr
+  goes to the Extension log (`<support>/extension-logs/<id>.log`). The
+  child's environment is built explicitly (resolved PATH, HOME, LANG,
+  `VAKTA_EXTENSION_ID`, `VAKTA_EXTENSION_ROOT`, `VAKTA_EXTENSION_CONFIG_DIR`
+  = `<support>/extension-data/<id>`, `VAKTA_EXTENSION_API`) without changing
+  Vakta's own environment. On quit or disable: `shutdown`, grace period,
+  then SIGKILL the child. (The child isn't put in its own process group, so
+  grandchildren it spawns must exit on their own when their stdin closes.)
+- **Failure**: a down Extension's Contributions are removed immediately,
+  never shown stale. Vakta restarts it with backoff. Repeated crashes mark
+  it **Failed** (Preferences: Restart, View log). A Panel View shows an
+  error empty state with Restart and View log. No notifications.
+- **Versioning**: `initialize` exchanges `vakta_extension_api`. A mismatch
+  marks the Extension Failed with the reason.
+
+## Manifest
+
+JSON, not TOML: Vakta has no TOML parser (`HerdrConfigDocument` deliberately
+isn't one), and JSON matches the protocol.
+
+```json
+{
+  "id": "kata",
+  "name": "Kata",
+  "command": ["./.build/release/kata-vakta", "serve"],
+  "build": [["swift", "build", "-c", "release"]],
+  "panelViews": [{"id": "issues", "title": "Issues", "symbol": "checklist"}]
+}
+```
+
+`environment` (optional) lists login-shell variables the Extension
+receives: exact names or `PREFIX_*` (Kata declares `KATA_*` for its auth
+token). Nothing else from the user's environment is passed, and PATH, HOME,
+LANG and `VAKTA_*` can't be requested. The list is part of the manifest, so
+approval covers it and the review sheet shows it.
+
+`command[0]` must be a relative path inside the Extension directory, never a
+bare program name or an absolute path, because Trust pins that file. Build
+commands run through `/usr/bin/env` with the resolved login-shell PATH, in
+the Extension directory, only after the user approves.
+
+Status Items and Session Badges are declared implicitly: an Extension
+that sends none has none.
+
+## Protocol
+
+Host → Extension:
+
+| Message | Kind | Purpose |
+|---|---|---|
+| `initialize` | request | API version, host capabilities |
+| `contexts/changed` | notification | full snapshot of every Session's Extension Context |
+| `view/render {view}` | request → View Document | Panel View content |
+| `callback {view, callback, payload, form?}` | request → `{effects}` | button or form submit |
+| `$/cancel {id}` | notification | drop an in-flight request |
+| `shutdown` | request | graceful stop |
+
+Extension → host:
+
+| Message | Purpose |
+|---|---|
+| `view/update {view, document}` | push fresh Panel View content |
+| `view/invalidate {view}` | ask Vakta to re-render |
+| `status/set {placement, segments}` / `status/clear` | the one Status Item |
+| `badge/set {sessionKey, text, symbol?, tint?, popover?}` / `badge/clear` | Session Badges |
+| `commands/set {commands}` | the current ⌘K Commands (replaces the previous set) |
+| `notify {title, body?, sessionKey?}` | ask for a notification; Vakta decides whether to show it |
+| `log {level, message}` | Extension log |
+
+`status/set` also accepts the original single-segment shape
+(`{text, symbol?, popover?}`) for an older Extension; it decodes as one
+neutral trailing Status Segment.
+
+**Extension Context** (one per Session): `sessionKey` (backend + multiplexer
+session name, stable across restarts; not `Session.id`, which is a new
+UUID each launch), `cwd` (active pane), `gitRoot?`, `branch?`, `workspace`,
+`focused`. Getting an unfocused Session's cwd means querying its active pane.
+That runs on Session changes and on refresh, never per keystroke. After
+input pauses in the focused terminal (100 ms), Vakta re-gathers just the
+focused Session and sends it first, the others as last known; a full
+parallel pass follows on structural changes. herdr's `*.focused` events
+would be faster but don't fire for interactive switches (see
+herdr-events-plan.md, Follow-ups).
+
+**View Document** (`ViewDocument` in `VaktaExtensionKit`; drawn natively by
+Vakta, never a template): one of three kinds, discriminated by `kind` —
+
+- **`list`** (`ListView`): optional `title`/`searchPlaceholder`/`emptyText`,
+  view-level `buttons` (shown above the sections, e.g. "New Issue…"), and
+  `sections` (`ListSection`: optional `title`, `items`). Each `ListItem`
+  carries `id`, `title`, optional `subtitle`/SF Symbol, `accessories`
+  (`Accessory`: short `text` + optional symbol), an optional `detail`
+  (another View Document, shown when the row is selected) and its own
+  `buttons`. Filtering by the search field happens in Vakta, not the
+  Extension.
+- **`detail`** (`DetailView`): `title`, optional `markdown`, `fields`
+  (label/value pairs), `buttons`.
+- **`form`** (`FormView`): `title`, `fields` (`FormField`: `id`, `label`,
+  `required`, and a `kind` — `text`/`multiline` (placeholder, value),
+  `picker` (options, selected), or `toggle` (isOn)), and one `submit`
+  button.
+
+A `ViewButton` (used in list/detail/form and as a Status Segment's
+`action`) carries `title`, optional symbol, the `callback` name sent back
+to the Extension, an optional JSON `payload`, a `style`
+(`default`/`primary`/`destructive`), an optional `confirm` (title, message,
+button text) and an optional keyboard `shortcut` — active only while the
+containing view has focus, and routed through `KeybindingMatcher`. Native
+text fields keep normal text entry. An unknown `kind`/`type` anywhere in a
+View Document decodes to `.unsupported` rather than failing the whole
+message, so a newer Extension degrades gracefully on an older host.
+
+**Effects** (`Effect`, returned from a Callback, applied in order):
+`refresh`, `replace {document}`, `push {document}`, `pop`, `toast {text}`,
+`notify {title, body?}`, `open_url {url}`, `copy_text {text}` (clipboard),
+`open_pane {cwd?, command, title?}` (focused Session's backend; fails
+visibly if it can't split), `open_session {cwd?, command, title?}` (defined
+in the protocol; Kata v1 doesn't use it). `command` is argv, never shell
+text.
+
+**Button state**: `idle → pending → idle | failed(message)`. One Callback
+at a time per (view, callback, payload). Stale results (the Extension
+Context changed while pending) drop view Effects but keep `toast` and
+`notify`.
+
+## Contributions
+
+What an Extension can put into Vakta's interface — see
+[CONTEXT.md](../CONTEXT.md) for why these are called Contributions and not
+"widgets":
+
+- **Panel View**: a toggle button after Files and Changes in the right
+  panel, with extras beyond two in a `⋯` menu. The saved mode is
+  `extension:<id>/<view>`. When that Extension is unavailable, the panel
+  shows Files without erasing the saved choice.
+- **Status Item** (`status/set`): one or more Status Segments
+  (`StatusSegment`: `text`, optional symbol, a semantic `tint`
+  (`neutral`/`success`/`warning`/`failure` — green stays reserved for
+  "ready to merge"), optional `help` tooltip, and either an `action`
+  button's Callback or a plain `url` on click, plus an optional `popover`
+  View Document and an `attention` flag that peeks an Auto-hide status
+  bar). Each segment can override the item's `placement`
+  (`leading`, beside the focused pane's branch, or `trailing`, the right
+  side for summaries); segments default to the item's own placement. One
+  Status Item per Extension, after the built-in segments, in link order.
+  It counts as content for `auto` visibility. Hover or pin opens a Popover
+  through the existing `StatusBarPopover` machinery.
+- **Session Badge** (`badge/set`/`badge/clear`, per Session Key): `text`
+  (~8 characters, full text on hover), optional symbol, a `tint`
+  (same `StatusSegment.Tint`), and an optional `popover`. Only the first
+  Badge (in link order) shows on a Session row, with `+N` opening a Popover
+  that lists all of them. Clicking a Badge opens its Popover. Session rows
+  only, not Workspace rows.
+- **Command** (`commands/set`): a ⌘K palette entry an Extension offers
+  only while it applies (e.g. "Merge #42" only when #42 is ready) —
+  `id`, `title`, optional symbol, and the `callback`/`payload` it sends
+  when chosen. `commands/set` replaces the Extension's entire previous set
+  each time.
+
+## Kata Extension configuration
+
+`<support>/extension-data/kata/config.json` (optional):
+
+```json
+{"agentCommand": ["claude", "{prompt}"]}
+```
+
+Each argv word may contain `{id}`, `{title}` and `{prompt}`; values are
+substituted inside words, never split into new ones. *Start* claims the
+issue if it's unowned, records which Session started it in `sessions.json`
+(same directory), and opens the agent in a new pane of the focused Session.
+
+## Code layout
+
+- `VaktaExtensionKit`: a local Swift package with the protocol types, used
+  by the app and every Swift Extension.
+- `VaktaExtensionServer`: a library in the same package for writing a Swift
+  Extension (see below). Vakta itself doesn't link it.
+- `extensions/protocol/fixtures/*.json`: golden JSON, the real contract.
+  Both the kit and the host decoder are tested against it.
+- `extensions/kata/`, `extensions/github/`: separate SwiftPM packages
+  (`kata-vakta`, `vakta-github`), never targets in the root `Package.swift`
+  or `project.yml`.
+
+## Writing a Swift Extension with VaktaExtensionServer
+
+`VaktaExtensionServer` is the stdio runtime shared by the Kata and GitHub
+Extensions, so a new one doesn't copy the protocol loop:
+
+```swift
+import VaktaExtensionServer
+
+let server = ExtensionServer(name: "Kata")
+let kata = KataServer(server: server) // registers handlers in init
+server.run() // reads stdin until Vakta closes it; never returns
+```
+
+Inside the handler object, register against the server rather than parsing
+JSON-RPC directly:
+
+- `server.onRender(viewID) { try renderMyView() }` answers `view/render`.
+- `server.onCallback(name) { params throws -> [Effect] in … }` answers a
+  button's Callback; a thrown `ExtensionError` becomes the error response.
+- `server.onContexts = { previous, current in … }` runs on every Extension
+  Context snapshot; `server.contexts` and `server.focusedContext` hold the
+  latest one between callbacks.
+- `server.onReady` / `server.onShutdown` run around the handshake and
+  `shutdown`.
+
+Publish helpers send a protocol message only when the value actually
+changed, so handlers can call them unconditionally after any state change:
+`setStatus(_:)`, `setBadges(_:)`, `setCommands(_:)`, `notify(title:body:sessionKey:)`,
+`invalidate(view:)`, `update(view:document:)`, `log(_:_:)`. `after(_:_:)`
+schedules work on the server's serial `queue` — the same queue every
+message and callback runs on, so an Extension's state never needs its own
+locking.
+
+Test against `ExtensionHarness` (in the same library) instead of spawning
+the real process: it drives an `ExtensionServer` in memory, feeding it
+JSON-RPC lines and asserting on the lines it would have written to stdout.
+`VaktaExtensionServerTests` in `Packages/VaktaExtensionKit/Tests` shows the
+pattern — routing, error responses, dedupe/diff publishing, and the
+handshake/shutdown lifecycle.
+
+## Functional core / imperative shell
+
+| Core (pure, `VaktaCoreTests`) | Shell (`VaktaIntegrationTests`, real processes) |
+|---|---|
+| manifest decode and validation; trust fingerprint comparison | directory hashing, persistence of links and Trust |
+| JSON-RPC line codec | `Process` + pipes, line reader |
+| supervisor `(state, event) → (state, [effect])`: start, backoff, Failed | timers, killing the process group |
+| Extension Context snapshot from Session state | active-pane queries for every Session |
+| View Document decode; list filtering, selection, navigation stack | SwiftUI rendering (display-dependent, manual check) |
+| button state machine; Callback result → Effects; stale-result filtering | carrying out Effects |
+| panel mode persistence and fallback; Badge/Status Item merge and ordering | status bar / sidebar wiring |
+
+A fixture Extension (a small script in `Tests/`) that can echo, push,
+crash, hang, and return each Effect drives the shell tests. No mocks.
+
+## Slices
+
+Each slice is one Kata child issue under the Extensions epic, and each is
+end-to-end runnable.
+
+1. **Protocol kit + golden fixtures**
+2. **Link + Trust + Extensions preferences tab**
+3. **Supervisor + Extension Contexts**: the Kata skeleton initializes and
+   logs contexts
+4. **Read-only Panel View**: Kata's issue list and detail for the focused
+   Extension Context, live through `kata events` → `view/update`
+5. **Callbacks + core Effects**: Kata *Claim*
+6. **Forms**: Kata *Close*, *Comment*, *New*
+7. **`open_pane` / `open_session`**: Kata *Start* in a pane, plus Kata's
+   Session Key → issue map
+8. **Status Item + Popover**: Kata "N ready"
+9. **Session Badges**: Kata issue per Session
+
+Order: 1, 2 → 3 → 4 → 5 → {6, 7}; 4 → 8 → 9.
+
+## Coverage-plan cases to select
+
+Persistence (panel mode decode: old `files`/`changes`, unknown id, corrupt
+file; linked/trusted registry), subprocess bounds (timeouts, hang, crash),
+stale asynchronous state (Extension Context generation, Session switch
+during a Callback), key routing (form text entry vs matcher, focus-scoped
+shortcuts). See [testing.md](testing.md).

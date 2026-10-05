@@ -1,0 +1,9 @@
+{"jsonrpc": "2.0", "method": "status/set", "params": {
+  "placement": "trailing",
+  "segments": [{
+    "text": "3 ready", "symbol": "checklist", "tint": "neutral", "attention": false,
+    "popover": {"kind": "list", "buttons": [], "sections": [{"title": "Ready", "items": [
+      {"id": "fcae", "title": "VaktaExtensionKit protocol types", "accessories": [], "buttons": []}
+    ]}]}
+  }]
+}}

@@ -24,6 +24,20 @@ jobs:
       - name: swift test
         run: swift test
 
+      # The Kata Extension is its own package (never linked into the app);
+      # build and test it so protocol changes can't silently break it.
+      - name: Kata Extension
+        run: |
+          swift build -c release --package-path extensions/kata
+          swift test --package-path extensions/kata
+
+      # The GitHub Extension is a Built-in Extension (embedded in the app by
+      # the Xcode build); build and test it on its own too.
+      - name: GitHub Extension
+        run: |
+          swift build -c release --package-path extensions/github
+          swift test --package-path extensions/github
+
       # Table-driven/shell-integration cases for the release workflow's
       # version derivation, signing-secret validation, and local install
       # staging -- real subprocess invocations, synthetic env vars, and

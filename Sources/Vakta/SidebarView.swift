@@ -15,6 +15,7 @@
 
 import GhosttyTerminal
 import SwiftUI
+import VaktaExtensionKit
 
 struct SidebarView: View {
     @EnvironmentObject var sessionStore: SessionStore
@@ -903,6 +904,10 @@ private struct SessionRow: View {
 
             Spacer()
 
+            if !isEditing {
+                SessionBadgeView(session: session, font: font, terminalStyle: terminalStyle)
+            }
+
             // Terminal style: a right-aligned status mark colored by agent
             // status (herdr's ● beside a machine name); nothing at all for a
             // session with no agent to report on.
@@ -1105,5 +1110,97 @@ private struct RailSessionItem: View {
         }
         .buttonStyle(.plain)
         .help(session.displayTitle)
+    }
+}
+
+/// An Extension's Session Badge on a Session row: the first linked
+/// Extension's badge (full text on hover) plus `+N` for the others; a click
+/// opens its Popover.
+private struct SessionBadgeView: View {
+    @EnvironmentObject private var badges: SessionBadgeStore
+    let session: Session
+    let font: Font?
+    let terminalStyle: Bool
+    @State private var isShowingPopover = false
+
+    private var sessionKey: SessionKey {
+        let backend: MultiplexerTarget.Backend?
+        if case .multiplexer(let target) = LaunchTargetResolver.resolve(session.profile) { backend = target.backend } else { backend = nil }
+        return ExtensionContextPlanner.sessionKey(backend: backend, sessionName: session.sessionName, sessionID: session.id)
+    }
+
+    var body: some View {
+        if let display = badges.display(for: sessionKey) {
+            Button {
+                isShowingPopover.toggle()
+            } label: {
+                HStack(spacing: 2) {
+                    if let symbol = display.shown.symbol {
+                        Image(systemName: symbol).font(.system(size: 8))
+                            .foregroundStyle(display.shown.tint == .neutral ? Color.secondary : StatusBarView.color(for: display.shown.tint))
+                    }
+                    Text(display.shown.text)
+                    if display.hiddenCount > 0 {
+                        Text("+\(display.hiddenCount)").foregroundStyle(.tertiary)
+                    }
+                }
+                .font(terminalStyle ? font : .system(size: 10))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, terminalStyle ? 0 : 4)
+                .padding(.vertical, 1)
+                .background(
+                    RoundedRectangle(cornerRadius: 3).fill(terminalStyle ? Color.clear : Color.primary.opacity(0.07))
+                )
+            }
+            .buttonStyle(.plain)
+            .help(display.all.map(\.fullText).joined(separator: " · "))
+            .accessibilityLabel(display.all.map(\.fullText).joined(separator: ", "))
+            .popover(isPresented: $isShowingPopover, arrowEdge: .trailing) {
+                SessionBadgePopover(display: display, activate: { extensionID, itemID in
+                    badges.activate(extensionID: extensionID, sessionKey: sessionKey, itemID: itemID)
+                    isShowingPopover = false
+                })
+            }
+        }
+    }
+}
+
+/// A badge's Popover: each badge on the row, with its document's rows (a
+/// click runs a row's first button).
+private struct SessionBadgePopover: View {
+    let display: SessionBadgeDisplay
+    let activate: (_ extensionID: String, _ itemID: String) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(display.all) { badge in
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(badge.fullText).font(.system(size: 11, weight: .semibold))
+                    if case .list(let list)? = badge.popover {
+                        ForEach(list.sections.flatMap(\.items), id: \.id) { item in
+                            Button {
+                                activate(badge.extensionID, item.id)
+                            } label: {
+                                HStack {
+                                    Text(item.title).lineLimit(1)
+                                    Spacer(minLength: 8)
+                                    if let button = item.buttons.first {
+                                        Text(button.title).foregroundStyle(.secondary)
+                                    }
+                                }
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(item.buttons.isEmpty)
+                        }
+                    } else if case .detail(let detail)? = badge.popover {
+                        DocumentDetail(detail: detail, terminalStyle: false)
+                    }
+                }
+            }
+        }
+        .font(.system(size: 11))
+        .padding(10)
+        .frame(width: 280, alignment: .leading)
     }
 }

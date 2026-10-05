@@ -38,6 +38,35 @@ enum ShellEnvironment {
         return nil
     }
 
+    /// Pure: every `NAME=value` line of `env` output. Lines that don't start
+    /// with a valid variable name (continuations of multi-line values) are
+    /// skipped.
+    static func extractEnvironment(from envOutput: String) -> [String: String] {
+        var values: [String: String] = [:]
+        for line in envOutput.split(separator: "\n", omittingEmptySubsequences: true) {
+            guard let equals = line.firstIndex(of: "=") else { continue }
+            let name = line[..<equals]
+            guard let first = name.first, first == "_" || first.isLetter,
+                  name.allSatisfy({ $0 == "_" || ($0.isASCII && ($0.isLetter || $0.isNumber)) })
+            else { continue }
+            values[String(name)] = String(line[line.index(after: equals)...])
+        }
+        return values
+    }
+
+    /// The login shell's whole environment (for the variables Extensions
+    /// declare), or `nil` when the shell can't be queried. Blocking.
+    static func loginShellEnvironment(
+        shell: String = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh", timeout: TimeInterval = 4
+    ) -> [String: String]? {
+        guard FileManager.default.isExecutableFile(atPath: shell) else { return nil }
+        let result = BoundedProcessRunner.run(
+            executable: shell, arguments: ["-lic", "env"], environment: ProcessInfo.processInfo.environment, timeout: timeout
+        )
+        guard case .success(let output) = result else { return nil }
+        return extractEnvironment(from: output)
+    }
+
     /// Used when the login shell can't be queried: the system PATH plus the
     /// common user/tool bin dirs a multiplexer is likely installed in. The
     /// explicit fallback `ResolvedPATH`/`resolvedPATH` fall back to.
@@ -118,5 +147,29 @@ final class ResolvedPATH: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return resolvedValue ?? ShellEnvironment.fallbackPATH()
+    }
+}
+
+/// The login shell's environment, resolved once in the background. Until it
+/// lands (or if it can't be resolved) `current` is Vakta's own environment.
+@MainActor
+final class LoginEnvironmentSnapshot: ObservableObject {
+    @Published private(set) var isResolved = false
+    private var resolved: [String: String]?
+
+    var current: [String: String] { resolved ?? ProcessInfo.processInfo.environment }
+
+    init() {
+        Task { [weak self] in
+            let environment = await Self.resolve()
+            guard let self else { return }
+            self.resolved = environment
+            self.isResolved = true
+        }
+    }
+
+    /// Nonisolated, so the login shell runs off the main actor.
+    private nonisolated static func resolve() async -> [String: String]? {
+        ShellEnvironment.loginShellEnvironment()
     }
 }

@@ -10,17 +10,58 @@
 
 import Foundation
 
-/// What the file sidebar lists: the whole directory tree, or only the files
-/// with git changes.
-enum FileSidebarMode: String, Codable {
+/// What the file sidebar lists: the whole directory tree, only the files
+/// with git changes, or an Extension's Panel View.
+enum FileSidebarMode: Hashable {
     case files
     case changes
+    case extensionView(PanelViewRef)
+}
+
+/// One Extension's Panel View: manifest id plus the view's id.
+struct PanelViewRef: Hashable {
+    var extensionID: String
+    var viewID: String
+}
+
+/// Persisted as a string: `files`, `changes`, or `extension:<id>/<view>`.
+extension FileSidebarMode: Codable {
+    private static let extensionPrefix = "extension:"
+
+    init(from decoder: Decoder) throws {
+        let text = try decoder.singleValueContainer().decode(String.self)
+        switch text {
+        case "files": self = .files
+        case "changes": self = .changes
+        default:
+            guard text.hasPrefix(Self.extensionPrefix) else {
+                throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "unknown mode \(text)"))
+            }
+            let parts = text.dropFirst(Self.extensionPrefix.count).split(separator: "/", omittingEmptySubsequences: false)
+            guard parts.count == 2, !parts[0].isEmpty, !parts[1].isEmpty else {
+                throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "malformed mode \(text)"))
+            }
+            self = .extensionView(PanelViewRef(extensionID: String(parts[0]), viewID: String(parts[1])))
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case .files: try container.encode("files")
+        case .changes: try container.encode("changes")
+        case .extensionView(let ref): try container.encode("\(Self.extensionPrefix)\(ref.extensionID)/\(ref.viewID)")
+        }
+    }
 }
 
 struct FileSidebarPreferences: Equatable {
     var isVisible: Bool = false
     var width: Double = 260
     var mode: FileSidebarMode = .files
+    /// Whether the sidebar is collapsed to its icon rail. Independent of the
+    /// left sidebar's own `SidebarSettings.isCollapsed`.
+    var isCollapsed: Bool = false
 
     /// The width clamped to a sane on-screen range at the point of use, so a
     /// corrupt or extreme persisted value can't produce an unusable pane.
@@ -38,6 +79,7 @@ extension FileSidebarPreferences: Codable {
         case isVisible
         case width
         case mode
+        case isCollapsed
     }
 
     init(from decoder: Decoder) throws {
@@ -47,6 +89,7 @@ extension FileSidebarPreferences: Codable {
         // An unknown mode (a newer build's) is a view preference, not data
         // worth rejecting the file over: fall back to the tree.
         mode = (try? container.decodeIfPresent(FileSidebarMode.self, forKey: .mode)) ?? .files
+        isCollapsed = try container.decodeIfPresent(Bool.self, forKey: .isCollapsed) ?? false
     }
 }
 
@@ -90,9 +133,10 @@ final class FileSidebarPreferencesStore: ObservableObject {
     @Published var isVisible: Bool { didSet { persist() } }
     @Published var width: Double { didSet { persist() } }
     @Published var mode: FileSidebarMode { didSet { persist() } }
+    @Published var isCollapsed: Bool { didSet { persist() } }
 
     var preferences: FileSidebarPreferences {
-        FileSidebarPreferences(isVisible: isVisible, width: width, mode: mode)
+        FileSidebarPreferences(isVisible: isVisible, width: width, mode: mode, isCollapsed: isCollapsed)
     }
 
     /// `width` clamped to the on-screen range for laying out the pane.
@@ -114,6 +158,7 @@ final class FileSidebarPreferencesStore: ObservableObject {
         isVisible = loaded.isVisible
         width = loaded.width
         mode = loaded.mode
+        isCollapsed = loaded.isCollapsed
 
         if case .missing = outcome {
             FileSidebarPreferencesPersistence.save(loaded, root: root)
@@ -127,8 +172,14 @@ final class FileSidebarPreferencesStore: ObservableObject {
         if mode != preferences.mode { mode = preferences.mode }
         if width != preferences.width { width = preferences.width }
         if isVisible != preferences.isVisible { isVisible = preferences.isVisible }
+        if isCollapsed != preferences.isCollapsed { isCollapsed = preferences.isCollapsed }
         isApplying = false
         persist()
+    }
+
+    /// Flips the collapsed state; the `didSet` on `isCollapsed` persists it.
+    func toggleCollapsed() {
+        isCollapsed.toggle()
     }
 
     private func persist() {

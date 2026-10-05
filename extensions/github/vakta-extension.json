@@ -1,0 +1,13 @@
+{
+  "id": "github",
+  "name": "GitHub",
+  "description": "Pull requests for the branches open in your panes.",
+  "command": ["./.build/release/vakta-github", "serve"],
+  "build": [["swift", "build", "-c", "release"]],
+  "builtIn": true,
+  "contexts": "panes",
+  "environment": ["GH_*", "GITHUB_TOKEN"],
+  "panelViews": [
+    {"id": "pulls", "title": "Pull Requests", "symbol": "arrow.triangle.pull"}
+  ]
+}

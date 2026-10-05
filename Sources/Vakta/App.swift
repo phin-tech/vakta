@@ -80,6 +80,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var fileSidebarContainerView: NSView?
     private var fileSidebarHostView: NSView?
     private var fileSidebarObserver: AnyCancellable?
+    private var fileSidebarCollapseObserver: AnyCancellable?
 
     /// The status bar under the terminal (see `StatusBarView`): its host,
     /// the model it renders, and the subscription that recomputes its
@@ -87,7 +88,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusBarHostView: NSView?
     private let statusBarModel = StatusBarViewModel()
     private var statusBarObserver: AnyCancellable?
-    private var statusBarVisibilityObserver: AnyCancellable?
     private var statusBarPopoverObserver: AnyCancellable?
     private var statusBarKeyMonitor: Any?
     private var isStatusBarDocked = false
@@ -96,11 +96,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusBarDockTimer: DispatchWorkItem?
     private var statusBarAutoHideState = StatusBarAutoHideState()
     private var statusBarAutoHideTimer: DispatchWorkItem?
-    /// The last content shown for `statusBarContentSessionID`, the baseline
-    /// for `StatusBarPeekPolicy` (reset when the selection changes, so
-    /// switching sessions never peeks).
+    /// The last content shown, the baseline for `StatusBarPeekPolicy`.
     private var lastStatusBarContent: StatusBarContent?
-    private var statusBarContentSessionID: Session.ID?
 
     /// Menu-bar status item summarizing agent activity across all sessions, and
     /// the subscription that keeps its icon live.
@@ -265,6 +262,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // `.keyDown`, and this one must never fire for a key an app
         // shortcut already consumed.
         workspaceRefreshMonitor.install()
+        stores.extensionContextMonitor.install()
 
         // Finish wiring the attention notifier now that the app is up: give it
         // the user's preferences, a way to surface a session on click, and
@@ -311,6 +309,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.applyFileSidebarVisibility(visible)
         }
 
+        // Mirrors `sidebarObserver` above: drive the file sidebar's divider
+        // off its own collapsed flag, independent of the left sidebar's.
+        fileSidebarCollapseObserver = fileSidebarPreferences.$isCollapsed.sink { [weak self] collapsed in
+            self?.applyFileSidebarWidth(collapsed: collapsed)
+        }
+
         observeStatusBar()
 
         presentLaunchOnboarding(onboarding, root: root)
@@ -349,7 +353,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self else { return }
             self.statusBarAutoHideState = StatusBarAutoHide.setHeld(self.statusBarAutoHideState, open, at: Date())
             self.updateStatusBarAutoHide()
-            if open { self.fetchMissingWorkspaceLabelsForStatusBar() }
         }
         // While a list is open it takes Escape (and, pinned, ↑/↓/Return);
         // every other key -- and these, when no list is open -- reaches the
@@ -364,39 +367,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             else { return event }
             return nil
         }
-        statusBarVisibilityObserver = statusBarPreferences.$visibility.sink { [weak self] visibility in
-            self?.sessionStore.isPullRequestStatusEnabled = visibility.needsPullRequestStatus
-        }
-        let pullRequestStatus = sessionStore.pullRequestStatus
-        let pullRequestState = Publishers.CombineLatest3(
-            pullRequestStatus.$focused,
-            pullRequestStatus.$workspacePullRequests,
-            pullRequestStatus.$focusedWorkspace
-        )
-        let sessionState = Publishers.CombineLatest3(
-            sessionStore.$sessions,
-            sessionStore.$workspaces,
-            sessionStore.$selectedID
-        )
-        statusBarObserver = Publishers.CombineLatest3(
+        let statusItemStore = stores.statusItemStore
+        statusBarModel.activateExtensionRow = { key, itemID in statusItemStore.activate(key, itemID: itemID) }
+        statusBarModel.pressExtensionSegment = { key in statusItemStore.pressSegment(key) }
+        statusBarObserver = Publishers.CombineLatest(
             statusBarPreferences.$visibility,
-            pullRequestState,
-            sessionState
+            statusItemStore.$items
         )
-        .sink { [weak self] visibility, pullRequestState, sessionState in
+        .sink { [weak self] visibility, extensionItems in
             guard let self else { return }
-            let (focused, lists, focusedWorkspace) = pullRequestState
-            let (sessions, workspaces, selectedID) = sessionState
-            let content = StatusBarPresentation.content(
-                focused: selectedID.flatMap { focused[$0] },
-                lists: Self.statusBarLists(sessions: sessions, workspaces: workspaces, pullRequests: lists),
-                currentGroup: selectedID.flatMap { id in
-                    focusedWorkspace[id].map { StatusBarGroupKey(sessionID: id, workspaceID: $0) }
-                }
-            )
-            let previous = selectedID == self.statusBarContentSessionID ? self.lastStatusBarContent : nil
+            let content = StatusBarContent(extensionItems: extensionItems)
+            let previous = self.lastStatusBarContent
             self.lastStatusBarContent = content
-            self.statusBarContentSessionID = selectedID
             if self.statusBarModel.content != content { self.statusBarModel.content = content }
 
             if visibility != self.statusBarVisibility {
@@ -409,53 +391,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             self.updateStatusBarAutoHide()
         }
-    }
-
-    /// Every session's per-workspace PRs in sidebar order: workspaces the
-    /// sidebar knows (with their labels) first, in its order, then any others
-    /// by id.
-    private static func statusBarLists(
-        sessions: [Session],
-        workspaces: [Session.ID: [Workspace]],
-        pullRequests: [Session.ID: [String: [PullRequestStatus]]]
-    ) -> [StatusBarWorkspaceInput] {
-        sessions.flatMap { session -> [StatusBarWorkspaceInput] in
-            guard let byWorkspace = pullRequests[session.id] else { return [] }
-            let known = workspaces[session.id] ?? []
-            let order = known.map(\.id).filter { byWorkspace[$0] != nil }
-                + byWorkspace.keys.filter { id in !known.contains { $0.id == id } }.sorted()
-            return order.compactMap { workspaceID in
-                guard let pullRequests = byWorkspace[workspaceID], !pullRequests.isEmpty else { return nil }
-                return StatusBarWorkspaceInput(
-                    sessionID: session.id,
-                    sessionTitle: session.displayTitle,
-                    workspaceID: workspaceID,
-                    workspaceTitle: known.first { $0.id == workspaceID }?.label,
-                    pullRequests: pullRequests
-                )
-            }
-        }
-    }
-
-    /// Group headers use workspace labels, which the sidebar only fetches on
-    /// demand; fetch them for sessions with PRs when a list opens.
-    private func fetchMissingWorkspaceLabelsForStatusBar() {
-        for (sessionID, _) in sessionStore.pullRequestStatus.workspacePullRequests where sessionStore.workspaces[sessionID] == nil {
-            sessionStore.fetchWorkspaces(for: sessionID)
-        }
-    }
-
-    /// "Show Pull Requests": reveals the bar if it isn't showing, then pins
-    /// the all-sessions list open for the keyboard.
-    private func showPullRequestList() {
-        if !isStatusBarDocked, !statusBarAutoHideState.isRevealed {
-            if statusBarVisibility == .hide {
-                sessionStore.refreshPullRequestStatus(forceFocused: true, evenIfDisabled: true)
-            }
-            statusBarAutoHideState = StatusBarAutoHide.toggleSummon(statusBarAutoHideState, at: Date())
-            updateStatusBarAutoHide()
-        }
-        statusBarModel.pin(.pullRequests)
     }
 
     /// Runs `StatusBarDockPlanner` now and again at its next deadline (the
@@ -486,12 +421,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// "Show Status Bar Briefly": overlays the bar for a while in any mode
-    /// where it isn't docked (pressed again, hides it). In Never, one lookup
-    /// runs so there is something to show.
+    /// where it isn't docked (pressed again, hides it).
     private func toggleStatusBarBriefly() {
-        if statusBarVisibility == .hide {
-            sessionStore.refreshPullRequestStatus(forceFocused: true, evenIfDisabled: true)
-        }
         statusBarAutoHideState = StatusBarAutoHide.toggleSummon(statusBarAutoHideState, at: Date())
         updateStatusBarAutoHide()
     }
@@ -556,11 +487,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         terminal.frame = frame
     }
 
-    private func openFocusedPullRequest() {
-        guard let url = statusBarModel.content.pullRequest?.url else { return }
-        statusBarModel.openURL(url)
-    }
-
     /// Shows or hides the right file sidebar pane, sizing it to the persisted
     /// width when shown and kicking off a working-directory resolve so it isn't
     /// blank on first reveal.
@@ -569,7 +495,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let isAttached = container.superview === splitView
 
         if visible, !isAttached {
-            let width = CGFloat(fileSidebarPreferences.clampedWidth)
+            let width = fileSidebarTargetWidth(collapsed: fileSidebarPreferences.isCollapsed)
             container.frame.size.width = width
             splitView.addArrangedSubview(container)
             splitView.setHoldingPriority(.defaultHigh, forSubviewAt: splitView.arrangedSubviews.count - 1)
@@ -590,8 +516,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         splitView.window?.viewsNeedDisplay = true
     }
 
+    /// Mirrors `applySidebarWidth` for the right pane's own collapse flag:
+    /// `collapsedSidebarWidth` is reused so both rails read as the same
+    /// width. There's no "hidden" style here -- `fileSidebarPreferences.isVisible`
+    /// already covers hiding the whole pane.
+    private func fileSidebarTargetWidth(collapsed: Bool) -> CGFloat {
+        collapsed ? collapsedSidebarWidth : CGFloat(fileSidebarPreferences.clampedWidth)
+    }
+
+    private func applyFileSidebarWidth(collapsed: Bool) {
+        guard let splitView, let container = fileSidebarContainerView, container.superview === splitView,
+              splitView.arrangedSubviews.count >= 3
+        else { return }
+        let width = fileSidebarTargetWidth(collapsed: collapsed)
+        splitView.setPosition(splitView.bounds.width - width, ofDividerAt: 1)
+        splitView.layoutSubtreeIfNeeded()
+        splitView.needsDisplay = true
+    }
+
     func applicationShouldTerminateAfterLastWindowClosed(_: NSApplication) -> Bool {
         true
+    }
+
+    func applicationWillTerminate(_: Notification) {
+        // Extensions also see stdin close when Vakta exits; this asks them
+        // to shut down first.
+        stores?.extensionHost.stopAll()
     }
 
     func applicationDidResignActive(_: Notification) {
@@ -614,9 +564,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // re-fires for an already-selected session (see
         // `SessionStore.clearUnreadForSelectedSessionIfAppActive`).
         sessionStore.clearUnreadForSelectedSessionIfAppActive()
-        // Returning to the app is the moment a just-pushed PR or finished CI
-        // run is most likely to matter; refetch the focused repository now.
-        sessionStore.refreshPullRequestStatus(forceFocused: true)
     }
 
     /// Moves the divider between the full panel and the icon rail. Done without
@@ -770,11 +717,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hoverStrip.onPointer = { [weak self] pointer in self?.statusBarPointerMoved(pointer) }
         terminalWrapper.addSubview(hoverStrip)
 
-        // The right-hand file sidebar: a third pane hosting `FileSidebarView`.
+        // The right sidebar: a third pane hosting `RightSidebarView`.
         // Painted the terminal background like the left sidebar so the three
         // panes read as one surface. Starts hidden unless the preference is on
         // (the `$isVisible` subscription re-applies this on launch too).
-        let fileSidebarHost = NSHostingView(rootView: FileSidebarView().environmentStores(stores))
+        let fileSidebarHost = NSHostingView(rootView: RightSidebarView().environmentStores(stores))
         fileSidebarHost.appearance = NSAppearance(named: sessionStore.terminalBackgroundColor.isDark ? .darkAqua : .aqua)
         fileSidebarHostView = fileSidebarHost
 
@@ -1164,7 +1111,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             workspaces: [:],
             workspaceStatus: sessionStore.paneStatusByWorkspaceID,
             commands: commands,
-            leaderSequences: paletteLeaderSequences()
+            leaderSequences: paletteLeaderSequences(),
+            extensionCommands: stores.extensionCommandStore.entries
         )
         let generation = switcherModel.reset(items: items)
         switcherModel.onNavigation = nil
@@ -1373,6 +1321,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             activateSession(sessionID)
         case .command(let command):
             perform(command)
+        case let .extensionCommand(extensionID, commandID):
+            stores.extensionCommandStore.run(extensionID: extensionID, commandID: commandID)
         }
     }
 
@@ -1412,8 +1362,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .openInEditor: openInEditor()
         case .showStatusBarBriefly: toggleStatusBarBriefly()
         case .cycleStatusBar: statusBarPreferences.cycle()
-        case .openPullRequest: openFocusedPullRequest()
-        case .showPullRequests: showPullRequestList()
         case .focusPaneLeft: performWorkspacePaneAction { .focusPane(paneID: $0, direction: .left) }
         case .focusPaneRight: performWorkspacePaneAction { .focusPane(paneID: $0, direction: .right) }
         case .focusPaneUp: performWorkspacePaneAction { .focusPane(paneID: $0, direction: .up) }

@@ -1,0 +1,3 @@
+{"jsonrpc": "2.0", "method": "notify", "params": {
+  "title": "Checks failing on #42", "body": "lint, test", "sessionKey": {"backend": "herdr", "sessionName": "vakta"}
+}}

@@ -65,7 +65,7 @@ final class RepoCheckoutQueryShellTests: XCTestCase {
         RepoCheckoutQuery.query(directory: directory.path, environment: environment)
     }
 
-    func test_subdirectory_resolvesRootBranchAndRemotes() throws {
+    func test_subdirectory_resolvesRootAndBranch() throws {
         let repo = try makeRepository()
         try git("config", "branch.main.remote", "origin", in: repo)
 
@@ -73,12 +73,6 @@ final class RepoCheckoutQueryShellTests: XCTestCase {
 
         XCTAssertEqual(checkout.root, repo.path)
         XCTAssertEqual(checkout.branch, "main")
-        XCTAssertEqual(checkout.config["remote.origin.url"], "git@github.com:phin-tech/vakta.git")
-        XCTAssertEqual(checkout.config["branch.main.remote"], "origin")
-        XCTAssertEqual(
-            checkout.pullRequestTarget(supportedHosts: ["github.com"]),
-            PullRequestTarget(repository: GitRemote(host: "github.com", owner: "phin-tech", name: "vakta"), branch: "main", headOwner: "phin-tech")
-        )
     }
 
     func test_linkedWorktree_resolvesItsOwnRootAndBranch() throws {
@@ -90,7 +84,6 @@ final class RepoCheckoutQueryShellTests: XCTestCase {
 
         XCTAssertEqual(checkout.root, worktree.path)
         XCTAssertEqual(checkout.branch, "feature/x")
-        XCTAssertEqual(checkout.config["remote.origin.url"], "git@github.com:phin-tech/vakta.git")
     }
 
     func test_detachedHead_hasNoBranch() throws {

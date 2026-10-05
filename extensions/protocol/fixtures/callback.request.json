@@ -1,0 +1,6 @@
+{"jsonrpc": "2.0", "id": 12, "method": "callback", "params": {
+  "view": "issues",
+  "callback": "close-submit",
+  "payload": {"id": "fcae", "priority": 2, "tags": ["a", "b"], "urgent": false, "parent": null},
+  "form": {"message": "Implemented and verified.", "notify": true}
+}}

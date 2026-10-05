@@ -1,0 +1,4 @@
+{"jsonrpc": "2.0", "method": "commands/set", "params": {"commands": [
+  {"id": "open-42", "title": "Open PR #42", "symbol": "safari", "callback": "open", "payload": {"pr": 42}},
+  {"id": "rerun-42", "title": "Re-run failed checks on #42", "callback": "rerun"}
+]}}

@@ -3,9 +3,9 @@
 //  Vakta
 //
 //  The status bar under the terminal: its visibility preference and the pure
-//  decisions for what it shows. Deliberately minimal -- the focused pane's
-//  branch, one PR glyph, and a count of other PRs in the session that need
-//  attention; nothing renders without data.
+//  decisions for what it shows. Vakta draws no content of its own -- every
+//  segment comes from an Extension's Status Item (pull request status is
+//  the GitHub Built-in Extension) -- and nothing renders without data.
 //
 
 import Foundation
@@ -18,7 +18,7 @@ enum StatusBarVisibility: String, Codable, CaseIterable {
     case autoHide
     /// Always docked, empty or not.
     case show
-    /// Never shown; PR lookups are skipped.
+    /// Never shown.
     case hide
 
     var title: String {
@@ -39,8 +39,6 @@ enum StatusBarVisibility: String, Codable, CaseIterable {
         case .hide: return .auto
         }
     }
-
-    var needsPullRequestStatus: Bool { self != .hide }
 }
 
 struct StatusBarPreferences: Equatable {
@@ -105,186 +103,14 @@ final class StatusBarPreferencesStore: ObservableObject {
     }
 }
 
-/// The single state glyph shown next to a PR number.
-enum StatusBarGlyph: Equatable {
-    case failing
-    case changesRequested
-    case pending
-    /// Checks pass (or it's approved), but GitHub doesn't report it
-    /// mergeable yet -- e.g. awaiting a required review.
-    case passing
-    /// GitHub reports the PR mergeable right now.
-    case readyToMerge
-    /// No checks and no decisive review yet.
-    case noChecks
-}
-
-struct StatusBarPullRequest: Equatable {
-    let number: Int
-    let url: String
-    let title: String
-    let isDraft: Bool
-    let glyph: StatusBarGlyph
-    var branch: String = ""
-    /// Every check for the hover list: failing, pending, passing, then by name.
-    var checks: [PullRequestCheck] = []
-    var checkCounts = PullRequestChecks(passing: 0, failing: 0, pending: 0)
-
-    /// `passing/total` next to the glyph; nil when the PR has no checks.
-    var checksLabel: String? {
-        checkCounts.total > 0 ? "\(checkCounts.passing)/\(checkCounts.total)" : nil
-    }
-}
-
-/// One workspace's PRs as the shell supplies them, in sidebar order.
-struct StatusBarWorkspaceInput: Equatable {
-    let sessionID: UUID
-    let sessionTitle: String
-    let workspaceID: String
-    /// The workspace's label when known; its id otherwise.
-    let workspaceTitle: String?
-    let pullRequests: [PullRequestStatus]
-}
-
-struct StatusBarGroupKey: Hashable {
-    let sessionID: UUID
-    let workspaceID: String
-}
-
-struct StatusBarPullRequestGroup: Equatable {
-    /// `session › workspace`.
-    let title: String
-    /// The focused pane's workspace.
-    let isCurrent: Bool
-    let pullRequests: [StatusBarPullRequest]
-}
-
 struct StatusBarContent: Equatable {
-    var branch: String?
-    var pullRequest: StatusBarPullRequest?
-    /// Distinct PRs anywhere, other than the focused one, with failing checks
-    /// or changes requested (drives Auto-hide's peek).
-    var attentionElsewhere: Int
-    /// Every PR across all sessions, grouped by session › workspace: the
-    /// current workspace first, then sidebar order; worst first within each.
-    var pullRequestGroups: [StatusBarPullRequestGroup] = []
+    /// Extension Status Items in link order.
+    var extensionItems: [StatusBarExtensionItem] = []
 
-    var isEmpty: Bool {
-        branch == nil && pullRequest == nil && attentionElsewhere == 0 && pullRequestGroups.isEmpty
-    }
-
-    /// Distinct PRs across the groups (one PR can appear in several).
-    var distinctPullRequests: [StatusBarPullRequest] {
-        var seen = Set<String>()
-        return pullRequestGroups.flatMap(\.pullRequests).filter { seen.insert($0.url).inserted }
-    }
-
-    /// The list block shows only when it adds something: a PR besides the
-    /// focused one.
-    var showsPullRequestList: Bool {
-        distinctPullRequests.contains { $0.url != pullRequest?.url }
-    }
-
-    var listGlyph: StatusBarGlyph? {
-        distinctPullRequests.map(\.glyph).min { StatusBarPresentation.severity($0) < StatusBarPresentation.severity($1) }
-    }
-
-    var listLabel: String {
-        let count = distinctPullRequests.count
-        return count == 1 ? "1 PR" : "\(count) PRs"
-    }
+    var isEmpty: Bool { extensionItems.isEmpty }
 }
 
 enum StatusBarPresentation {
-    /// `workspaceSummaries` are the selected session's. A PR open in panes
-    /// of several workspaces is counted once per workspace -- an accepted
-    /// overcount for a rare layout.
-    /// `lists` are every session's workspaces in sidebar order;
-    /// `currentGroup` is the focused pane's workspace, listed first.
-    static func content(
-        focused: FocusedPullRequestState?,
-        lists: [StatusBarWorkspaceInput] = [],
-        currentGroup: StatusBarGroupKey? = nil
-    ) -> StatusBarContent {
-        let focusedURL = focused?.pullRequest?.url
-        var attention = Set<String>()
-        for pullRequest in lists.flatMap(\.pullRequests) where pullRequest.needsAttention && pullRequest.url != focusedURL {
-            attention.insert(pullRequest.url)
-        }
-
-        var groups: [StatusBarPullRequestGroup] = []
-        for input in lists where !input.pullRequests.isEmpty {
-            let isCurrent = StatusBarGroupKey(sessionID: input.sessionID, workspaceID: input.workspaceID) == currentGroup
-            let group = StatusBarPullRequestGroup(
-                title: "\(input.sessionTitle) › \(input.workspaceTitle ?? input.workspaceID)",
-                isCurrent: isCurrent,
-                pullRequests: input.pullRequests.map(barPullRequest).sorted {
-                    severity($0.glyph) != severity($1.glyph) ? severity($0.glyph) < severity($1.glyph) : $0.number < $1.number
-                }
-            )
-            if isCurrent { groups.insert(group, at: 0) } else { groups.append(group) }
-        }
-
-        return StatusBarContent(
-            branch: focused?.target.branch,
-            pullRequest: focused?.pullRequest.map(barPullRequest),
-            attentionElsewhere: attention.count,
-            pullRequestGroups: groups
-        )
-    }
-
-    static func barPullRequest(_ pullRequest: PullRequestStatus) -> StatusBarPullRequest {
-        StatusBarPullRequest(
-            number: pullRequest.number,
-            url: pullRequest.url,
-            title: pullRequest.title,
-            isDraft: pullRequest.isDraft,
-            glyph: glyph(for: pullRequest),
-            branch: pullRequest.headBranch,
-            checks: orderedForList(pullRequest.checkRuns),
-            checkCounts: pullRequest.checks
-        )
-    }
-
-    /// Lower is worse: problems first, ready-to-merge last.
-    static func severity(_ glyph: StatusBarGlyph) -> Int {
-        switch glyph {
-        case .failing: return 0
-        case .changesRequested: return 1
-        case .pending: return 2
-        case .noChecks: return 3
-        case .passing: return 4
-        case .readyToMerge: return 5
-        }
-    }
-
-    /// Failing first, then pending, then passing; alphabetical within each.
-    static func orderedForList(_ checks: [PullRequestCheck]) -> [PullRequestCheck] {
-        func rank(_ state: PullRequestCheck.State) -> Int {
-            switch state {
-            case .failing: return 0
-            case .pending: return 1
-            case .passing: return 2
-            }
-        }
-        return checks.sorted {
-            rank($0.state) != rank($1.state)
-                ? rank($0.state) < rank($1.state)
-                : $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
-        }
-    }
-
-    /// Worst first: failing checks, changes requested, pending checks, then
-    /// mergeable now, then passing checks or an approval.
-    static func glyph(for pullRequest: PullRequestStatus) -> StatusBarGlyph {
-        if pullRequest.checks.state == .failing { return .failing }
-        if pullRequest.review == .changesRequested { return .changesRequested }
-        if pullRequest.checks.state == .pending { return .pending }
-        if pullRequest.mergeState == .ready { return .readyToMerge }
-        if pullRequest.checks.state == .passing || pullRequest.review == .approved { return .passing }
-        return .noChecks
-    }
-
     /// Whether the bar takes space under the terminal. Auto-hide never docks:
     /// it overlays the terminal while revealed.
     static func isDocked(_ visibility: StatusBarVisibility, content: StatusBarContent) -> Bool {

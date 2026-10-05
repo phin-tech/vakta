@@ -141,8 +141,6 @@ enum LeaderTree {
             leaf(Key.e, .openInEditor),
             leaf(Key.b, .showStatusBarBriefly),
             leaf(Key.v, .cycleStatusBar),
-            leaf(Key.r, .openPullRequest),
-            leaf(Key.l, .showPullRequests),
         ]),
         group(Key.z, "Font", [
             leaf(Key.equal, .increaseFontSize),

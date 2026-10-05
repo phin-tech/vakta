@@ -22,6 +22,8 @@ enum PaletteItemKind: Equatable {
     case focusWorkspace(sessionID: UUID, workspaceID: String)
     case focusPane(sessionID: UUID, workspaceID: String, paneID: String)
     case command(AppCommand)
+    /// A Command an Extension currently offers.
+    case extensionCommand(extensionID: String, commandID: String)
 }
 
 enum PaletteNavigationScope: Equatable {
@@ -63,7 +65,7 @@ enum PaletteNavigationPlanner {
                 return .drillInto(.workspaces(sessionID: sessionID))
             case .focusWorkspace(let sessionID, let workspaceID):
                 return .drillInto(.panes(sessionID: sessionID, workspaceID: workspaceID))
-            case .focusPane, .command:
+            case .focusPane, .command, .extensionCommand:
                 return .noOp
             }
         case .shiftTab, .escape:

@@ -32,7 +32,7 @@ extension AppCommand {
         case .selectSession, .toggleSidebar, .openPreferences, .openSessionSwitcher, .copy, .paste, .cut, .selectAll,
              .increaseFontSize, .decreaseFontSize, .resetFontSize, .nextUnreadSession,
              .newSession, .toggleFileSidebar, .toggleFileSidebarChanges, .openInEditor,
-             .showStatusBarBriefly, .cycleStatusBar, .openPullRequest, .showPullRequests,
+             .showStatusBarBriefly, .cycleStatusBar,
              .splitPaneRight, .splitPaneDown, .zoomPane, .closePane, .renamePane,
              .focusPaneLeft, .focusPaneRight, .focusPaneUp, .focusPaneDown,
              .previousWorkspace, .nextWorkspace,
