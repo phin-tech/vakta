@@ -144,6 +144,32 @@ final class PanelViewStoreShellTests: XCTestCase {
         }
     }
 
+    /// A push the Extension computed before it saw a new focus (e.g. in
+    /// flight when `contextsChanged` crossed it) must not become the new
+    /// place's cached "last document" -- `beta` was never genuinely
+    /// rendered, so revisiting it must show Loading, not `alpha`'s stale push.
+    func test_aPushComputedForTheOldPlace_isNotCachedAsTheNewPlacesLastDocument() async throws {
+        let store = try await start()
+        host.updateContexts([context("alpha")])
+        store.activate(items)
+        try await waitFor("alpha render") { firstSubtitle(store)?.hasSuffix("for alpha") == true }
+
+        let stalePush = ViewDocument.list(ListView(title: nil, searchPlaceholder: nil, emptyText: nil, sections: [
+            ListSection(title: "Pushed", items: [ListItem(id: "p", title: "Pushed", subtitle: "stale push for alpha", symbol: nil, accessories: [], detail: nil, buttons: [])]),
+        ]))
+
+        host.updateContexts([context("beta")])
+        host.messages.send((
+            extensionID: "fixture",
+            message: .notification(method: ProtocolMethod.viewUpdate, params: try ExtensionProtocolCodec.encode(ViewUpdateParams(view: "items", document: stalePush)))
+        ))
+
+        host.updateContexts([context("alpha")])
+        host.updateContexts([context("beta")])
+
+        XCTAssertEqual(store.model.content, .loading, "beta was never rendered; alpha's stale push must not surface as its cached document")
+    }
+
     func test_firstVisitToAPlace_showsLoading_notAnotherPlacesDocument() async throws {
         let store = try await start()
         host.updateContexts([context("alpha")])

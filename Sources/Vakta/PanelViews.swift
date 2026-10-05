@@ -76,6 +76,16 @@ struct PanelViewModel: Equatable {
         generation
     }
 
+    /// Applies a document an Extension pushed unprompted (`view/update`).
+    /// Bumps the generation so a `view/render` response already in flight
+    /// (captured an earlier token) is dropped as stale if it arrives after.
+    @discardableResult
+    mutating func applyPush(_ document: ViewDocument) -> Bool {
+        guard apply(document, generation: generation) else { return false }
+        generation += 1
+        return true
+    }
+
     /// Applies a document from `generation`; `false` (and no change) when stale.
     @discardableResult
     mutating func apply(_ document: ViewDocument, generation: Int) -> Bool {

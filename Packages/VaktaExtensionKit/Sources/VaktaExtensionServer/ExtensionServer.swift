@@ -166,26 +166,38 @@ public final class ExtensionServer: @unchecked Sendable {
     /// The Status Item, or nil to clear it.
     public func setStatus(_ status: StatusSetParams?) {
         guard lastStatus != .some(status) else { return }
-        lastStatus = .some(status)
         if let status {
-            notify(ProtocolMethod.statusSet, status)
+            guard notify(ProtocolMethod.statusSet, status) else { return }
         } else {
             send(.notification(method: ProtocolMethod.statusClear, params: nil))
         }
+        lastStatus = .some(status)
     }
 
     /// Every Session Badge, keyed by Session; Sessions left out are cleared.
+    /// Indexed by each badge's own `sessionKey`, not the caller's dictionary
+    /// key, so a mismatched key can't orphan or misname a clear. A badge
+    /// that fails to encode is left out of the recorded state, so dedup
+    /// doesn't silently treat an undelivered push as sent.
     public func setBadges(_ next: [SessionKey: BadgeSetParams]) {
-        for (key, badge) in next where badges[key] != badge { notify(ProtocolMethod.badgeSet, badge) }
-        for key in badges.keys where next[key] == nil { notify(ProtocolMethod.badgeClear, BadgeClearParams(sessionKey: key)) }
-        badges = next
+        let next = Dictionary(next.values.map { ($0.sessionKey, $0) }, uniquingKeysWith: { _, last in last })
+        var stored = badges
+        for (key, badge) in next where badges[key] != badge {
+            guard notify(ProtocolMethod.badgeSet, badge) else { continue }
+            stored[key] = badge
+        }
+        for key in badges.keys where next[key] == nil {
+            notify(ProtocolMethod.badgeClear, BadgeClearParams(sessionKey: key))
+            stored[key] = nil
+        }
+        badges = stored
     }
 
     /// The Commands that currently apply (replaces the previous set).
     public func setCommands(_ next: [ExtensionCommand]) {
         guard next != commands else { return }
+        guard notify(ProtocolMethod.commandsSet, CommandsSetParams(commands: next)) else { return }
         commands = next
-        notify(ProtocolMethod.commandsSet, CommandsSetParams(commands: next))
     }
 
     /// A notification through Vakta's attention path.
@@ -207,9 +219,13 @@ public final class ExtensionServer: @unchecked Sendable {
         notify(ProtocolMethod.log, LogParams(level: level, message: message))
     }
 
-    private func notify<Params: Encodable>(_ method: String, _ params: Params) {
-        guard let encoded = try? ExtensionProtocolCodec.encode(params) else { return }
+    /// Sends `params` as a notification; `false` (nothing sent) if it
+    /// couldn't be encoded.
+    @discardableResult
+    private func notify<Params: Encodable>(_ method: String, _ params: Params) -> Bool {
+        guard let encoded = try? ExtensionProtocolCodec.encode(params) else { return false }
         send(.notification(method: method, params: encoded))
+        return true
     }
 
     private func respond(_ id: JSONRPCID, _ result: JSONValue) {

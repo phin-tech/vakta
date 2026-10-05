@@ -283,7 +283,11 @@ final class PanelViewStore: ObservableObject {
         case ProtocolMethod.viewUpdate:
             guard let update = try? ExtensionProtocolCodec.decode(ViewUpdateParams.self, from: params),
                   update.view == ref.viewID else { return }
-            if model.apply(update.document, generation: model.generation) { remember(update.document) }
+            // Not `remember`ed: a push carries no place/context of its own,
+            // so one computed before the Extension saw a focus change could
+            // be cached under the wrong place. A render always follows a
+            // focus change and corrects the cache.
+            model.applyPush(update.document)
         case ProtocolMethod.viewInvalidate:
             guard let invalidate = try? ExtensionProtocolCodec.decode(ViewInvalidateParams.self, from: params),
                   invalidate.view == ref.viewID else { return }

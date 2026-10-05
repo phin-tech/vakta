@@ -91,6 +91,23 @@ final class ExtensionServerTests: XCTestCase {
         XCTAssertEqual(harness.notifications(ProtocolMethod.badgeClear, as: BadgeClearParams.self), [BadgeClearParams(sessionKey: other)])
     }
 
+    /// `setBadges` must clear a badge by its own `sessionKey`, not by the
+    /// dictionary key the caller happened to store it under -- a caller
+    /// bug (mismatched key) must not orphan the badge Vakta actually knows
+    /// about under the wrong Session.
+    func test_badgeClear_namesTheBadgesOwnSessionKey_notTheDictionaryKeyItWasStoredUnder() {
+        let harness = ExtensionHarness { ExtensionServer(name: "Demo", transport: $0) }
+        let mismatched = BadgeSetParams(sessionKey: vakta, text: "#1", symbol: nil, popover: nil)
+        harness.server.queue.sync {
+            harness.server.setBadges([other: mismatched])
+            harness.server.setBadges([:])
+        }
+        XCTAssertEqual(
+            harness.notifications(ProtocolMethod.badgeClear, as: BadgeClearParams.self),
+            [BadgeClearParams(sessionKey: vakta)]
+        )
+    }
+
     func test_commands_areSentOnlyWhenTheyChange() {
         let harness = ExtensionHarness { ExtensionServer(name: "Demo", transport: $0) }
         let commands = [ExtensionCommand(id: "a", title: "A", symbol: nil, callback: "a", payload: nil)]

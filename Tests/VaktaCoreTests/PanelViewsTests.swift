@@ -111,6 +111,26 @@ final class PanelViewsTests: XCTestCase {
         XCTAssertEqual(model.visibleDocument, document)
     }
 
+    /// A `view/update` push and a `view/render` response can race (the
+    /// extension answers a render, then immediately pushes, before Vakta
+    /// reads the response). The push must win: the stale render response
+    /// arriving after it must not overwrite the pushed document.
+    func test_aPushThatLandsWhileARenderIsInFlight_invalidatesTheRendersStaleResponse() {
+        var model = PanelViewModel()
+        let renderToken = model.beginRender()
+        let pushed = list([("Pushed", [item("a", "Alpha")])])
+        let staleRenderResponse = list([("Stale", [item("b", "Beta")])])
+
+        XCTAssertTrue(model.applyPush(pushed), "the push applies immediately")
+        XCTAssertEqual(model.content, .document(pushed))
+
+        XCTAssertFalse(
+            model.apply(staleRenderResponse, generation: renderToken),
+            "a render response captured before the push began must not overwrite it"
+        )
+        XCTAssertEqual(model.content, .document(pushed))
+    }
+
     func test_resultsFromBeforeAReset_areDropped() {
         var model = PanelViewModel()
         let old = model.beginRender()
