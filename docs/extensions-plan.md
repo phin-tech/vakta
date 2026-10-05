@@ -85,9 +85,15 @@ Extension → host:
 |---|---|
 | `view/update {view, document}` | push fresh Panel View content |
 | `view/invalidate {view}` | ask Vakta to re-render |
-| `status/set {text, symbol?, popover?}` / `status/clear` | the one Status Item |
-| `badge/set {sessionKey, text, symbol?, popover?}` / `badge/clear` | Session Badges |
+| `status/set {placement, segments}` / `status/clear` | the one Status Item |
+| `badge/set {sessionKey, text, symbol?, tint?, popover?}` / `badge/clear` | Session Badges |
+| `commands/set {commands}` | the current ⌘K Commands (replaces the previous set) |
+| `notify {title, body?, sessionKey?}` | ask for a notification; Vakta decides whether to show it |
 | `log {level, message}` | Extension log |
+
+`status/set` also accepts the original single-segment shape
+(`{text, symbol?, popover?}`) for an older Extension; it decodes as one
+neutral trailing Status Segment.
 
 **Extension Context** (one per Session): `sessionKey` (backend + multiplexer
 session name, stable across restarts; not `Session.id`, which is a new
@@ -100,20 +106,41 @@ parallel pass follows on structural changes. herdr's `*.focused` events
 would be faster but don't fire for interactive switches (see
 herdr-events-plan.md, Follow-ups).
 
-**View Document**: `list` (view-level header buttons, sections, rows with
-title, subtitle, SF Symbol, accessories and buttons; filtering happens in
-Vakta) | `detail` (markdown,
-fields, buttons) | `form` (text, multiline, picker, toggle, submit
-Callback). Buttons carry `callback`, `payload`, `style`, an optional
-`confirm`, and an optional `shortcut`. Shortcuts only work while the view has
-focus and go through `KeybindingMatcher`. Native text fields keep normal
-text entry.
+**View Document** (`ViewDocument` in `VaktaExtensionKit`; drawn natively by
+Vakta, never a template): one of three kinds, discriminated by `kind` —
 
-**Effects** (applied in order): `refresh`, `replace {document}`,
-`push {document}`, `pop`, `toast {text}`, `notify {title, body}`,
-`open_url {url}`, `open_pane {cwd, command, title}` (focused Session's
-backend; fails visibly if it can't split), `open_session {cwd, command,
-title}` (defined in the protocol; Kata v1 doesn't use it).
+- **`list`** (`ListView`): optional `title`/`searchPlaceholder`/`emptyText`,
+  view-level `buttons` (shown above the sections, e.g. "New Issue…"), and
+  `sections` (`ListSection`: optional `title`, `items`). Each `ListItem`
+  carries `id`, `title`, optional `subtitle`/SF Symbol, `accessories`
+  (`Accessory`: short `text` + optional symbol), an optional `detail`
+  (another View Document, shown when the row is selected) and its own
+  `buttons`. Filtering by the search field happens in Vakta, not the
+  Extension.
+- **`detail`** (`DetailView`): `title`, optional `markdown`, `fields`
+  (label/value pairs), `buttons`.
+- **`form`** (`FormView`): `title`, `fields` (`FormField`: `id`, `label`,
+  `required`, and a `kind` — `text`/`multiline` (placeholder, value),
+  `picker` (options, selected), or `toggle` (isOn)), and one `submit`
+  button.
+
+A `ViewButton` (used in list/detail/form and as a Status Segment's
+`action`) carries `title`, optional symbol, the `callback` name sent back
+to the Extension, an optional JSON `payload`, a `style`
+(`default`/`primary`/`destructive`), an optional `confirm` (title, message,
+button text) and an optional keyboard `shortcut` — active only while the
+containing view has focus, and routed through `KeybindingMatcher`. Native
+text fields keep normal text entry. An unknown `kind`/`type` anywhere in a
+View Document decodes to `.unsupported` rather than failing the whole
+message, so a newer Extension degrades gracefully on an older host.
+
+**Effects** (`Effect`, returned from a Callback, applied in order):
+`refresh`, `replace {document}`, `push {document}`, `pop`, `toast {text}`,
+`notify {title, body?}`, `open_url {url}`, `copy_text {text}` (clipboard),
+`open_pane {cwd?, command, title?}` (focused Session's backend; fails
+visibly if it can't split), `open_session {cwd?, command, title?}` (defined
+in the protocol; Kata v1 doesn't use it). `command` is argv, never shell
+text.
 
 **Button state**: `idle → pending → idle | failed(message)`. One Callback
 at a time per (view, callback, payload). Stale results (the Extension
@@ -122,18 +149,37 @@ Context changed while pending) drop view Effects but keep `toast` and
 
 ## Contributions
 
+What an Extension can put into Vakta's interface — see
+[CONTEXT.md](../CONTEXT.md) for why these are called Contributions and not
+"widgets":
+
 - **Panel View**: a toggle button after Files and Changes in the right
   panel, with extras beyond two in a `⋯` menu. The saved mode is
   `extension:<id>/<view>`. When that Extension is unavailable, the panel
   shows Files without erasing the saved choice.
-- **Status Item**: one per Extension, after the built-in segments, in link
-  order, ~20 characters at most. It counts as content for `auto`
-  visibility. Hover or pin opens a Popover through the existing
-  `StatusBarPopover` machinery.
-- **Session Badge**: one per Extension per Session row, ~8 characters at
-  most, full text on hover. Only the first Badge (in link order) shows, with
-  `+N` opening a Popover that lists all of them. Clicking a Badge opens its
-  Popover. Session rows only, not Workspace rows.
+- **Status Item** (`status/set`): one or more Status Segments
+  (`StatusSegment`: `text`, optional symbol, a semantic `tint`
+  (`neutral`/`success`/`warning`/`failure` — green stays reserved for
+  "ready to merge"), optional `help` tooltip, and either an `action`
+  button's Callback or a plain `url` on click, plus an optional `popover`
+  View Document and an `attention` flag that peeks an Auto-hide status
+  bar). Each segment can override the item's `placement`
+  (`leading`, beside the focused pane's branch, or `trailing`, the right
+  side for summaries); segments default to the item's own placement. One
+  Status Item per Extension, after the built-in segments, in link order.
+  It counts as content for `auto` visibility. Hover or pin opens a Popover
+  through the existing `StatusBarPopover` machinery.
+- **Session Badge** (`badge/set`/`badge/clear`, per Session Key): `text`
+  (~8 characters, full text on hover), optional symbol, a `tint`
+  (same `StatusSegment.Tint`), and an optional `popover`. Only the first
+  Badge (in link order) shows on a Session row, with `+N` opening a Popover
+  that lists all of them. Clicking a Badge opens its Popover. Session rows
+  only, not Workspace rows.
+- **Command** (`commands/set`): a ⌘K palette entry an Extension offers
+  only while it applies (e.g. "Merge #42" only when #42 is ready) —
+  `id`, `title`, optional symbol, and the `callback`/`payload` it sends
+  when chosen. `commands/set` replaces the Extension's entire previous set
+  each time.
 
 ## Kata Extension configuration
 

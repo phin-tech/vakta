@@ -80,6 +80,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var fileSidebarContainerView: NSView?
     private var fileSidebarHostView: NSView?
     private var fileSidebarObserver: AnyCancellable?
+    private var fileSidebarCollapseObserver: AnyCancellable?
 
     /// The status bar under the terminal (see `StatusBarView`): its host,
     /// the model it renders, and the subscription that recomputes its
@@ -308,6 +309,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.applyFileSidebarVisibility(visible)
         }
 
+        // Mirrors `sidebarObserver` above: drive the file sidebar's divider
+        // off its own collapsed flag, independent of the left sidebar's.
+        fileSidebarCollapseObserver = fileSidebarPreferences.$isCollapsed.sink { [weak self] collapsed in
+            self?.applyFileSidebarWidth(collapsed: collapsed)
+        }
+
         observeStatusBar()
 
         presentLaunchOnboarding(onboarding, root: root)
@@ -488,7 +495,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let isAttached = container.superview === splitView
 
         if visible, !isAttached {
-            let width = CGFloat(fileSidebarPreferences.clampedWidth)
+            let width = fileSidebarTargetWidth(collapsed: fileSidebarPreferences.isCollapsed)
             container.frame.size.width = width
             splitView.addArrangedSubview(container)
             splitView.setHoldingPriority(.defaultHigh, forSubviewAt: splitView.arrangedSubviews.count - 1)
@@ -507,6 +514,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         splitView.needsDisplay = true
         splitView.window?.viewsNeedDisplay = true
+    }
+
+    /// Mirrors `applySidebarWidth` for the right pane's own collapse flag:
+    /// `collapsedSidebarWidth` is reused so both rails read as the same
+    /// width. There's no "hidden" style here -- `fileSidebarPreferences.isVisible`
+    /// already covers hiding the whole pane.
+    private func fileSidebarTargetWidth(collapsed: Bool) -> CGFloat {
+        collapsed ? collapsedSidebarWidth : CGFloat(fileSidebarPreferences.clampedWidth)
+    }
+
+    private func applyFileSidebarWidth(collapsed: Bool) {
+        guard let splitView, let container = fileSidebarContainerView, container.superview === splitView,
+              splitView.arrangedSubviews.count >= 3
+        else { return }
+        let width = fileSidebarTargetWidth(collapsed: collapsed)
+        splitView.setPosition(splitView.bounds.width - width, ofDividerAt: 1)
+        splitView.layoutSubtreeIfNeeded()
+        splitView.needsDisplay = true
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_: NSApplication) -> Bool {
@@ -692,11 +717,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hoverStrip.onPointer = { [weak self] pointer in self?.statusBarPointerMoved(pointer) }
         terminalWrapper.addSubview(hoverStrip)
 
-        // The right-hand file sidebar: a third pane hosting `FileSidebarView`.
+        // The right sidebar: a third pane hosting `RightSidebarView`.
         // Painted the terminal background like the left sidebar so the three
         // panes read as one surface. Starts hidden unless the preference is on
         // (the `$isVisible` subscription re-applies this on launch too).
-        let fileSidebarHost = NSHostingView(rootView: FileSidebarView().environmentStores(stores))
+        let fileSidebarHost = NSHostingView(rootView: RightSidebarView().environmentStores(stores))
         fileSidebarHost.appearance = NSAppearance(named: sessionStore.terminalBackgroundColor.isDark ? .darkAqua : .aqua)
         fileSidebarHostView = fileSidebarHost
 

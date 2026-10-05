@@ -96,8 +96,15 @@ final class ExtensionContextMonitor {
         guard let focused = inputs.first(where: \.focused) else { return }
         let path = sessionStore.resolvedPATH
         Task { [weak self] in
-            let fresh = await Self.gather(focused, path: path)
+            var fresh = await Self.gather(focused, path: path, includingPanes: false)
             guard let self, self.generation == current else { return }
+            // The quick path never lists panes; carry the last known ones
+            // forward here, BEFORE overwriting `known`'s entry with `fresh`
+            // -- `focusedFirst` has the same fallback, but reading it from
+            // `known` *after* that overwrite would see the very value it's
+            // supposed to be falling back from, blanking the panes on every
+            // quick refresh instead of keeping them until a real change.
+            if fresh.panes == nil { fresh.panes = self.known[focused.sessionID]?.panes }
             self.known[focused.sessionID] = fresh
             self.host.updateContexts(ExtensionContextPlanner.focusedFirst(inputs: inputs, fresh: fresh, previous: self.known))
         }
@@ -116,8 +123,9 @@ final class ExtensionContextMonitor {
         let path = sessionStore.resolvedPATH
         Task { [weak self] in
             if let focused = inputs.first(where: \.focused) {
-                let fresh = await Self.gather(focused, path: path)
+                var fresh = await Self.gather(focused, path: path, includingPanes: false)
                 guard let self, self.generation == current else { return }
+                if fresh.panes == nil { fresh.panes = self.known[focused.sessionID]?.panes }
                 self.known[focused.sessionID] = fresh
                 self.host.updateContexts(ExtensionContextPlanner.focusedFirst(inputs: inputs, fresh: fresh, previous: self.known))
             }
@@ -136,8 +144,8 @@ final class ExtensionContextMonitor {
         ExtensionContextGatherer.gather(inputs, path: path, includingPanes: includingPanes)
     }
 
-    private nonisolated static func gather(_ input: ExtensionSessionInput, path: String) async -> ExtensionContext {
-        ExtensionContextGatherer.gather(input, path: path)
+    private nonisolated static func gather(_ input: ExtensionSessionInput, path: String, includingPanes: Bool) async -> ExtensionContext {
+        ExtensionContextGatherer.gather(input, path: path, includingPanes: includingPanes)
     }
 
     private func snapshot() -> [ExtensionSessionInput] {

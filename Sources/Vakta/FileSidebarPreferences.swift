@@ -59,6 +59,9 @@ struct FileSidebarPreferences: Equatable {
     var isVisible: Bool = false
     var width: Double = 260
     var mode: FileSidebarMode = .files
+    /// Whether the sidebar is collapsed to its icon rail. Independent of the
+    /// left sidebar's own `SidebarSettings.isCollapsed`.
+    var isCollapsed: Bool = false
 
     /// The width clamped to a sane on-screen range at the point of use, so a
     /// corrupt or extreme persisted value can't produce an unusable pane.
@@ -76,6 +79,7 @@ extension FileSidebarPreferences: Codable {
         case isVisible
         case width
         case mode
+        case isCollapsed
     }
 
     init(from decoder: Decoder) throws {
@@ -85,6 +89,7 @@ extension FileSidebarPreferences: Codable {
         // An unknown mode (a newer build's) is a view preference, not data
         // worth rejecting the file over: fall back to the tree.
         mode = (try? container.decodeIfPresent(FileSidebarMode.self, forKey: .mode)) ?? .files
+        isCollapsed = try container.decodeIfPresent(Bool.self, forKey: .isCollapsed) ?? false
     }
 }
 
@@ -128,9 +133,10 @@ final class FileSidebarPreferencesStore: ObservableObject {
     @Published var isVisible: Bool { didSet { persist() } }
     @Published var width: Double { didSet { persist() } }
     @Published var mode: FileSidebarMode { didSet { persist() } }
+    @Published var isCollapsed: Bool { didSet { persist() } }
 
     var preferences: FileSidebarPreferences {
-        FileSidebarPreferences(isVisible: isVisible, width: width, mode: mode)
+        FileSidebarPreferences(isVisible: isVisible, width: width, mode: mode, isCollapsed: isCollapsed)
     }
 
     /// `width` clamped to the on-screen range for laying out the pane.
@@ -152,6 +158,7 @@ final class FileSidebarPreferencesStore: ObservableObject {
         isVisible = loaded.isVisible
         width = loaded.width
         mode = loaded.mode
+        isCollapsed = loaded.isCollapsed
 
         if case .missing = outcome {
             FileSidebarPreferencesPersistence.save(loaded, root: root)
@@ -165,8 +172,14 @@ final class FileSidebarPreferencesStore: ObservableObject {
         if mode != preferences.mode { mode = preferences.mode }
         if width != preferences.width { width = preferences.width }
         if isVisible != preferences.isVisible { isVisible = preferences.isVisible }
+        if isCollapsed != preferences.isCollapsed { isCollapsed = preferences.isCollapsed }
         isApplying = false
         persist()
+    }
+
+    /// Flips the collapsed state; the `didSet` on `isCollapsed` persists it.
+    func toggleCollapsed() {
+        isCollapsed.toggle()
     }
 
     private func persist() {

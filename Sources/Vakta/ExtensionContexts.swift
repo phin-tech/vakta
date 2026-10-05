@@ -122,8 +122,7 @@ enum ExtensionContextGatherer {
         var results = [ExtensionContext?](repeating: nil, count: inputs.count)
         let lock = NSLock()
         DispatchQueue.concurrentPerform(iterations: inputs.count) { index in
-            var context = gather(inputs[index], path: path)
-            if includingPanes { context.panes = panes(inputs[index], path: path) }
+            let context = gather(inputs[index], path: path, includingPanes: includingPanes)
             lock.lock()
             results[index] = context
             lock.unlock()
@@ -145,13 +144,20 @@ enum ExtensionContextGatherer {
         return ExtensionContextPlanner.paneContexts(panes: panes, checkouts: checkouts, workspaces: input.workspaces)
     }
 
-    static func gather(_ input: ExtensionSessionInput, path: String) -> ExtensionContext {
+    /// With `includingPanes`, also lists this one Session's panes -- needed
+    /// any time this is the only gather for a focused Session (the input-hint
+    /// path has no following full pass to restore them), or an Extension
+    /// wanting Pane Contexts sees them dropped for as long as the Session
+    /// stays focused without an unrelated full `refresh()`.
+    static func gather(_ input: ExtensionSessionInput, path: String, includingPanes: Bool = false) -> ExtensionContext {
         let environment = ["PATH": path, "HOME": NSHomeDirectory()]
         let multiplexer = input.target.flatMap {
             ActivePaneWorkingDirectoryQuery.query(sessionName: input.sessionName, target: $0, path: path)
         }
         let cwd = ExtensionContextPlanner.workingDirectory(for: input, multiplexerWorkingDirectory: multiplexer)
         let checkout = cwd.flatMap { RepoCheckoutQuery.query(directory: $0, environment: environment) }
-        return ExtensionContextPlanner.context(for: input, multiplexerWorkingDirectory: multiplexer, checkout: checkout)
+        var context = ExtensionContextPlanner.context(for: input, multiplexerWorkingDirectory: multiplexer, checkout: checkout)
+        if includingPanes { context.panes = panes(input, path: path) }
+        return context
     }
 }

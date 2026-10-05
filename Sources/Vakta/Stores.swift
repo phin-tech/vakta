@@ -193,5 +193,6 @@ extension View {
             .environmentObject(stores.extensionHost)
             .environmentObject(stores.panelViewStore)
             .environmentObject(stores.sessionBadgeStore)
+            .environmentObject(stores.statusItemStore)
     }
 }

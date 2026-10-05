@@ -59,6 +59,19 @@ final class FileSidebarPreferencesCodecTests: XCTestCase {
         let data = try JSONEncoder().encode(original)
         XCTAssertEqual(try JSONDecoder().decode(FileSidebarPreferences.self, from: data), original)
     }
+
+    // RED: `isCollapsed` doesn't exist on `FileSidebarPreferences` yet -- the
+    // right sidebar has no collapse state of its own, unlike the left
+    // sidebar's `SidebarSettings.isCollapsed`.
+    func test_missingIsCollapsed_defaultsToFalse() throws {
+        XCTAssertEqual(try decode(#"{"isVisible": true}"#).isCollapsed, false)
+    }
+
+    func test_isCollapsed_roundTrips() throws {
+        let original = FileSidebarPreferences(isVisible: true, width: 300, isCollapsed: true)
+        let data = try JSONEncoder().encode(original)
+        XCTAssertEqual(try JSONDecoder().decode(FileSidebarPreferences.self, from: data), original)
+    }
 }
 
 final class FileSidebarModePlannerTests: XCTestCase {

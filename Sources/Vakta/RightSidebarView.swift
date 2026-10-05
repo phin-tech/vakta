@@ -1,10 +1,10 @@
 //
-//  FileSidebarView.swift
+//  RightSidebarView.swift
 //  Vakta
 //
-//  The right-hand file sidebar: a lazy, expandable tree of the selected
-//  session's focused-pane working directory (`SessionStore.fileSidebarRoot`).
-//  SwiftUI so it matches the left sidebar's chrome; lazy in both senses --
+//  The right sidebar: a lazy, expandable tree of the selected session's
+//  focused-pane working directory (`SessionStore.fileSidebarRoot`). SwiftUI
+//  so it matches the left sidebar's chrome; lazy in both senses --
 //  `FileTreeModel` reads a directory (off the main thread) only when it is
 //  expanded or prefetched one level ahead, and the rows render as one flat
 //  lazy list (`FileTreeLayout.visibleRows`), so only on-screen rows are built. Read-only: double-click opens a file in its default app; the context
@@ -15,16 +15,24 @@
 //  root (`GitChangeTree`), refreshed by `FileSidebarChangesLoader` whenever
 //  the root is re-resolved.
 //
+//  Collapsing (`FileSidebarPreferencesStore.isCollapsed`, independent of the
+//  left sidebar's own collapse state) swaps the tree for a narrow icon rail
+//  (`RightSidebarRail`): Files, Changes, and one icon per Extension Panel
+//  View, each decorated with that Extension's own Status Item as a live
+//  badge so a collapsed Extension can still show something at a glance.
+//
 
 import AppKit
 import SwiftUI
+import VaktaExtensionKit
 
-struct FileSidebarView: View {
+struct RightSidebarView: View {
     @EnvironmentObject private var sessionStore: SessionStore
     @EnvironmentObject private var appearanceStore: AppearanceStore
     @EnvironmentObject private var preferences: FileSidebarPreferencesStore
     @EnvironmentObject private var extensionRegistry: ExtensionRegistryStore
     @EnvironmentObject private var panelViewStore: PanelViewStore
+    @EnvironmentObject private var statusItemStore: StatusItemStore
     @StateObject private var changesLoader = FileSidebarChangesLoader()
     @StateObject private var fileTree = FileTreeModel()
     @State private var selectedPath: String?
@@ -47,13 +55,32 @@ struct FileSidebarView: View {
     private var accent: Color { Color(nsColor: sessionStore.terminalAccentColor) }
     private var selection: Color { Color(nsColor: sessionStore.terminalSelectionColor) }
 
+    private var railIcons: [RightSidebarRailIcon] {
+        RightSidebarRail.icons(options: panelViewOptions, statusItems: statusItemStore.items, activeMode: mode)
+    }
+
+    /// Below this width the sidebar renders as an icon rail -- the same
+    /// technique and threshold as the left sidebar (`SidebarView.railThreshold`):
+    /// the real collapsed/expanded state lives in `preferences.isCollapsed`
+    /// and `AppDelegate` drives the actual pane width off it, so this just
+    /// reflects the geometry it was given rather than re-deciding anything.
+    private let railThreshold: CGFloat = 120
+
     var body: some View {
-        VStack(spacing: 0) {
-            header
-            Divider().opacity(0.5)
-            content
+        GeometryReader { geo in
+            Group {
+                if geo.size.width < railThreshold {
+                    rail
+                } else {
+                    VStack(spacing: 0) {
+                        header
+                        Divider().opacity(0.5)
+                        content
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .onAppear {
             rebuildRoot()
             loadChanges()
@@ -71,6 +98,73 @@ struct FileSidebarView: View {
             activatePanelView()
         }
         .onReceive(sessionStore.fileSidebarRefreshed) { loadChanges() }
+    }
+
+    /// The collapsed icon rail: Files/Changes plus one icon per available
+    /// Extension Panel View, styled like the left sidebar's `RailSessionItem`
+    /// tiles. Tapping any icon expands the sidebar back into that mode.
+    private var rail: some View {
+        ScrollView {
+            VStack(spacing: 8) {
+                collapseToggleButton(collapsed: true)
+
+                railTile(symbol: "folder", title: "All files", isOn: mode == .files) {
+                    expand(into: .files)
+                }
+                railTile(symbol: "plusminus", title: "Git changes only", isOn: mode == .changes) {
+                    expand(into: .changes)
+                }
+                ForEach(railIcons) { icon in
+                    railTile(symbol: icon.symbol, title: icon.title, isOn: icon.isActive, badgeText: icon.badgeText, tint: icon.tint) {
+                        expand(into: .extensionView(icon.ref))
+                    }
+                }
+            }
+            .padding(.top, 34) // clear the transparent titlebar band
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity)
+        }
+        .scrollContentBackground(.hidden)
+    }
+
+    private func expand(into mode: FileSidebarMode) {
+        preferences.mode = mode
+        preferences.isCollapsed = false
+    }
+
+    /// One rail tile: a rounded square like `RailSessionItem`, plus a small
+    /// corner dot for an Extension's Status Item (same badge data the status
+    /// bar already renders, tinted via `StatusBarView.color(for:)`). Full
+    /// title and badge text on hover rather than crammed into the tile.
+    private func railTile(symbol: String, title: String, isOn: Bool, badgeText: String? = nil, tint: StatusSegment.Tint? = nil, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            ZStack(alignment: .topTrailing) {
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(isOn ? accent.opacity(0.25) : Color.secondary.opacity(0.12))
+                    .frame(width: 36, height: 36)
+                    .overlay(
+                        Image(systemName: symbol)
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(isOn ? accent : Color.primary)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .strokeBorder(isOn ? accent : Color.clear, lineWidth: 1.5)
+                    )
+                if let badgeText {
+                    Circle()
+                        .fill(StatusBarView.color(for: tint ?? .neutral))
+                        .frame(width: 9, height: 9)
+                        .overlay(Circle().strokeBorder(Color(nsColor: .windowBackgroundColor), lineWidth: 1.5))
+                        .offset(x: 3, y: -3)
+                        .help(badgeText)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .help(title)
+        .accessibilityLabel(title)
+        .accessibilityAddTraits(isOn ? .isSelected : [])
     }
 
     /// Re-runs git for the current root while Changes is showing; the Files
@@ -111,10 +205,36 @@ struct FileSidebarView: View {
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
             .help("Refresh")
+            collapseToggleButton(collapsed: false)
         }
         .padding(.horizontal, 12)
         .padding(.top, 34) // clear the transparent titlebar band (fullSizeContentView)
         .padding(.bottom, 8)
+    }
+
+    /// Mirrors `SidebarView.collapseToggleButton`: a terminal-style «/»
+    /// chevron when the Sidebar font is "Terminal Style", else the matching
+    /// SF Symbol -- mirrored left/right since this sidebar sits on the
+    /// opposite edge (collapsing tucks it toward the right edge, not the left).
+    private func collapseToggleButton(collapsed: Bool) -> some View {
+        Button {
+            preferences.toggleCollapsed()
+        } label: {
+            Group {
+                if terminalStyle {
+                    Text(collapsed ? "«" : "»")
+                        .font(.system(size: 11, design: .monospaced))
+                } else {
+                    Image(systemName: "sidebar.trailing")
+                        .font(.system(size: 13, weight: .regular))
+                }
+            }
+            .foregroundStyle(.secondary)
+            .frame(width: 24, height: 24)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless)
+        .help(collapsed ? "Expand Sidebar" : "Collapse Sidebar")
     }
 
     /// Files ↔ Changes. Two small icon buttons rather than a `Picker` so it
