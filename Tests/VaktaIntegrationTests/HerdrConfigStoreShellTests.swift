@@ -414,4 +414,74 @@ final class HerdrConfigStoreShellTests: XCTestCase {
         XCTAssertEqual(store.document.value(at: "a"), .integer(5))
         XCTAssertTrue(store.isDirty)
     }
+
+    // MARK: auto-save
+
+    func test_store_autoSaveIfDue_beforeTheDebounceElapses_doesNothing() async throws {
+        try writeConfig("a = 1\n")
+        let store = makeStore()
+        store.load()
+        let edited = Date(timeIntervalSince1970: 1_800_000_000)
+        store.set("a", to: .integer(2))
+        store.noteEdited(now: edited)
+
+        await store.autoSaveIfDue(now: edited.addingTimeInterval(0.1))
+
+        XCTAssertEqual(liveConfig(), "a = 1\n", "not due yet -- must not touch disk")
+        XCTAssertTrue(store.isDirty)
+    }
+
+    func test_store_autoSaveIfDue_atTheDebounceFireDate_savesLikeAManualSave() async throws {
+        try writeConfig("a = 1\n")
+        let store = makeStore()
+        store.load()
+        let edited = Date(timeIntervalSince1970: 1_800_000_000)
+        store.set("a", to: .integer(2))
+        store.noteEdited(now: edited)
+
+        await store.autoSaveIfDue(now: edited.addingTimeInterval(HerdrConfigStore.autoSaveDebounceInterval))
+
+        XCTAssertEqual(liveConfig(), "a = 2\n")
+        XCTAssertFalse(store.isDirty)
+        XCTAssertTrue(outputExists("reloaded"))
+    }
+
+    func test_store_autoSaveIfDue_aBurstOfEditsCollapsesToOneSaveOfTheFinalValue() async throws {
+        try writeConfig("a = 1\n")
+        let store = makeStore()
+        store.load()
+        var now = Date(timeIntervalSince1970: 1_800_000_000)
+        store.set("a", to: .integer(2))
+        store.noteEdited(now: now)
+        now = now.addingTimeInterval(0.1)
+        store.set("a", to: .integer(3))
+        store.noteEdited(now: now)
+
+        // The first edit's own fire date has passed, but the second edit
+        // pushed the debounce out -- still not due.
+        await store.autoSaveIfDue(now: now)
+        XCTAssertEqual(liveConfig(), "a = 1\n", "a later edit must reschedule, not fire on the earlier deadline")
+
+        await store.autoSaveIfDue(now: now.addingTimeInterval(HerdrConfigStore.autoSaveDebounceInterval))
+        XCTAssertEqual(liveConfig(), "a = 3\n", "one save, carrying the latest value")
+        XCTAssertEqual(backups().count, 1, "one save means one backup, not one per edit")
+    }
+
+    func test_store_autoSaveIfDue_whenUnverified_neverAutoConfirms_fileStaysUntouchedAndDirty() async throws {
+        try writeConfig("a = 1\n")
+        let store = makeStore(herdr: ["/nonexistent/herdr"])
+        store.load()
+        let edited = Date(timeIntervalSince1970: 1_800_000_000)
+        store.set("a", to: .integer(2))
+        store.noteEdited(now: edited)
+
+        await store.autoSaveIfDue(now: edited.addingTimeInterval(HerdrConfigStore.autoSaveDebounceInterval))
+
+        XCTAssertEqual(liveConfig(), "a = 1\n", "an unverifiable save is never silently confirmed")
+        XCTAssertTrue(store.isDirty)
+
+        let confirmed = await store.save(confirmUnverified: true)
+        guard case .saved = confirmed else { return XCTFail("the user's explicit Save anyway must still work") }
+        XCTAssertEqual(liveConfig(), "a = 2\n")
+    }
 }

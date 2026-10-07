@@ -28,10 +28,22 @@ final class HerdrConfigStore: ObservableObject {
     /// drafts are rebuilt from the document after a discard/reload.
     @Published private(set) var loadGeneration = 0
 
+    /// How long an edit must sit untouched before `autoSaveIfDue` will save
+    /// it -- a burst of edits (typing, a Reset Section click) keeps pushing
+    /// this out via `noteEdited`, so it fires once after the burst settles
+    /// rather than once per keystroke.
+    static let autoSaveDebounceInterval: TimeInterval = 1.5
+    private static let autoSaveDebouncer = WorkspaceRefreshDebouncer(debounceInterval: autoSaveDebounceInterval, minInterval: 0)
+
     private let file: HerdrConfigFile
     private let checker: HerdrConfigChecker
     private let reloader: HerdrConfigReloader
     private var baseFingerprint = HerdrConfigFingerprint.missing
+    /// When the next `autoSaveIfDue` call should actually save, or nil
+    /// between edits (idle) and right after an attempt (whether or not it
+    /// actually saved -- a rejected/unverified attempt waits for the next
+    /// edit rather than retrying on every poll).
+    private var pendingAutoSaveFireDate: Date?
 
     init(file: HerdrConfigFile, checker: HerdrConfigChecker, reloader: HerdrConfigReloader) {
         self.file = file
@@ -85,6 +97,7 @@ final class HerdrConfigStore: ObservableObject {
         guard text != document.text else { return }
         document = HerdrConfigDocument(text: text)
         isDirty = true
+        noteEdited()
     }
 
     /// Applies a pure document transform (array-table edits and the like).
@@ -93,16 +106,41 @@ final class HerdrConfigStore: ObservableObject {
         guard updated.text != document.text else { return }
         document = updated
         isDirty = true
+        noteEdited()
     }
 
     func set(_ path: String, to value: HerdrConfigValue) {
         document = document.setting(path, to: value)
         isDirty = true
+        noteEdited()
     }
 
     func unset(_ path: String) {
         document = document.unsetting(path)
         isDirty = true
+        noteEdited()
+    }
+
+    /// Pushes out the pending auto-save fire date -- called on every edit
+    /// (directly by the mutators above; tests also call it with a controlled
+    /// `now` to drive `autoSaveIfDue` deterministically).
+    func noteEdited(now: Date = Date()) {
+        pendingAutoSaveFireDate = Self.autoSaveDebouncer.scheduledFireDate(now: now, lastFireDate: nil)
+    }
+
+    /// Saves if an edit's debounce has elapsed. A no-op while clean or not
+    /// yet due. Runs the same gate as a manual Save -- in particular, an
+    /// unverifiable config (`herdr config check` unavailable) is never
+    /// auto-confirmed; it stays dirty until the user clicks "Save anyway".
+    /// Returns nil without attempting anything while clean or not yet due --
+    /// callers (the Preferences pane's poll) use that to leave whatever
+    /// save-result message is already on screen alone, rather than clearing
+    /// it on every poll tick.
+    @discardableResult
+    func autoSaveIfDue(now: Date = Date()) async -> HerdrConfigStoreSaveResult? {
+        guard isDirty, let fireDate = pendingAutoSaveFireDate, now >= fireDate else { return nil }
+        pendingAutoSaveFireDate = nil
+        return await save(confirmUnverified: false)
     }
 
     func save(confirmUnverified: Bool = false) async -> HerdrConfigStoreSaveResult {

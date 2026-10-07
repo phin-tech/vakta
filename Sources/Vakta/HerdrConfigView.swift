@@ -55,6 +55,21 @@ struct HerdrConfigView: View {
             try? await Task.sleep(nanoseconds: 200_000_000)
             if !Task.isCancelled { appliedQuery = query }
         }
+        .task {
+            // Polls rather than scheduling one timer per edit: cheap, and
+            // `autoSaveIfDue` is itself a no-op until the debounce elapses.
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 250_000_000)
+                if Task.isCancelled { return }
+                guard store.isDirty, !isSaving else { continue }
+                isSaving = true
+                if let result = await store.autoSaveIfDue() {
+                    message = HerdrConfigSaveMessage.describe(result)
+                    canSaveUnverified = result == .needsUnverifiedConfirmation
+                }
+                isSaving = false
+            }
+        }
     }
 
     @ViewBuilder
