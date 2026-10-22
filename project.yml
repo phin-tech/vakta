@@ -38,6 +38,11 @@ targets:
         NSHighResolutionCapable: true
         NSPrincipalClass: NSApplication
         LSApplicationCategoryType: public.app-category.developer-tools
+        # `vakta://menu` opens the agent-status menu under SketchyBar (the
+        # Vakta item's click_script).
+        CFBundleURLTypes:
+          - CFBundleURLName: tech.phin.vakta
+            CFBundleURLSchemes: [vakta]
     postBuildScripts:
       # Built-in Extensions (docs/github-extension-plan.md): build each and
       # copy it into Contents/Extensions, signed with the app's identity.

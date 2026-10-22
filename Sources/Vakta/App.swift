@@ -67,6 +67,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var editorPreferences: EditorPreferencesStore { stores.editorPreferences }
     private var fileSidebarPreferences: FileSidebarPreferencesStore { stores.fileSidebarPreferences }
     private var statusBarPreferences: StatusBarPreferencesStore { stores.statusBarPreferences }
+    private var menuBarSettings: MenuBarSettingsStore { stores.menuBarSettings }
 
     /// The AppKit sidebar/terminal chrome whose colors follow the terminal
     /// theme; re-applied when it changes (SwiftUI parts update themselves).
@@ -104,6 +105,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private var agentStatusObserver: AnyCancellable?
     private var passthroughObserver: AnyCancellable?
+    private var menuBarItemObserver: AnyCancellable?
+
+    /// The same session list as the status item's, as a SketchyBar item; its
+    /// click opens `sketchyBarMenu` under the bar (`vakta://menu`).
+    private let sketchyBarPublisher = SketchyBarPublisher(
+        executable: SketchyBarLocator.executable(
+            candidates: SketchyBarLocator.candidates,
+            isExecutable: FileManager.default.isExecutableFile(atPath:)
+        )
+    )
+    private var sketchyBarObserver: AnyCancellable?
+    private var sketchyBarTimer: Timer?
+    /// One sync runs at a time; a request during it runs once more after.
+    private var isSyncingSketchyBar = false
+    private var sketchyBarSyncPending = false
+    private lazy var sketchyBarMenu: NSMenu = {
+        let menu = NSMenu()
+        menu.delegate = self
+        return menu
+    }()
 
     /// The ⌘K command palette's floating panel and its backing state. The
     /// host is kept typed (not just `panel.contentView`) so its `rootView`'s
@@ -274,6 +295,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         sessionStore.notifier.requestAuthorization()
 
         setUpStatusItem()
+        setUpSketchyBar()
 
         // When the terminal theme changes, re-tint the AppKit chrome (the
         // SwiftUI sidebar re-reads the published colors on its own).
@@ -542,6 +564,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Extensions also see stdin close when Vakta exits; this asks them
         // to shut down first.
         stores?.extensionHost.stopAll()
+        sketchyBarTimer?.invalidate()
+        sketchyBarPublisher.removeBeforeExit()
     }
 
     func applicationDidResignActive(_: Notification) {
@@ -963,6 +987,81 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         passthroughObserver = keybindingMatcher.$passthrough.sink { [weak self] _ in
             guard let self else { return }
             self.updateStatusItemButton(self.sessionStore.agentStatus)
+        }
+        menuBarItemObserver = menuBarSettings.$showsMenuBarItem.sink { [weak self] shows in
+            self?.statusItem?.isVisible = shows
+        }
+    }
+
+    // MARK: SketchyBar item
+
+    private func setUpSketchyBar() {
+        // Both publishers fire from `willSet`; the sync reads the stores on
+        // the next run-loop turn, by which time they hold the new values.
+        sketchyBarObserver = Publishers.CombineLatest(
+            menuBarSettings.$showsSketchyBarItem, sessionStore.$agentStatus
+        )
+        .receive(on: RunLoop.main)
+        .sink { [weak self] _ in self?.requestSketchyBarSync() }
+        // Resend an unchanged item now and then: `sketchybar --reload`
+        // drops it (see `SketchyBarSyncPlanner.reassertInterval`). Scheduled
+        // on the main run loop, so the callback is on the main actor.
+        sketchyBarTimer = Timer.scheduledTimer(withTimeInterval: SketchyBarSyncPlanner.reassertInterval, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.requestSketchyBarSync() }
+        }
+    }
+
+    private func requestSketchyBarSync() {
+        sketchyBarSyncPending = true
+        guard !isSyncingSketchyBar else { return }
+        isSyncingSketchyBar = true
+        Task { @MainActor [weak self] in
+            while let self, self.sketchyBarSyncPending {
+                self.sketchyBarSyncPending = false
+                let enabled = self.menuBarSettings.showsSketchyBarItem
+                let outcome = await self.sketchyBarPublisher.update(
+                    enabled: enabled, statuses: Array(self.sessionStore.agentStatus.values)
+                )
+                self.applySketchyBarOutcome(outcome, enabled: enabled)
+            }
+            self?.isSyncingSketchyBar = false
+        }
+    }
+
+    private func applySketchyBarOutcome(_ outcome: SketchyBarPublishOutcome, enabled: Bool) {
+        switch outcome {
+        case .unavailable:
+            menuBarSettings.sketchyBarProblem = enabled ? "SketchyBar isn't installed (looked in /opt/homebrew/bin and /usr/local/bin)." : nil
+        case .failed:
+            menuBarSettings.sketchyBarProblem = enabled ? "SketchyBar didn't respond. Is it running?" : nil
+        case .published, .removed:
+            menuBarSettings.sketchyBarProblem = nil
+        case .unchanged:
+            if !enabled { menuBarSettings.sketchyBarProblem = nil }
+        }
+    }
+
+    /// `vakta://menu`, from the SketchyBar item's click: the status item's
+    /// menu, opened under the bar at the pointer.
+    private func showSketchyBarMenu() {
+        let mouse = NSEvent.mouseLocation
+        guard let screen = NSScreen.screens.first(where: { NSMouseInRect(mouse, $0.frame, false) }) ?? NSScreen.main
+        else { return }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let bar = await self.sketchyBarPublisher.queryGeometry()
+            let origin = SketchyBarMenuPlacement.origin(mouseX: mouse.x, screenFrame: screen.frame, bar: bar)
+            self.sketchyBarMenu.popUp(positioning: nil, at: origin, in: nil)
+        }
+    }
+
+    func application(_: NSApplication, open urls: [URL]) {
+        guard stores != nil else { return }
+        for url in urls {
+            switch VaktaURLRouter.command(for: url) {
+            case .showMenu: showSketchyBarMenu()
+            case nil: continue
+            }
         }
     }
 
@@ -1538,7 +1637,7 @@ extension AppDelegate: NSMenuDelegate {
             }
             return
         }
-        guard menu === statusItem?.menu else { return }
+        guard menu === statusItem?.menu || menu === sketchyBarMenu else { return }
         menu.removeAllItems()
 
         let sessions = sessionStore.sessions

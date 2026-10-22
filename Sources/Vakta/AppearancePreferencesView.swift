@@ -13,6 +13,7 @@ struct AppearancePreferencesView: View {
     @EnvironmentObject private var herdrPreferences: HerdrPreferencesStore
     @EnvironmentObject private var fileSidebarPreferences: FileSidebarPreferencesStore
     @EnvironmentObject private var statusBarPreferences: StatusBarPreferencesStore
+    @EnvironmentObject private var menuBarSettings: MenuBarSettingsStore
 
     var body: some View {
         Form {
@@ -114,6 +115,23 @@ struct AppearancePreferencesView: View {
                     + "pull request (checks and review), via the gh CLI. Automatic shows it only "
                     + "when there is something to show; Auto-hide reveals it when the pointer "
                     + "rests at the terminal's bottom edge; Never also stops the lookups.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section {
+                Toggle("Show in menu bar", isOn: $menuBarSettings.showsMenuBarItem)
+                Toggle("Show in SketchyBar", isOn: $menuBarSettings.showsSketchyBarItem)
+                if let problem = menuBarSettings.sketchyBarProblem {
+                    Label(problem, systemImage: "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            } header: {
+                Text("Agent status item")
+            } footer: {
+                Text("Every session's agents at a glance, with a menu to jump to one. The SketchyBar "
+                    + "item shows !waiting ✓done working and opens the same menu when clicked.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
