@@ -51,6 +51,9 @@ enum Tool {
         stdout.append(out.fileHandleForReading.readDataToEndOfFile())
         stderr.append(err.fileHandleForReading.readDataToEndOfFile())
         lock.unlock()
+        // Pipe never closes its read ends; left open, every run leaked two.
+        try? out.fileHandleForReading.close()
+        try? err.fileHandleForReading.close()
         return Output(status: process.terminationStatus, stdout: stdout, stderr: stderr)
     }
 }

@@ -35,6 +35,12 @@ let package = Package(
             name: "KataVaktaCoreTests",
             dependencies: ["KataVaktaCore"],
             path: "Tests/KataVaktaCoreTests"
+        ),
+        // Imperative shell: running the `kata` CLI with a fixture executable.
+        .testTarget(
+            name: "KataVaktaTests",
+            dependencies: ["KataVakta"],
+            path: "Tests/KataVaktaTests"
         )
     ]
 )

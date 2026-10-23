@@ -37,6 +37,12 @@ let package = Package(
             name: "GitHubCoreTests",
             dependencies: ["GitHubCore"],
             path: "Tests/GitHubCoreTests"
+        ),
+        // Imperative shell: running git/gh with real child processes.
+        .testTarget(
+            name: "VaktaGitHubTests",
+            dependencies: ["VaktaGitHub"],
+            path: "Tests/VaktaGitHubTests"
         )
     ]
 )

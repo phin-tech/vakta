@@ -47,6 +47,9 @@ enum KataCLI {
         errors.fileHandleForReading.readabilityHandler = nil
         collected.append(output.fileHandleForReading.readDataToEndOfFile())
         collectedErrors.append(errors.fileHandleForReading.readDataToEndOfFile())
+        // Pipe never closes its read ends; left open, every run leaked two.
+        try? output.fileHandleForReading.close()
+        try? errors.fileHandleForReading.close()
         return Result(status: process.terminationStatus, stdout: collected.data, stderr: collectedErrors.data)
     }
 
