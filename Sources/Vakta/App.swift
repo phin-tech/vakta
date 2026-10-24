@@ -1458,6 +1458,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .toggleFileSidebar: fileSidebarPreferences.isVisible.toggle()
         case .toggleFileSidebarChanges:
             fileSidebarPreferences.apply(FileSidebarModePlanner.togglingChanges(fileSidebarPreferences.preferences))
+        case .findInTerminal: sessionStore.performBindingActionOnSelectedSession("start_search")
         case .openInEditor: openInEditor()
         case .showStatusBarBriefly: toggleStatusBarBriefly()
         case .cycleStatusBar: statusBarPreferences.cycle()

@@ -30,6 +30,17 @@ enum SidebarRowFontResolver {
         return explicit > 0 ? explicit : fontSize(matchingTerminal: terminalFontSize, fallback: fallback)
     }
 
+    /// The terminal size to mirror: the size a surface reports (it moves with
+    /// ⌘+/⌘-, which `terminalSettings.fontSize` never sees) when usable, else
+    /// the configured one.
+    static func terminalSize(reported: Float?, configured: Double) -> Double {
+        if let reported {
+            let size = TerminalFontSizeValidator.effective(Double(reported))
+            if size > 0 { return size }
+        }
+        return TerminalFontSizeValidator.effective(configured)
+    }
+
     /// Whether the user actually chose a sidebar size (valid and non-zero).
     static func hasExplicitSize(_ sidebarOverride: Double) -> Bool {
         TerminalFontSizeValidator.effective(sidebarOverride) > 0

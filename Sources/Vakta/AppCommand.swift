@@ -67,6 +67,8 @@ enum AppCommand: Hashable, Codable {
     /// Show the file sidebar's git Changes view, or flip it back to Files
     /// (see `FileSidebarModePlanner.togglingChanges`).
     case toggleFileSidebarChanges
+    /// Open the selected terminal's scrollback search bar.
+    case findInTerminal
     /// Open the focused pane's working directory in the preferred editor.
     case openInEditor
     /// Reveal the status bar for a while in any mode (again: hide it).
@@ -123,6 +125,7 @@ enum AppCommand: Hashable, Codable {
         case .newSession: return "New Session"
         case .toggleFileSidebar: return "Toggle File Sidebar"
         case .toggleFileSidebarChanges: return "Toggle File Sidebar Git Changes"
+        case .findInTerminal: return "Find in Terminal"
         case .openInEditor: return "Open in Editor"
         case .showStatusBarBriefly: return "Show Status Bar Briefly"
         case .cycleStatusBar: return "Cycle Status Bar Visibility"
@@ -170,6 +173,7 @@ enum AppCommand: Hashable, Codable {
         case .newSession: return "newSession"
         case .toggleFileSidebar: return "toggleFileSidebar"
         case .toggleFileSidebarChanges: return "toggleFileSidebarChanges"
+        case .findInTerminal: return "findInTerminal"
         case .openInEditor: return "openInEditor"
         case .showStatusBarBriefly: return "showStatusBarBriefly"
         case .cycleStatusBar: return "cycleStatusBar"
@@ -211,7 +215,7 @@ enum AppCommand: Hashable, Codable {
         case .toggleSidebar, .openPreferences, .openSessionSwitcher, .quit,
              .copy, .paste, .cut, .selectAll, .closeWindow,
              .increaseFontSize, .decreaseFontSize, .resetFontSize, .nextUnreadSession,
-             .newSession, .toggleFileSidebar, .toggleFileSidebarChanges, .openInEditor,
+             .newSession, .toggleFileSidebar, .toggleFileSidebarChanges, .openInEditor, .findInTerminal,
              .showStatusBarBriefly, .cycleStatusBar,
              .editHerdrConfig, .reloadHerdrConfig,
              .showWelcomeTour, .showWhatsNew:
@@ -223,7 +227,7 @@ enum AppCommand: Hashable, Codable {
     var group: AppCommandGroup {
         switch self {
         case .openSessionSwitcher, .openPreferences, .toggleSidebar, .toggleFileSidebar,
-             .toggleFileSidebarChanges, .openInEditor, .quit, .closeWindow, .copy, .paste, .cut, .selectAll,
+             .toggleFileSidebarChanges, .openInEditor, .findInTerminal, .quit, .closeWindow, .copy, .paste, .cut, .selectAll,
              .showWelcomeTour, .showWhatsNew, .showStatusBarBriefly, .cycleStatusBar:
             return .application
         case .selectSession, .newSession, .nextUnreadSession, .stopSession:
@@ -283,7 +287,7 @@ enum AppCommandCatalog {
         .closeWorkspace, .newWorkspace, .stopSession,
         .editHerdrConfig, .reloadHerdrConfig,
         .increaseFontSize, .decreaseFontSize, .resetFontSize,
-        .toggleFileSidebarChanges,
+        .toggleFileSidebarChanges, .findInTerminal,
         .showWelcomeTour, .showWhatsNew,
         .showStatusBarBriefly, .cycleStatusBar,
         .focusPaneLeft, .focusPaneRight, .focusPaneUp, .focusPaneDown,
@@ -296,7 +300,7 @@ enum AppCommandCatalog {
     /// matches, it just has no Preferences row.
     static let bindableCommands: [AppCommand] = [
         .openSessionSwitcher, .openPreferences, .toggleSidebar, .toggleFileSidebar, .toggleFileSidebarChanges,
-        .openInEditor, .showStatusBarBriefly, .cycleStatusBar, .quit, .closeWindow, .copy, .paste, .cut, .selectAll,
+        .openInEditor, .findInTerminal, .showStatusBarBriefly, .cycleStatusBar, .quit, .closeWindow, .copy, .paste, .cut, .selectAll,
     ]
         + (0..<9).map { AppCommand.selectSession($0) }
         + [

@@ -20,11 +20,18 @@
 //  what ends herdr's pty.
 
 import AppKit
+import Combine
 import GhosttyTerminal
+import SwiftUI
 
 @MainActor
 final class TerminalHostContainerView: NSView {
     private var viewsByID: [Session.ID: TerminalView] = [:]
+    /// Each session's find bar: a small sibling above its surface, shown only
+    /// while that session is selected and searching.
+    private var searchBarsByID: [Session.ID: NSHostingView<TerminalSearchBar>] = [:]
+    private var searchModelsByID: [Session.ID: TerminalSearchModel] = [:]
+    private var searchStates: [Session.ID: AnyCancellable] = [:]
     private(set) var selectedID: Session.ID?
 
     /// Adds a new session's surface, hidden and not yet current. Call
@@ -48,7 +55,7 @@ final class TerminalHostContainerView: NSView {
         // `TerminalSurfaceViewDelegate` sub-protocol Vakta needs (title,
         // close, pwd, ...); handing it straight in is the "prefer the
         // wrapper's provided types" path called out in the task brief.
-        view.delegate = session.viewState
+        view.delegate = session.terminalDelegate
         view.controller = session.controller
         view.configuration = session.options
 
@@ -56,6 +63,29 @@ final class TerminalHostContainerView: NSView {
         viewsByID[session.id] = view
         addSubview(view)
         view.setSurfaceVisible(false)
+        addSearchBar(for: session)
+    }
+
+    private func addSearchBar(for session: Session) {
+        let bar = NSHostingView(rootView: TerminalSearchBar(model: session.searchModel))
+        let size = bar.fittingSize
+        bar.frame = NSRect(x: bounds.width - size.width, y: bounds.height - size.height, width: size.width, height: size.height)
+        bar.autoresizingMask = [.minXMargin, .minYMargin]
+        bar.isHidden = true
+        addSubview(bar)
+        searchBarsByID[session.id] = bar
+        searchModelsByID[session.id] = session.searchModel
+        let id = session.id
+        searchStates[id] = session.searchModel.$state
+            .map(\.isActive)
+            .removeDuplicates()
+            .sink { [weak self] active in self?.searchActivityChanged(id, active: active) }
+    }
+
+    private func searchActivityChanged(_ id: Session.ID, active: Bool) {
+        searchBarsByID[id]?.isHidden = !(active && selectedID == id)
+        // Closing the bar hands the keyboard back to the terminal.
+        if !active, selectedID == id, let view = viewsByID[id] { window?.makeFirstResponder(view) }
     }
 
     /// Removes a session's view -- see the type doc comment for why this,
@@ -64,6 +94,9 @@ final class TerminalHostContainerView: NSView {
         guard let view = viewsByID.removeValue(forKey: id) else { return }
         view.setSurfaceVisible(false)
         view.removeFromSuperview()
+        searchBarsByID.removeValue(forKey: id)?.removeFromSuperview()
+        searchStates[id] = nil
+        searchModelsByID[id] = nil
         if selectedID == id { selectedID = nil }
     }
 
@@ -75,12 +108,14 @@ final class TerminalHostContainerView: NSView {
         if let previousID = selectedID, previousID != id, let previousView = viewsByID[previousID] {
             previousView.setSurfaceVisible(false)
             previousView.isHidden = true
+            searchBarsByID[previousID]?.isHidden = true
         }
 
         selectedID = id
         guard let view = viewsByID[id] else { return }
         view.isHidden = false
         view.setSurfaceVisible(true)
+        searchBarsByID[id]?.isHidden = !(searchModelsByID[id]?.state.isActive ?? false)
 
         // One runloop turn so AppKit's layout pass for `isHidden = false`
         // (and, for a brand-new session, the view's own window attachment)

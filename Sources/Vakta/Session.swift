@@ -49,6 +49,13 @@ final class Session: Identifiable, ObservableObject {
     /// observe it for the row label.
     let viewState: TerminalViewState
 
+    /// Scrollback search for this session (see `TerminalSearchModel`).
+    let searchModel = TerminalSearchModel()
+
+    /// What the session's view reports to: `viewState` plus `searchModel`.
+    /// The view holds its delegate weakly, so the session owns it.
+    let terminalDelegate: SessionTerminalDelegate
+
     /// A one-off session (the tour's installer) that is never saved to the
     /// workspace, so a restart doesn't relaunch it.
     let isTransient: Bool
@@ -66,7 +73,10 @@ final class Session: Identifiable, ObservableObject {
         self.customName = customName
         self.isTransient = isTransient
         self.options = profile.makeSurfaceOptions(sessionName: sessionName)
-        self.viewState = TerminalViewState(controller: controller)
+        let viewState = TerminalViewState(controller: controller)
+        self.viewState = viewState
+        self.terminalDelegate = SessionTerminalDelegate(viewState: viewState, searchModel: searchModel)
+        searchModel.send = { [weak viewState] action in _ = viewState?.performBindingAction(action) }
     }
 
     /// A fresh, filesystem/session-safe multiplexer name.

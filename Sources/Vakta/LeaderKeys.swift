@@ -139,6 +139,7 @@ enum LeaderTree {
             leaf(Key.f, .toggleFileSidebar),
             leaf(Key.g, .toggleFileSidebarChanges),
             leaf(Key.e, .openInEditor),
+            leaf(Key.s, .findInTerminal),
             leaf(Key.b, .showStatusBarBriefly),
             leaf(Key.v, .cycleStatusBar),
         ]),

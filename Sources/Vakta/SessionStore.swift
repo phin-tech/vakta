@@ -901,6 +901,22 @@ final class SessionStore: ObservableObject {
     /// on GhosttyKit.xcframework's macos-arm64_x86_64/libghostty.a lists
     /// "increase_font_size"/"decrease_font_size"/"reset_font_size" as real
     /// embedded binding-action names.
+    /// The font size the selected session's surface reports. It follows
+    /// ⌘+/⌘-, which `TerminalSettings.fontSize` never sees; nil until a
+    /// surface has reported one.
+    var selectedTerminalFontSize: AnyPublisher<Float?, Never> {
+        Publishers.CombineLatest($sessions, $selectedID)
+            .map { sessions, id -> AnyPublisher<Float?, Never> in
+                guard let id, let session = sessions.first(where: { $0.id == id }) else {
+                    return Just(nil).eraseToAnyPublisher()
+                }
+                return session.viewState.$fontSize.eraseToAnyPublisher()
+            }
+            .switchToLatest()
+            .removeDuplicates()
+            .eraseToAnyPublisher()
+    }
+
     @discardableResult
     func performBindingActionOnSelectedSession(_ action: String) -> Bool {
         guard let selectedID, let session = sessions.first(where: { $0.id == selectedID }) else { return false }

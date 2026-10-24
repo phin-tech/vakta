@@ -10,7 +10,7 @@ packages:
     url: https://github.com/Lakr233/libghostty-spm.git
     # Keep in sync with Package.swift. The embedding C API is unstable, so this
     # is pinned exact, not a range.
-    exactVersion: 1.6.20260909
+    exactVersion: 2.2.2026102101
   VaktaExtensionKit:
     path: Packages/VaktaExtensionKit
 

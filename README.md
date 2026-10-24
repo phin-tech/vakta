@@ -32,7 +32,7 @@ So with a night of Claude code Vakta was born. At its core it's just a Swift app
 
 ## Architecture
 
-- **Terminal Core** — Pinned to `libghostty-spm` (tag `1.6.20260909`, see
+- **Terminal Core** — Pinned to `libghostty-spm` (tag `2.2.2026102101`, see
   "Pinned dependency" below). We use the prebuilt XCFramework binary rather
   than building Zig from source.
 - **Process Model** — One shared `TerminalController` per app process, handed to
@@ -53,7 +53,7 @@ Swift code follows.
 ### Pinned dependency
 
 libghostty-spm's embedding C API is unstable upstream, so it's pinned to an
-**exact** tag (`1.6.20260909`) rather than a range or branch, in **two**
+**exact** tag (`2.2.2026102101`) rather than a range or branch, in **two**
 places that must stay in sync:
 
 - `Package.swift` — `.package(url: "...", exact: "...")`

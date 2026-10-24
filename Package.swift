@@ -15,7 +15,7 @@ let package = Package(
         // rather than a range or branch. Keep in sync with project.yml's
         // packages.libghostty-spm.exactVersion -- see README.md "Pinned
         // dependency" for how to bump both.
-        .package(url: "https://github.com/Lakr233/libghostty-spm.git", exact: "1.6.20260909"),
+        .package(url: "https://github.com/Lakr233/libghostty-spm.git", exact: "2.2.2026102101"),
         // Extension protocol types (docs/extensions-plan.md). Local and
         // separate so Extensions can use it without resolving libghostty.
         .package(path: "Packages/VaktaExtensionKit")

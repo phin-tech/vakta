@@ -19,6 +19,7 @@ import VaktaExtensionKit
 
 struct SidebarView: View {
     @EnvironmentObject var sessionStore: SessionStore
+    @State private var reportedTerminalFontSize: Float?
     @EnvironmentObject private var appearanceStore: AppearanceStore
     @EnvironmentObject private var terminalSettings: TerminalSettingsStore
     @EnvironmentObject private var keybindingMatcher: KeybindingMatcher
@@ -107,7 +108,10 @@ struct SidebarView: View {
             return .system(size: size, design: .monospaced)
         }
         let size = SidebarRowFontResolver.fontSize(
-            sidebarOverride: override, matchingTerminal: terminalSettings.fontSize
+            sidebarOverride: override,
+            matchingTerminal: SidebarRowFontResolver.terminalSize(
+                reported: reportedTerminalFontSize, configured: terminalSettings.fontSize
+            )
         )
         return .custom(family, size: size, relativeTo: .body)
     }
@@ -136,6 +140,7 @@ struct SidebarView: View {
         }
         .frame(minWidth: 48)
         .onAppear { sessionStore.refreshDiscovery() }
+        .onReceive(sessionStore.selectedTerminalFontSize) { reportedTerminalFontSize = $0 }
         .sheet(item: $editorProfile) { profile in
             ProfileEditorView(
                 profile: profile,

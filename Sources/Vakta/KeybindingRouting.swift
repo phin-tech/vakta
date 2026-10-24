@@ -31,7 +31,7 @@ extension AppCommand {
         case .quit, .closeWindow: return .global
         case .selectSession, .toggleSidebar, .openPreferences, .openSessionSwitcher, .copy, .paste, .cut, .selectAll,
              .increaseFontSize, .decreaseFontSize, .resetFontSize, .nextUnreadSession,
-             .newSession, .toggleFileSidebar, .toggleFileSidebarChanges, .openInEditor,
+             .newSession, .toggleFileSidebar, .toggleFileSidebarChanges, .openInEditor, .findInTerminal,
              .showStatusBarBriefly, .cycleStatusBar,
              .splitPaneRight, .splitPaneDown, .zoomPane, .closePane, .renamePane,
              .focusPaneLeft, .focusPaneRight, .focusPaneUp, .focusPaneDown,
